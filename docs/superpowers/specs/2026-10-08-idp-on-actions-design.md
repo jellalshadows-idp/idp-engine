@@ -111,8 +111,12 @@ Each unit has one purpose and a narrow interface.
 | `modules/aws/{baseline,component}` | Per-env OIDC provider, and a Component's ECR + CI role | `hashicorp/aws` provider |
 | reusable workflows | `pr.yaml`, `reconcile.yaml`, `drift.yaml` (`on: workflow_call`) | the `idp` CLI, `tofu`, floci |
 
+| `internal/ghapi` | Minimal GitHub REST client with typed errors | GitHub API |
+| `internal/bootstrap` | Org bootstrap: create Apps from manifests, apply and check the protections (§9.2) | `internal/ghapi` |
+
 CLI subcommands: `idp validate`, `idp fetch`, `idp adopt`, `idp render`,
-`idp diff`, `idp plan-summary`, `idp gate`, `idp feature test`.
+`idp diff`, `idp plan-summary`, `idp gate`, `idp feature test`, and
+`idp bootstrap app|apply|check`.
 
 ## 4. Claims model
 
@@ -497,7 +501,7 @@ Any delete or replace goes through `idp-approval`.
 ### 6.4 Drift (daily cron)
 - It runs on `cron: '23 5 * * *'`, avoiding the top of the hour, and in concurrency
   group `idp-wet`, so it never reads state in the middle of an apply.
-- It plans the GitHub stack with `idp-reader` and runs `bootstrap.sh --check` (§9.2).
+- It plans the GitHub stack with `idp-reader` and runs `idp bootstrap check` (§9.2).
 - If it finds drift, it creates or updates **one** issue labeled `drift` with the
   plan. If there is no drift, it closes that issue. Issues are handled with
   `GITHUB_TOKEN` and `issues: write`.
@@ -538,6 +542,10 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 | State passphrase | — | Repo secret, needed to read state in plans |
 | Approval | — | Environment `idp-approval` (required reviewers, `main`, no secrets) |
 
+- `idp-reader` and `idp-writer` are **roles**. GitHub App names are unique across
+  GitHub and limited to 34 characters, so the real Apps are named
+  `<org>-reader` and `<org>-writer`. For example, `jellalshadows-idp-sandbox-writer`
+  is 32 characters.
 - Tokens are minted per job with `actions/create-github-app-token` and expire after
   1 hour. A longer apply is a known limitation, and Phase 0 measures how long
   applies take.
@@ -559,6 +567,9 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 - `actionlint` and `zizmor` run on the engine's workflows.
 - Provider versions are exact, and lock files are shipped (§5.3).
 - The OpenTofu version is pinned exactly (≥ 1.12, chosen in Phase 0).
+- Every pinned version (actions, tools, providers, images, Go modules) must be at
+  least 14 days old when it is adopted. Renovate enforces this with
+  `minimumReleaseAge`.
 - The CLI is released with checksums and a provenance attestation
   (`actions/attest-build-provenance`). The workflows run `gh attestation verify`
   before they execute it.
@@ -651,23 +662,31 @@ release PRs, not on every PR, to protect the rate limit and CI minutes.
 ### 9.2 Bootstrap (outside the IDP on purpose)
 The IDP must not manage its own protections. Otherwise a PR could disable the
 checks that guard it.
-- **Apps:** they are created in a browser, because GitHub's manifest flow requires a
-  person to confirm. Their manifests are versioned in
-  `idp-engine/bootstrap/apps/{idp-reader,idp-writer}.json`, so the permissions are
-  reviewable code.
-- **Everything else:** `bootstrap/bootstrap.sh` (`gh api`, idempotent) creates:
-  - `idp-claims` and its `wet` branch;
+The bootstrap is the `idp bootstrap` subcommand, written in Go. This was amended
+from a bash script: a Go implementation can be TDD'd locally, and the
+desired-vs-actual JSON comparison that `check` needs is natural in Go.
+- **`idp bootstrap app`:** runs GitHub's manifest flow through a local callback
+  server. A person still confirms in the browser, as GitHub requires. The manifests
+  are versioned in `idp-engine/bootstrap/apps/{reader,writer}.json`, so the
+  permissions are reviewable code.
+- **`idp bootstrap apply`** (idempotent) creates:
+  - the claims repo and its `wet` branch;
   - the rulesets;
   - the environments `idp-approval` and `idp-write`;
-  - the secrets;
-  - the org-level Actions workflow permissions, which let Actions create PRs (needed
-    by the `release-please` feature).
-- **`--check`** reports drift in these protections. Drift runs it (§6.4).
+  - the secrets and variables;
+  - the org-level Actions workflow defaults (read-only).
+- **Deferred to Phase 4:** allowing Actions to create PRs, which the
+  `release-please` feature needs. GitHub exposes that permission and approving PRs
+  as one setting (`can_approve_pull_request_reviews`), so enabling it weakens
+  required reviews in Component repos. It is turned on only when the feature
+  lands, and its ADR records the risk.
+- **`idp bootstrap check`** reports drift in these protections. Drift runs it
+  (§6.4).
 - Why not an OpenTofu stack? It would need its own state somewhere: turtles all the
   way down.
 
 ### 9.3 Docs
-Docs are in English and live in each repo:
+All repos are licensed Apache-2.0. Docs are in English and live in each repo:
 - **A README per repo**, with the limitations up front.
 - **`docs/architecture.md`**, with Mermaid diagrams.
 - **ADRs from day one:**
@@ -715,10 +734,12 @@ use what that phase measured. Each phase ships an engine minor release.
 | 5 | `userManaged` adoption edge cases (file deleted between adopt and apply) | `overwrite_on_create = false` on `user_managed`, so the apply fails loudly and the next reconcile retries |
 | 6 | Cron disabled after 60 days of inactivity | Renovate activity. Documented |
 
-## 12. Inputs needed before the plan
-- The main org name and the sandbox org name.
-- The GitHub accounts used as Group members in the E2E fixtures.
-- How this project's timing relates to the in-progress `chart-base` work.
+## 12. Inputs (resolved 2026-10-08)
+- Main org: `jellalshadows-idp`. Sandbox org: `jellalshadows-idp-sandbox`. Both are
+  created by hand, because Free orgs cannot be created through the API.
+- Test account for Group members and the pending-invite spike: `adrian-da-silva`.
+  The approver and platform admin is `jellalshadows`.
+- Timing: this runs in parallel with `chart-base`.
 
 ## 13. Firestartr mapping (quick reference)
 
