@@ -3,3 +3,9 @@
 modules/**/.terraform.lock.hcl
 # Local output of `idp render`
 /rendered/
+# Local OpenTofu state, plans and crash logs (rendered stacks use ../../tfstate)
+/tfstate/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
