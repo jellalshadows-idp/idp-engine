@@ -8,7 +8,7 @@
 
 `idp render` turns claims into OpenTofu stacks. It must be **pure and offline**: the same input always produces the same bytes (spec §5.1). That property is what makes the diff against `wet` meaningful, lets golden tests catch accidental changes, and lets a determinism test render twice, with a shuffled file-read order, and compare bytes (§8.2).
 
-The renderer is written in Go. It could emit HCL text or JSON. Firestartr already made this choice: its provisioners synthesize JSON (`JSON.stringify(this.document)` in `gh_provisioner`, and `firestartr-providers.tf.json` in `terraform_provisioner`), so there is a reference for the approach (§5.2).
+The renderer is written in Go. It could emit HCL text or JSON (§5.2).
 
 A second force is who reads what. The renderer is deliberately thin: it emits provider and backend blocks, `module` calls and `encryption` settings, while resource logic lives in tested modules (§5.3). So the generated files are an artifact of the machine, and humans review the **plan** in the PR comment, not the generated files.
 
@@ -28,7 +28,6 @@ Stacks are generated as **`.tf.json`**, written with Go's `encoding/json` (spec 
 - Deterministic output from the standard library, with no HCL formatter or template whitespace to keep stable.
 - Structured data is built from Go types, so the renderer cannot produce syntactically invalid configuration by string concatenation.
 - Golden-file tests and the determinism test compare bytes directly (§8.2).
-- Same approach as Firestartr, so the comparison document can say what was kept (§9.3).
 
 ### Negative / costs
 
@@ -49,5 +48,4 @@ Stacks are generated as **`.tf.json`**, written with Go's `encoding/json` (spec 
 
 ## References
 
-- Spec §5.1-§5.4, §7.5, §8.2, §9.3.
-- Firestartr: `gh_provisioner` (`JSON.stringify(this.document)`), `terraform_provisioner` (`firestartr-providers.tf.json`), as named in spec §5.2.
+- Spec §5.1-§5.4, §7.5, §8.2.

@@ -1,6 +1,6 @@
 # idp-engine
 
-The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. It is inspired by [Firestartr](https://github.com/firestartr-pro/firestartr).
+The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. Desired state lives in claims (YAML in Git), with no Kubernetes involved.
 
 > **Status:** Phase 0 (bootstrap + spike) is complete. The `idp bootstrap` command shipped and was run against the real org, and the spikes are done; see the [phase log](docs/phases/phase-0.md). Nothing else is usable yet.
 

@@ -5,15 +5,14 @@
 | Status | Draft — awaiting owner review |
 | Date | 2026-10-08 |
 | Owner | Adrian-Manuel |
-| Reference system | [Firestartr](https://github.com/firestartr-pro/firestartr) (Prefapp), read at `a9dd5d3` |
 
 ## 1. Intent
 
-**What.** An internal developer platform (IDP) inspired by Firestartr. Teams declare
-**claims** (YAML) in a Git repo, and the platform turns them into real GitHub
-resources (teams, repositories, rulesets, environments, files) and AWS resources.
-Firestartr runs its reconciliation as a Kubernetes operator; this one runs on
-**GitHub Actions only**.
+**What.** An internal developer platform (IDP). Teams declare **claims** (YAML) in
+a Git repo, and the platform turns them into real GitHub resources (teams,
+repositories, rulesets, environments, files) and AWS resources. The desired state
+lives in the claims and is reconciled by **GitHub Actions only**, without
+Kubernetes.
 
 **Why.** It's a public portfolio project. It demonstrates platform-engineering
 judgment: a claims model, rendering, gated plan/apply, state handling, least
@@ -49,7 +48,7 @@ to bootstrap it on their own GitHub organization.
 - A `User` kind, nested teams, renames, and cross-workspace references.
 - Switching an existing file between `managed` and `userManaged` (rejected by
   validation).
-- Per-file target branches (Firestartr's `target_branch`).
+- Per-file target branches.
 - AWS drift detection. Emulated AWS is rebuilt from `wet` on every job, so it
   cannot drift.
 
@@ -212,8 +211,7 @@ values:
 - **Values.** They are passed as module variables, and OpenTofu validates them at
   plan time. v1 has no `valuesSchema`.
 
-Policies are adapted from Firestartr. Unlike Firestartr, which defaults to
-`observe`, here the policy is required.
+The policy is required, with no default.
 
 | Policy | Create/update | Delete or replace | Applied? |
 |---|---|---|---|
@@ -272,9 +270,7 @@ through approval (§6.3).
   bytes.**
 
 ### 5.2 Output format: `.tf.json`
-Stacks are generated as JSON, as Firestartr does. Its provisioners synthesize JSON
-(`JSON.stringify(this.document)` in `gh_provisioner`, and
-`firestartr-providers.tf.json` in `terraform_provisioner`). Go's `encoding/json`
+Stacks are generated as JSON, since they are machine output. Go's `encoding/json`
 sorts map keys, so the output is deterministic. Humans review the **plan** in the
 PR comment, not the JSON.
 
@@ -371,12 +367,10 @@ release-please-config.json, .release-please-manifest.json
 `github_repository_file` resources from them. So reviewing a `wet` diff means seeing
 exactly what will land in the repo.
 
-**Modes.** The resource names match Firestartr's, and the files are always written
-to the default branch.
+**Modes.** The files are always written to the default branch.
 - **`managed`**: `github_repository_file.managed[...]` with
   `overwrite_on_create = true`. Manual edits are reverted on the next apply.
-- **`userManaged`**: `github_repository_file.user_managed[...]`. The mechanism is
-  the one Firestartr uses (`ghfeature/helpers/managed_files.ts:76-81`):
+- **`userManaged`**: `github_repository_file.user_managed[...]`. The mechanism:
   1. The file is created **once**.
   2. Right after the apply, `tofu state rm` removes it from state, and
      `<component>:<path>` is recorded in `.idp/manifest.json`.
@@ -577,8 +571,7 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
   before they execute it.
 
 ### 7.6 No secrets flow through the IDP in v1
-- Claims have no secret fields. Firestartr's `secrets.actions` is left out on
-  purpose.
+- Claims have no secret fields, on purpose.
 - floci uses fake 12-digit credentials. **There is no real cloud credential anywhere
   in v1.**
 - The path to real AWS is OIDC from `idp-claims`, never static keys.
@@ -631,8 +624,7 @@ and check that the diff is exactly the expected one.
 
 ### 8.5 Level 4: E2E
 The harness targets `<org>/idp-claims-e2e`, using the reusable workflows at the
-candidate SHA. This mirrors Firestartr's `smoke-tests/scripts/smoke.sh`. The
-harness:
+candidate SHA. The harness:
 1. Creates a branch with fixture claims and opens a PR.
 2. Waits for `idp-gate` and checks the plan comment.
 3. Merges and waits for reconcile.
@@ -718,10 +710,6 @@ All repos are licensed Apache-2.0. Docs are in English and live in each repo:
   11. Bootstrap outside the IDP.
   12. Required policy with no default.
 - **The claims reference**, the feature-authoring guide and the runbooks.
-- **`docs/firestartr-comparison.md`:**
-  - What was kept: claims, policies, `userManaged`, the feature format.
-  - What changed: edge vs level triggering, Git state, a single PR.
-  - What is lost: continuous reconciliation, multi-cloud, scale.
 
 ## 10. Roadmap
 
@@ -736,7 +724,7 @@ use what that phase measured. Each phase ships an engine minor release.
 | 2 → `0.2.0` | Component AWS part: baseline, ECR + role, deterministic env variables | E2E checks the env variables, and floci integration is green |
 | 3 → `0.3.0` | Workspace: allowlist, policies, orphans, `idp-modules/s3-bucket` | E2E covers the two-step delete and the `apply`-policy rejection |
 | 4 → `0.4.0` | Features: `idp-features` + the 3 features, managed and userManaged | Golden tests, plus E2E with one managed and one userManaged file |
-| 5 → `1.0.0` | Polish: complete docs, Firestartr comparison, tested runbooks | An external person bootstraps a new org using only the README |
+| 5 → `1.0.0` | Polish: complete docs, tested runbooks | An external person bootstraps a new org using only the README |
 
 ## 11. Risks (verified in Phase 0 or by E2E)
 
@@ -756,16 +744,3 @@ use what that phase measured. Each phase ships an engine minor release.
 - Test account for Group members and the pending-invite spike: `adrian-da-silva`.
   The approver and platform admin is `jellalshadows`.
 - Timing: this runs in parallel with `chart-base`.
-
-## 13. Firestartr mapping (quick reference)
-
-| Firestartr | Here |
-|---|---|
-| Claims repo → cdk8s renderer → CRs in a "state" repo → Argo CD → operator | Claims (`main`) → `idp render` → `wet` branch → reconcile workflow |
-| Two PRs (claims PR, then hydrate PR) | One PR; `wet` is written by the reconcile |
-| `TFWorkspaceClaim` with `lifecycle` / `context.providers` / `context.backend` | `Workspace`; the env comes from the folder, and providers come from the platform config |
-| `.firestartr` platforms with `envs` + `allowedClaims` | `config/platform.yaml` with `environments` + `modules.allowedSources` |
-| Policies `full-control` / `apply` / `observe` / `create-only`; default `observe` | `full-control` / `apply` / `observe`; **required**, no default; no `create-only` in v1 |
-| Features from `prefapp/features`, ref `<name>-v<version>`, rendered to `github_repository_file` | Same model in `idp-features`, with `{{\| \|}}` delimiters |
-| `userManaged` via state rm + `installed_managed_files` output | `userManaged` via state rm + `.idp/manifest.json` |
-| Level-triggered operator with periodic sync | Edge-triggered: PR, merge and dispatch; daily drift is report-only |

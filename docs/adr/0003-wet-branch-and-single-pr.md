@@ -6,7 +6,7 @@
 
 ## Context
 
-Claims are DRY: a few lines of YAML expand into repos, rulesets, environments, files and cloud resources. Someone has to be able to see what a change will really do, and the platform needs a place to keep the rendered output and the state. Firestartr solves this with two PRs: a claims PR, then a "hydrate" PR with the rendered custom resources in a separate state repo (spec §13). That gives a reviewable rendered diff, but the developer follows two PRs, and the second only exists after the first is merged.
+Claims are DRY: a few lines of YAML expand into repos, rulesets, environments, files and cloud resources. Someone has to be able to see what a change will really do, and the platform needs a place to keep the rendered output and the state. One common answer is two PRs: a claims PR, then a "hydrate" PR with the rendered output in a separate state repo. That gives a reviewable rendered diff, but the developer follows two PRs, and the second only exists after the first is merged.
 
 The forces here: a single maintainer, a public portfolio where a reviewer should be able to follow a change end to end, and a strong rule that nothing is applied that nobody saw (§6). The rendered output is deterministic (ADR-0005), so it can be recomputed at any time and compared with what was last applied.
 
@@ -39,15 +39,15 @@ On the PR, the pipeline renders and diffs the result against `wet`, plans, and p
 ### Follow-ups
 
 - Phase 1 delivers the diff/orphan logic and the pipelines; the `wet` ruleset comes from bootstrap (§10, ADR-0011).
-- The Firestartr comparison must record "a single PR" as a deliberate change (§9.3).
+- The architecture docs must record "a single PR" as a deliberate choice (§9.3).
 
 ## Alternatives considered
 
-- **Two PRs, as Firestartr does.** Rejected: more ceremony for a single maintainer, and the reviewer of the claim never sees the rendered result before merging. Showing it on the first PR does the same job.
+- **Two PRs: claims, then hydrate.** Rejected: more ceremony for a single maintainer, and the reviewer of the claim never sees the rendered result before merging. Showing it on the first PR does the same job.
 - **Render in CI and never store it.** Rejected: nothing would record what was last applied, so orphans (claims deleted from `main`) and failed stacks could not be detected.
 - **Commit rendered output to `main`.** Rejected: it mixes human and machine files in the protected branch, and `main` has no bypass at all (§7.4).
 - **A separate state repo.** Rejected for v1: more repos to wire up for no extra protection, since a branch with a writer-only ruleset gives the same guarantee.
 
 ## References
 
-- Spec §3.1-§3.3, §5.4, §5.7, §6.1, §6.2, §7.4, §13.
+- Spec §3.1-§3.3, §5.4, §5.7, §6.1, §6.2, §7.4.
