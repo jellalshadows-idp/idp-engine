@@ -3,11 +3,14 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"io"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/nacl/box"
 )
 
 func TestApplyCreatesOrgSettingsRepoAndWetBranch(t *testing.T) {
@@ -207,5 +210,105 @@ func TestRulesetDriftDetectsWeakening(t *testing.T) {
 				t.Errorf("drift = %v, want it to include %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestApplyFromScratchWritesInOrder(t *testing.T) {
+	fake, api := newFakeGitHub(t, "acme")
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+
+	if err := b.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"PUT /orgs/acme/actions/permissions/workflow",
+		"POST /orgs/acme/repos",
+		"POST /repos/acme/idp-claims/git/trees",
+		"POST /repos/acme/idp-claims/git/commits",
+		"POST /repos/acme/idp-claims/git/refs",
+		"POST /repos/acme/idp-claims/rulesets",
+		"POST /repos/acme/idp-claims/rulesets",
+		"PUT /repos/acme/idp-claims/environments/idp-approval",
+		"POST /repos/acme/idp-claims/environments/idp-approval/deployment-branch-policies",
+		"PUT /repos/acme/idp-claims/environments/idp-write",
+		"POST /repos/acme/idp-claims/environments/idp-write/deployment-branch-policies",
+		"PUT /repos/acme/idp-claims/actions/secrets/IDP_READER_PRIVATE_KEY",
+		"PUT /repos/acme/idp-claims/actions/secrets/IDP_STATE_PASSPHRASE",
+		"PUT /repos/acme/idp-claims/environments/idp-write/secrets/IDP_WRITER_PRIVATE_KEY",
+		"POST /repos/acme/idp-claims/actions/variables",
+		"POST /repos/acme/idp-claims/environments/idp-write/variables",
+	}
+	if !slices.Equal(fake.writes, want) {
+		t.Errorf("writes =\n%s\nwant\n%s", strings.Join(fake.writes, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestApplyTwiceIsIdempotent(t *testing.T) {
+	fake, api := newFakeGitHub(t, "acme")
+	var log bytes.Buffer
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: &log}
+	ctx := context.Background()
+	if err := b.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.writes = nil
+	log.Reset()
+
+	if err := b.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.writes) != 0 {
+		t.Errorf("second apply wrote %v, want nothing", fake.writes)
+	}
+	if !strings.Contains(log.String(), "kept existing secret IDP_STATE_PASSPHRASE") {
+		t.Errorf("log = %q, want it to say existing secrets were kept (they cannot be compared)", log.String())
+	}
+}
+
+func TestApplyStoresSealedPassphraseAndWriterKeyInIdpWrite(t *testing.T) {
+	fake, api := newFakeGitHub(t, "acme")
+	cfg := validConfig()
+	b := &Bootstrapper{API: api, Cfg: cfg, Log: io.Discard}
+	if err := b.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		"/repos/acme/idp-claims/actions/secrets/IDP_STATE_PASSPHRASE":                  cfg.Passphrase,
+		"/repos/acme/idp-claims/environments/idp-write/secrets/IDP_WRITER_PRIVATE_KEY": cfg.Writer.PrivateKey,
+	} {
+		stored, ok := fake.objects[path].(map[string]any)
+		if !ok {
+			t.Fatalf("%s was not stored", path)
+		}
+		raw, err := base64.StdEncoding.DecodeString(stored["encrypted_value"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		opened, ok := box.OpenAnonymous(nil, raw, testPub, testPriv)
+		if !ok || string(opened) != want {
+			t.Errorf("%s decrypts to %q, want %q", path, opened, want)
+		}
+	}
+	if _, ok := fake.objects["/repos/acme/idp-claims/actions/secrets/IDP_WRITER_PRIVATE_KEY"]; ok {
+		t.Error("the writer key must never be a repo-level secret (spec §7.3)")
+	}
+}
+
+func TestApplyUpdatesChangedVariable(t *testing.T) {
+	fake, api := newFakeGitHub(t, "acme")
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+	ctx := context.Background()
+	if err := b.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b.Cfg.Reader.ClientID = "Iv-reader-rotated"
+	fake.writes = nil
+
+	if err := b.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"PATCH /repos/acme/idp-claims/actions/variables/IDP_READER_CLIENT_ID"}
+	if !slices.Equal(fake.writes, want) {
+		t.Errorf("writes = %v, want %v", fake.writes, want)
 	}
 }

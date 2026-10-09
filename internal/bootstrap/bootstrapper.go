@@ -26,6 +26,8 @@ func (b *Bootstrapper) Apply(ctx context.Context) error {
 		b.ensureWetBranch,
 		b.ensureRulesets,
 		b.ensureEnvironments,
+		b.ensureSecrets,
+		b.ensureVariables,
 	}
 	for _, step := range steps {
 		if err := step(ctx); err != nil {
@@ -208,4 +210,113 @@ func (b *Bootstrapper) ensureBranchPolicy(ctx context.Context, env Environment) 
 		return nil
 	}
 	return b.API.Post(ctx, base, map[string]any{"name": env.Branch, "type": "branch"}, nil)
+}
+
+// secretSpec is one secret; an empty scope means repository-level,
+// otherwise the scope is an environment name.
+type secretSpec struct{ scope, name, value string }
+
+func (s secretSpec) label() string {
+	if s.scope == "" {
+		return s.name
+	}
+	return s.scope + "/" + s.name
+}
+
+func (b *Bootstrapper) secretSpecs() []secretSpec {
+	return []secretSpec{
+		{scope: "", name: SecretReaderKey, value: b.Cfg.Reader.PrivateKey},
+		{scope: "", name: SecretPassphrase, value: b.Cfg.Passphrase},
+		{scope: EnvWrite, name: SecretWriterKey, value: b.Cfg.Writer.PrivateKey},
+	}
+}
+
+func (b *Bootstrapper) secretsBase(scope string) string {
+	if scope == "" {
+		return b.repoPath() + "/actions/secrets"
+	}
+	return b.repoPath() + "/environments/" + scope + "/secrets"
+}
+
+// ensureSecrets creates missing secrets. Secret values are write-only, so an
+// existing secret is kept as is; rotating means deleting it in GitHub first.
+func (b *Bootstrapper) ensureSecrets(ctx context.Context) error {
+	for _, s := range b.secretSpecs() {
+		base := b.secretsBase(s.scope)
+		err := b.API.Get(ctx, base+"/"+s.name, nil)
+		if err == nil {
+			b.logf("kept existing secret %s (values are write-only; delete it in GitHub to rotate)", s.label())
+			continue
+		}
+		if !errors.Is(err, ghapi.ErrNotFound) {
+			return err
+		}
+		var key struct {
+			KeyID string `json:"key_id"`
+			Key   string `json:"key"`
+		}
+		if err := b.API.Get(ctx, base+"/public-key", &key); err != nil {
+			return err
+		}
+		sealed, err := Seal(key.Key, s.value)
+		if err != nil {
+			return err
+		}
+		if err := b.API.Put(ctx, base+"/"+s.name, map[string]any{"encrypted_value": sealed, "key_id": key.KeyID}, nil); err != nil {
+			return err
+		}
+		b.logf("created secret %s", s.label())
+	}
+	return nil
+}
+
+// variableSpec is one Actions variable; scope works as in secretSpec.
+type variableSpec struct{ scope, name, value string }
+
+func (v variableSpec) label() string {
+	if v.scope == "" {
+		return v.name
+	}
+	return v.scope + "/" + v.name
+}
+
+func (b *Bootstrapper) variableSpecs() []variableSpec {
+	return []variableSpec{
+		{scope: "", name: VarReaderClient, value: b.Cfg.Reader.ClientID},
+		{scope: EnvWrite, name: VarWriterClient, value: b.Cfg.Writer.ClientID},
+	}
+}
+
+func (b *Bootstrapper) variablesBase(scope string) string {
+	if scope == "" {
+		return b.repoPath() + "/actions/variables"
+	}
+	return b.repoPath() + "/environments/" + scope + "/variables"
+}
+
+func (b *Bootstrapper) ensureVariables(ctx context.Context) error {
+	for _, v := range b.variableSpecs() {
+		base := b.variablesBase(v.scope)
+		var cur struct {
+			Value string `json:"value"`
+		}
+		err := b.API.Get(ctx, base+"/"+v.name, &cur)
+		switch {
+		case err == nil && cur.Value == v.value:
+			continue
+		case err == nil:
+			if err := b.API.Patch(ctx, base+"/"+v.name, map[string]any{"name": v.name, "value": v.value}, nil); err != nil {
+				return err
+			}
+			b.logf("updated variable %s", v.label())
+		case errors.Is(err, ghapi.ErrNotFound):
+			if err := b.API.Post(ctx, base, map[string]any{"name": v.name, "value": v.value}, nil); err != nil {
+				return err
+			}
+			b.logf("created variable %s", v.label())
+		default:
+			return err
+		}
+	}
+	return nil
 }
