@@ -95,6 +95,9 @@ func LoadAppCredentials(jsonPath string, withKey bool) (AppCredentials, error) {
 		return AppCredentials{}, fmt.Errorf("%s: %w", jsonPath, err)
 	}
 	if withKey {
+		if c.Slug == "" || c.Slug != filepath.Base(c.Slug) || strings.ContainsAny(c.Slug, `/\`) || c.Slug == "." || c.Slug == ".." {
+			return AppCredentials{}, fmt.Errorf("%s: invalid app slug %q (it must be a plain file name)", jsonPath, c.Slug)
+		}
 		pem, err := os.ReadFile(filepath.Join(filepath.Dir(jsonPath), c.Slug+".pem"))
 		if err != nil {
 			return AppCredentials{}, err

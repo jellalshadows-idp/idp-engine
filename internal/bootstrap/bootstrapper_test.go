@@ -57,6 +57,21 @@ func TestApplyCreatesOrgSettingsRepoAndWetBranch(t *testing.T) {
 	}
 }
 
+func TestApplyRefusesAnExistingPrivateClaimsRepo(t *testing.T) {
+	fake, api := newFake(t)
+	fake.Objects["/repos/acme/idp-claims"] = map[string]any{"name": "idp-claims", "visibility": "private"}
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+
+	err := b.Apply(context.Background())
+	want := "repo acme/idp-claims is private; rulesets on the GitHub Free plan require a public repo"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to contain %q", err, want)
+	}
+	if slices.Contains(fake.Writes, "POST /repos/acme/idp-claims/rulesets") {
+		t.Errorf("writes = %v, want no rulesets on a private repo", fake.Writes)
+	}
+}
+
 func TestApplyExplainsMissingAdminOrgScope(t *testing.T) {
 	fake, api := newFake(t)
 	fake.Forbidden["/orgs/acme/actions/permissions/workflow"] = true

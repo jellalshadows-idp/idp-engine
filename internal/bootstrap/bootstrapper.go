@@ -81,8 +81,14 @@ func orgAdminHint(err error) error {
 }
 
 func (b *Bootstrapper) ensureRepo(ctx context.Context) error {
-	err := b.API.Get(ctx, b.repoPath(), nil)
+	var repo struct {
+		Visibility string `json:"visibility"`
+	}
+	err := b.API.Get(ctx, b.repoPath(), &repo)
 	if err == nil {
+		if repo.Visibility != "public" {
+			return fmt.Errorf("repo %s is %s; rulesets on the GitHub Free plan require a public repo", b.repoFullName(), repo.Visibility)
+		}
 		return nil
 	}
 	if !errors.Is(err, ghapi.ErrNotFound) {

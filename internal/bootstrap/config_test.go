@@ -2,10 +2,12 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -146,5 +148,41 @@ func TestUserID(t *testing.T) {
 	}
 	if _, err := UserID(context.Background(), ghapi.New(srv.URL, "t"), "ghost"); err == nil {
 		t.Fatal("want error for unknown user")
+	}
+}
+
+func TestLoadAppCredentialsRejectsUnsafeSlugs(t *testing.T) {
+	for _, slug := range []string{"", "../x", "a/b", `a\b`, ".", ".."} {
+		t.Run("slug "+slug, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "app.json")
+			if err := os.WriteFile(path, []byte(`{"id": 1, "client_id": "Iv", "slug": `+strconv.Quote(slug)+`}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadAppCredentials(path, true)
+			if err == nil || !strings.Contains(err.Error(), "invalid app slug") {
+				t.Fatalf("err = %v, want an invalid app slug error", err)
+			}
+		})
+	}
+}
+
+func TestLoadAppCredentialsMissingKeyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "acme-writer.json")
+	if err := os.WriteFile(path, []byte(`{"id": 1, "client_id": "Iv", "slug": "acme-writer"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAppCredentials(path, true); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("err = %v, want the missing .pem to surface as not-exist", err)
+	}
+}
+
+func TestLoadAppCredentialsMalformedJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.json")
+	if err := os.WriteFile(path, []byte(`{"id":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAppCredentials(path, false); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("err = %v, want a decode error naming %s", err, path)
 	}
 }
