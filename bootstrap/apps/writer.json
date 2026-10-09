@@ -1,0 +1,13 @@
+{
+  "description": "IDP writer: applies rendered GitHub stacks and commits to the wet branch. Its key lives only in the idp-write environment.",
+  "public": false,
+  "default_permissions": {
+    "administration": "write",
+    "contents": "write",
+    "environments": "write",
+    "members": "write",
+    "metadata": "read",
+    "workflows": "write"
+  },
+  "default_events": []
+}

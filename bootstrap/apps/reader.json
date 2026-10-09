@@ -1,0 +1,14 @@
+{
+  "description": "IDP reader: plans on pull requests and checks drift. Read-only by design.",
+  "public": false,
+  "default_permissions": {
+    "administration": "read",
+    "contents": "read",
+    "environments": "read",
+    "members": "read",
+    "metadata": "read",
+    "organization_administration": "read",
+    "secrets": "read"
+  },
+  "default_events": []
+}
