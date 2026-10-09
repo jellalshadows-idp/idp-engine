@@ -87,7 +87,10 @@ func WetRuleset(writerAppID int64) Ruleset {
 		Rules: []Rule{
 			{Type: "deletion"},
 			{Type: "non_fast_forward"},
-			{Type: "update", Parameters: map[string]any{"update_allows_fetch_and_merge": false}},
+			// GitHub returns the update rule without parameters when
+			// update_allows_fetch_and_merge is false (its default), so sending
+			// it would make every apply report drift.
+			{Type: "update"},
 		},
 	}
 }
