@@ -58,8 +58,6 @@ type Server struct {
 	Forbidden map[string]bool
 	// LastAuthorization is the Authorization header of the latest request.
 	LastAuthorization string
-	// LastQuery is the raw query string (without "?") of the latest request.
-	LastQuery string
 	// Queries maps a request path to the raw query string of its latest request.
 	Queries map[string]string
 
@@ -94,7 +92,6 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.LastAuthorization = r.Header.Get("Authorization")
-	f.LastQuery = r.URL.RawQuery
 	f.Queries[r.URL.Path] = r.URL.RawQuery
 	var body map[string]any
 	if r.ContentLength != 0 {
