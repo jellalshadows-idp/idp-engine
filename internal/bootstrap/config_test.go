@@ -84,6 +84,15 @@ func TestLoadAppCredentials(t *testing.T) {
 	}
 }
 
+// utf16le encodes ASCII s the way Windows PowerShell's default redirection does.
+func utf16le(s string) string {
+	b := []byte{0xFF, 0xFE}
+	for i := 0; i < len(s); i++ {
+		b = append(b, s[i], 0x00)
+	}
+	return string(b)
+}
+
 func TestReadPassphrase(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -95,6 +104,11 @@ func TestReadPassphrase(t *testing.T) {
 		{name: "lf is trimmed", content: "correct-horse-battery-staple\n", want: "correct-horse-battery-staple"},
 		{name: "inner spaces are kept", content: "correct horse battery staple", want: "correct horse battery staple"},
 		{name: "too short after trimming", content: "fifteen-chars!!\r\n", wantError: true},
+		{name: "utf-8 bom is stripped", content: "\xef\xbb\xbfcorrect-horse-battery-staple\r\n", want: "correct-horse-battery-staple"},
+		{name: "utf-16le is rejected", content: utf16le("correct-horse-battery-staple"), wantError: true},
+		{name: "embedded nul is rejected", content: "correct-horse\x00battery-staple", wantError: true},
+		{name: "embedded tab is rejected", content: "correct-horse\tbattery-staple", wantError: true},
+		{name: "invalid utf-8 is rejected", content: "correct-horse-\xff\xfe-battery-staple", wantError: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

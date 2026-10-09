@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/ghapi"
@@ -110,7 +111,10 @@ func ReadPassphrase(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	p := strings.TrimRight(string(raw), "\r\n")
+	p := strings.TrimRight(strings.TrimPrefix(string(raw), "\xef\xbb\xbf"), "\r\n")
+	if !utf8.ValidString(p) || strings.ContainsFunc(p, unicode.IsControl) {
+		return "", fmt.Errorf("passphrase in %s is not valid UTF-8 or contains control characters (UTF-16 file? several lines?); save the file as UTF-8 without BOM, on a single line", path)
+	}
 	if utf8.RuneCountInString(p) < 16 {
 		return "", fmt.Errorf("passphrase in %s is shorter than 16 characters", path)
 	}
