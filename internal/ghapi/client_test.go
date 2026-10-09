@@ -109,19 +109,24 @@ func TestNewSetsATimeout(t *testing.T) {
 	}
 }
 
-func TestOversizedBodyIsRejected(t *testing.T) {
+// TestOversizedNotFoundStillMapsToErrNotFound mutates maxBodyBytes: no t.Parallel().
+func TestOversizedNotFoundStillMapsToErrNotFound(t *testing.T) {
 	old := maxBodyBytes
 	maxBodyBytes = 16
 	defer func() { maxBodyBytes = old }()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
 		io.WriteString(w, strings.Repeat("a", 64))
 	}))
 	defer srv.Close()
 
 	err := New(srv.URL, "").Get(context.Background(), "/x", nil)
-	if err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("err = %v, want a body-too-large error", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("errors.Is(err, ErrNotFound) = false (err %v)", err)
+	}
+	if strings.Contains(err.Error(), strings.Repeat("a", 64)) {
+		t.Errorf("err = %q, want the oversized message truncated", err)
 	}
 }
 

@@ -178,6 +178,10 @@ func runBootstrapApp(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintln(stderr, "idp bootstrap app: --org is required")
 		return 2
 	}
+	if !bootstrap.ValidOrgName(*org) {
+		fmt.Fprintln(stderr, "idp bootstrap app: --org must be a valid GitHub organization name")
+		return 2
+	}
 	if *role != string(bootstrap.RoleReader) && *role != string(bootstrap.RoleWriter) {
 		fmt.Fprintln(stderr, "idp bootstrap app: --role must be reader or writer")
 		return 2

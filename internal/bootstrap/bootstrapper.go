@@ -87,7 +87,7 @@ func (b *Bootstrapper) ensureRepo(ctx context.Context) error {
 	err := b.API.Get(ctx, b.repoPath(), &repo)
 	if err == nil {
 		if repo.Visibility != "public" {
-			return fmt.Errorf("repo %s is %s; rulesets on the GitHub Free plan require a public repo", b.repoFullName(), repo.Visibility)
+			return fmt.Errorf("repo %s is %q; rulesets on the GitHub Free plan require a public repo", b.repoFullName(), repo.Visibility)
 		}
 		return nil
 	}

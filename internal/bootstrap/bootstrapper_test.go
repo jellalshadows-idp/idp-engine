@@ -63,7 +63,7 @@ func TestApplyRefusesAnExistingPrivateClaimsRepo(t *testing.T) {
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 
 	err := b.Apply(context.Background())
-	want := "repo acme/idp-claims is private; rulesets on the GitHub Free plan require a public repo"
+	want := `repo acme/idp-claims is "private"; rulesets on the GitHub Free plan require a public repo`
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want it to contain %q", err, want)
 	}

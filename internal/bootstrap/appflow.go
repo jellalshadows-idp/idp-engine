@@ -37,12 +37,15 @@ const maxAppName = 34
 // orgNameRE matches GitHub organization logins: alphanumerics and inner hyphens, up to 39 characters.
 var orgNameRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
 
+// ValidOrgName reports whether org is a syntactically valid GitHub organization login.
+func ValidOrgName(org string) bool { return orgNameRE.MatchString(org) }
+
 // Manifest returns the GitHub App manifest for org and role, named <org>-<role>.
 func Manifest(org string, role AppRole, callback string) (map[string]any, error) {
 	if role != RoleReader && role != RoleWriter {
 		return nil, fmt.Errorf("unknown app role %q (want reader or writer)", role)
 	}
-	if !orgNameRE.MatchString(org) {
+	if !ValidOrgName(org) {
 		return nil, fmt.Errorf("invalid org name %q", org)
 	}
 	name := org + "-" + string(role)
@@ -203,10 +206,7 @@ func writeOwnerOnly(path string, data []byte) error {
 	}
 	// A SIGKILL mid-write can leave a 0600 temp file next to the credentials (never a world-readable one).
 	defer os.Remove(tmp.Name()) // no-op after a successful rename
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
+	// os.CreateTemp already creates the file 0600 on Unix; Windows does not enforce modes (see the runbook).
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return err

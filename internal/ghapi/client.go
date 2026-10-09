@@ -105,14 +105,19 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 	if err != nil {
 		return fmt.Errorf("read %s %s: %w", method, path, err)
 	}
-	if int64(len(raw)) > maxBodyBytes {
-		return fmt.Errorf("read %s %s: response body exceeds %d bytes", method, path, maxBodyBytes)
+	oversized := int64(len(raw)) > maxBodyBytes
+	if oversized {
+		raw = raw[:maxBodyBytes] // keep the message bounded
 	}
+	// A 404 stays ErrNotFound even when its body is oversized: callers branch on it.
 	if resp.StatusCode == http.StatusNotFound {
 		if msg := strings.TrimSpace(string(raw)); msg != "" {
 			return fmt.Errorf("github %s %s: %w: %s", method, path, ErrNotFound, msg)
 		}
 		return fmt.Errorf("github %s %s: %w", method, path, ErrNotFound)
+	}
+	if oversized {
+		return fmt.Errorf("read %s %s: response body exceeds %d bytes", method, path, maxBodyBytes)
 	}
 	if resp.StatusCode >= 300 {
 		return &APIError{Method: method, Path: path, Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}

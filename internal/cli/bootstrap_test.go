@@ -25,6 +25,7 @@ func TestBootstrapUsageErrors(t *testing.T) {
 		{name: "check does not need a passphrase", args: []string{"bootstrap", "check"}, wantStderr: "missing --org, --claims-repo, --approver, --reader, --writer\n"},
 		{name: "token is required", args: []string{"bootstrap", "check", "--org", "o", "--claims-repo", "r", "--approver", "a", "--reader", "r.json", "--writer", "w.json"}, wantStderr: "set GH_TOKEN"},
 		{name: "app needs an org", args: []string{"bootstrap", "app", "--role", "reader"}, wantStderr: "idp bootstrap app: --org is required\n"},
+		{name: "app rejects an invalid org before listening", args: []string{"bootstrap", "app", "--org", "-bad", "--role", "reader"}, wantStderr: "idp bootstrap app: --org must be a valid GitHub organization name\n"},
 		{name: "app needs a valid role", args: []string{"bootstrap", "app", "--org", "o", "--role", "admin"}, wantStderr: "idp bootstrap app: --role must be reader or writer\n"},
 		{name: "app listen 0.0.0.0:8080 is rejected", args: []string{"bootstrap", "app", "--org", "o", "--role", "reader", "--listen", "0.0.0.0:8080"}, wantStderr: "idp bootstrap app: --listen must be a loopback address (e.g. 127.0.0.1:0)\n"},
 		{name: "app listen :8080 is rejected", args: []string{"bootstrap", "app", "--org", "o", "--role", "reader", "--listen", ":8080"}, wantStderr: "idp bootstrap app: --listen must be a loopback address (e.g. 127.0.0.1:0)\n"},
