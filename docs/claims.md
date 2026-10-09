@@ -27,6 +27,18 @@ Use `group.json` or `platform.json` for the other kinds. Pin a release tag inste
 
 ## Platform (`config/platform.yaml`)
 
+```yaml
+apiVersion: idp/v1
+kind: Platform
+github:
+  org: acme
+  writerAppId: 5255579      # the writer App's id
+environments:
+  dev: {}
+  pro:
+    protected: true
+```
+
 | Field | Required | Default | Meaning |
 |---|---|---|---|
 | `github.org` | yes | | The GitHub org |
