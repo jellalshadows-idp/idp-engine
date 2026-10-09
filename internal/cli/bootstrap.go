@@ -29,15 +29,13 @@ func runBootstrap(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprint(stderr, bootstrapUsage)
 		return 2
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	switch args[0] {
 	case "app":
-		return runBootstrapApp(ctx, args[1:], stdout, stderr, env)
+		return runBootstrapApp(args[1:], stdout, stderr, env)
 	case "apply":
-		return runBootstrapRepo(ctx, "apply", args[1:], stdout, stderr, env)
+		return runBootstrapRepo("apply", args[1:], stdout, stderr, env)
 	case "check":
-		return runBootstrapRepo(ctx, "check", args[1:], stdout, stderr, env)
+		return runBootstrapRepo("check", args[1:], stdout, stderr, env)
 	default:
 		fmt.Fprintf(stderr, "idp bootstrap: unknown subcommand %q\n\n%s", args[0], bootstrapUsage)
 		return 2
@@ -63,7 +61,7 @@ func fail(stderr io.Writer, err error) int {
 	return 1
 }
 
-func runBootstrapRepo(ctx context.Context, mode string, args []string, stdout, stderr io.Writer, env Env) int {
+func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env Env) int {
 	fs := flag.NewFlagSet("idp bootstrap "+mode, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	org := fs.String("org", "", "GitHub organization")
@@ -98,6 +96,8 @@ func runBootstrapRepo(ctx context.Context, mode string, args []string, stdout, s
 		return 2
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	api := ghapi.New(apiBase(env), tok)
 	withKeys := mode == "apply"
 	cfg := bootstrap.Config{Org: *org, ClaimsRepo: *repo}
@@ -149,7 +149,22 @@ func runBootstrapRepo(ctx context.Context, mode string, args []string, stdout, s
 	return 0
 }
 
-func runBootstrapApp(ctx context.Context, args []string, stdout, stderr io.Writer, env Env) int {
+// isLoopback reports whether addr is host:port with host localhost or a loopback
+// IP. The callback server receives App credentials, so it must not be reachable
+// from the network; an empty host would bind every interface.
+func isLoopback(addr string) bool {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func runBootstrapApp(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := flag.NewFlagSet("idp bootstrap app", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	org := fs.String("org", "", "GitHub organization that will own the App")
@@ -159,8 +174,16 @@ func runBootstrapApp(ctx context.Context, args []string, stdout, stderr io.Write
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *org == "" || (*role != string(bootstrap.RoleReader) && *role != string(bootstrap.RoleWriter)) {
-		fmt.Fprintln(stderr, "idp bootstrap app: --org and --role reader|writer are required")
+	if *org == "" {
+		fmt.Fprintln(stderr, "idp bootstrap app: --org is required")
+		return 2
+	}
+	if *role != string(bootstrap.RoleReader) && *role != string(bootstrap.RoleWriter) {
+		fmt.Fprintln(stderr, "idp bootstrap app: --role must be reader or writer")
+		return 2
+	}
+	if !isLoopback(*listen) {
+		fmt.Fprintln(stderr, "idp bootstrap app: --listen must be a loopback address (e.g. 127.0.0.1:0)")
 		return 2
 	}
 	dir := *outDir
@@ -171,6 +194,8 @@ func runBootstrapApp(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 		dir = filepath.Join(home, ".idp", "apps")
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return fail(stderr, err)
