@@ -83,3 +83,44 @@ func TestRulesetDriftEmptyBypassActorsIsNotHidden(t *testing.T) {
 		t.Errorf("drift = %v, want none", got)
 	}
 }
+
+// A JSON null is as unverifiable as an absent key.
+func TestRulesetDriftFailsClosedWhenBypassActorsNull(t *testing.T) {
+	fake, api := newFakeGitHub(t, "acme")
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+	ctx := context.Background()
+	if err := b.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	main := fake.rulesetByName("idp-main")
+	main["bypass_actors"] = nil
+
+	got, err := b.rulesetDrift(ctx, main["id"].(int64), MainRuleset())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, bypassHiddenMsg) {
+		t.Errorf("drift = %v, want it to include %q", got, bypassHiddenMsg)
+	}
+}
+
+// idp-wet desires one bypass actor, so the generic mismatch must be replaced
+// by the dedicated message, not reported next to it.
+func TestRulesetDriftWetHiddenBypassActorsReportsOnlyDedicatedMessage(t *testing.T) {
+	fake, api := newFakeGitHub(t, "acme")
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+	ctx := context.Background()
+	if err := b.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wet := fake.rulesetByName("idp-wet")
+	delete(wet, "bypass_actors")
+
+	got, err := b.rulesetDrift(ctx, wet["id"].(int64), WetRuleset(b.Cfg.Writer.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{bypassHiddenMsg}; !slices.Equal(got, want) {
+		t.Errorf("drift = %v, want exactly %v", got, want)
+	}
+}
