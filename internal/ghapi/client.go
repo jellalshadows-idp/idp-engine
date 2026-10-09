@@ -109,7 +109,10 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 		return fmt.Errorf("read %s %s: response body exceeds %d bytes", method, path, maxBodyBytes)
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("github %s %s: %w: %s", method, path, ErrNotFound, strings.TrimSpace(string(raw)))
+		if msg := strings.TrimSpace(string(raw)); msg != "" {
+			return fmt.Errorf("github %s %s: %w: %s", method, path, ErrNotFound, msg)
+		}
+		return fmt.Errorf("github %s %s: %w", method, path, ErrNotFound)
 	}
 	if resp.StatusCode >= 300 {
 		return &APIError{Method: method, Path: path, Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}

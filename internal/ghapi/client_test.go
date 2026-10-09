@@ -141,6 +141,51 @@ func TestNotFoundKeepsGitHubMessage(t *testing.T) {
 	}
 }
 
+func TestNotFoundWithEmptyBodyIsPlain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, " \n")
+	}))
+	defer srv.Close()
+
+	err := New(srv.URL, "").Get(context.Background(), "/x", nil)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("errors.Is(err, ErrNotFound) = false (err %v)", err)
+	}
+	if got, want := err.Error(), "github GET /x: not found"; got != want {
+		t.Errorf("err = %q, want %q", got, want)
+	}
+}
+
+func TestBodyLimitBoundary(t *testing.T) {
+	old := maxBodyBytes
+	maxBodyBytes = 16
+	defer func() { maxBodyBytes = old }()
+
+	tests := []struct {
+		name    string
+		size    int64
+		wantErr bool
+	}{
+		{name: "exactly the limit is accepted", size: 16},
+		{name: "one byte over is rejected", size: 17, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, strings.Repeat(" ", int(tt.size)-2)+"{}")
+			}))
+			defer srv.Close()
+
+			var out map[string]any
+			err := New(srv.URL, "").Get(context.Background(), "/x", &out)
+			if tt.wantErr != (err != nil && strings.Contains(err.Error(), "exceeds")) || (!tt.wantErr && err != nil) {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestMalformedJSONOnSuccessIsADecodeError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"id":`)
