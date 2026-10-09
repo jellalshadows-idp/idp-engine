@@ -38,7 +38,7 @@ Bootstrap is **outside the IDP**, and is implemented as the Go subcommand `idp b
 
 ### Follow-ups
 
-- Phase 0 produces the Apps, orgs and repos by hand (spec §10, §12) before `idp bootstrap` exists to automate it.
+- Phase 0 creates the org by hand (Free orgs cannot be created through the API, spec §12); the Apps are created with `idp bootstrap app` (GitHub's manifest flow, where a person only confirms in the browser) and everything else with `idp bootstrap apply` (spec §9.2, §10).
 - The runbook "bootstrap a new org" and the success criterion that an external person can bootstrap using only the README are Phase 5 exit criteria (§7.7, §10).
 - The Phase 4 ADR for the Actions-create-PRs setting must record the weakened-review risk.
 
