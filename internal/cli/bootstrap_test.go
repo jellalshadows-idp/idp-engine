@@ -2,7 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -38,5 +43,46 @@ func TestHelpListsBootstrap(t *testing.T) {
 	Run([]string{"help"}, &stdout, &stderr, noEnv)
 	if !strings.Contains(stdout.String(), "bootstrap") {
 		t.Errorf("help = %q, want it to list bootstrap", stdout.String())
+	}
+}
+
+func TestApplyValidatesLocalInputsBeforeCallingGitHub(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Write([]byte(`{"id": 1}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	for _, role := range []string{"reader", "writer"} {
+		os.WriteFile(filepath.Join(dir, role+".json"), []byte(`{"id":1,"client_id":"Iv","slug":"`+role+`"}`), 0o600)
+		os.WriteFile(filepath.Join(dir, role+".pem"), []byte("PEM"), 0o600)
+	}
+	pass := filepath.Join(dir, "pass")
+	os.WriteFile(pass, []byte("short"), 0o600)
+	env := func(k string) string {
+		switch k {
+		case "GH_TOKEN":
+			return "t"
+		case "IDP_GITHUB_API":
+			return srv.URL
+		}
+		return ""
+	}
+	base := []string{"bootstrap", "apply", "--org", "o", "--claims-repo", "r", "--approver", "a",
+		"--reader", filepath.Join(dir, "reader.json"), "--writer", filepath.Join(dir, "writer.json")}
+
+	for name, args := range map[string][]string{
+		"bad passphrase":      append(base[:len(base):len(base)], "--passphrase-file", pass),
+		"missing credentials": {"bootstrap", "check", "--org", "o", "--claims-repo", "r", "--approver", "a", "--reader", filepath.Join(dir, "nope.json"), "--writer", filepath.Join(dir, "writer.json")},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(args, &stdout, &stderr, env); code != 1 {
+			t.Errorf("%s: exit code = %d, want 1 (stderr %q)", name, code, stderr.String())
+		}
+		if n := calls.Load(); n != 0 {
+			t.Errorf("%s: made %d GitHub call(s) before local validation", name, n)
+		}
 	}
 }

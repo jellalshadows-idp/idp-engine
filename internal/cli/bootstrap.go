@@ -108,14 +108,17 @@ func runBootstrapRepo(ctx context.Context, mode string, args []string, stdout, s
 	if cfg.Writer, err = bootstrap.LoadAppCredentials(*writerFile, withKeys); err != nil {
 		return fail(stderr, err)
 	}
+	if mode == "apply" {
+		if cfg.Passphrase, err = bootstrap.ReadPassphrase(*passFile); err != nil {
+			return fail(stderr, err)
+		}
+	}
+	// Local inputs are validated above; only now is it worth a network call.
 	if cfg.ApproverID, err = bootstrap.UserID(ctx, api, *approver); err != nil {
 		return fail(stderr, err)
 	}
 
 	if mode == "apply" {
-		if cfg.Passphrase, err = bootstrap.ReadPassphrase(*passFile); err != nil {
-			return fail(stderr, err)
-		}
 		if err := cfg.ValidateApply(); err != nil {
 			return fail(stderr, err)
 		}
