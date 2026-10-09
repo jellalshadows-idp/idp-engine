@@ -19,6 +19,7 @@ func TestParseFile(t *testing.T) {
 		{name: "invalid YAML reports a line", data: "a: 1\nb: [unclosed\n", wantMsg: "invalid YAML", wantLine: -1},
 		{name: "non-string key", data: "1: a\n", wantMsg: "mapping keys must be strings", wantLine: 1},
 		{name: "non-finite number", data: "a: .inf\n", wantMsg: "numbers must be finite", wantLine: 1},
+		{name: "duplicate key", data: "a: 1\nb: 2\na: 3\n", wantMsg: `duplicate key "a" (first defined at line 1)`, wantLine: 3},
 		{name: "date-like value", data: "a: 2024-01-01\n"},
 		{name: "merge key", data: "base: &b {x: 1}\nuse:\n  <<: *b\n"},
 	}

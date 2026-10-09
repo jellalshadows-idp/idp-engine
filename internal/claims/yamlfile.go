@@ -3,6 +3,7 @@ package claims
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"regexp"
@@ -80,11 +81,19 @@ func normalize(file string, root *yaml.Node) []Diagnostic {
 				}
 			}
 		case yaml.MappingNode:
+			seen := map[string]int{}
 			for i := 0; i+1 < len(n.Content); i += 2 {
 				key, val := n.Content[i], n.Content[i+1]
-				walk(key)
+				walk(key) // retags date-like keys, so Value below is the text as written
 				if key.Kind != yaml.ScalarNode || (key.ShortTag() != "!!str" && key.ShortTag() != "!!merge") {
 					out = append(out, Diagnostic{File: file, Line: key.Line, Message: "mapping keys must be strings"})
+				} else if key.ShortTag() == "!!str" {
+					if first, dup := seen[key.Value]; dup {
+						out = append(out, Diagnostic{File: file, Line: key.Line,
+							Message: fmt.Sprintf("duplicate key %q (first defined at line %d)", key.Value, first)})
+					} else {
+						seen[key.Value] = key.Line
+					}
 				}
 				walk(val)
 			}

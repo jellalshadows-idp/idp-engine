@@ -44,7 +44,12 @@ type loader struct {
 func (l *loader) add(ds ...Diagnostic) { l.diags = append(l.diags, ds...) }
 
 func (l *loader) read(rel string) (*document, bool) {
-	data, err := os.ReadFile(filepath.Join(l.dir, filepath.FromSlash(rel)))
+	full := filepath.Join(l.dir, filepath.FromSlash(rel))
+	if info, err := os.Lstat(full); err == nil && !info.Mode().IsRegular() {
+		l.add(Diagnostic{File: rel, Message: "must be a regular file, not a symlink or special file"})
+		return nil, false
+	}
+	data, err := os.ReadFile(full)
 	if err != nil {
 		msg := err.Error()
 		if errors.Is(err, fs.ErrNotExist) {
@@ -128,6 +133,9 @@ func (l *loader) claimFiles(dirRel string) []string {
 		case strings.HasPrefix(e.Name(), "."):
 		case e.IsDir():
 			l.add(Diagnostic{File: rel, Message: "unexpected directory; claims are files directly in " + dirRel})
+		case !e.Type().IsRegular():
+			// A symlink would let a claims PR make the loader read any file on the runner.
+			l.add(Diagnostic{File: rel, Message: "unexpected symlink or special file; claim files must be regular files"})
 		case strings.HasSuffix(e.Name(), ".yaml"):
 			files = append(files, rel)
 		default:

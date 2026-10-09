@@ -177,3 +177,45 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 		t.Errorf("diagnostics = %v, want two, sorted by file", lines(ds))
 	}
 }
+
+func TestLoadRejectsSymlinkedClaim(t *testing.T) {
+	repo := baseRepo()
+	repo["elsewhere/web.yaml"] = strings.Replace(validComponent, "name: api", "name: web", 1)
+	dir := writeTree(t, repo)
+	if err := os.Symlink(filepath.Join(dir, "elsewhere", "web.yaml"), filepath.Join(dir, "claims", "components", "web.yaml")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	_, ds, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "claims/components/web.yaml: unexpected symlink or special file; claim files must be regular files"
+	if got := lines(ds); len(got) != 1 || got[0] != want {
+		t.Errorf("diagnostics = %v, want exactly %q", got, want)
+	}
+}
+
+func TestLoadRejectsSymlinkedPlatform(t *testing.T) {
+	repo := baseRepo()
+	repo["elsewhere/platform.yaml"] = validPlatform
+	delete(repo, "config/platform.yaml")
+	dir := writeTree(t, repo)
+	if err := os.MkdirAll(filepath.Join(dir, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "elsewhere", "platform.yaml"), filepath.Join(dir, "config", "platform.yaml")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	_, ds, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "config/platform.yaml: must be a regular file, not a symlink or special file"
+	found := false
+	for _, l := range lines(ds) {
+		found = found || l == want
+	}
+	if !found {
+		t.Errorf("diagnostics = %v, want to contain %q", lines(ds), want)
+	}
+}
