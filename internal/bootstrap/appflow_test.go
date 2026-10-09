@@ -41,9 +41,16 @@ func TestManifestReaderIsReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for k, v := range m["default_permissions"].(map[string]any) {
+	perms := m["default_permissions"].(map[string]any)
+	for k, v := range perms {
 		if v != "read" {
 			t.Errorf("reader permission %s = %v, want read", k, v)
+		}
+	}
+	// check reads environments, their branch policies, secrets and variables.
+	for _, need := range []string{"actions", "actions_variables", "environments", "secrets", "organization_administration", "metadata"} {
+		if _, ok := perms[need]; !ok {
+			t.Errorf("reader manifest lacks permission %q that check needs", need)
 		}
 	}
 }
