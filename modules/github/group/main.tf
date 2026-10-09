@@ -5,7 +5,7 @@ resource "github_team" "this" {
 }
 
 resource "github_team_membership" "this" {
-  for_each = { for m in var.members : m.user => m }
+  for_each = { for m in var.members : lower(m.user) => m }
 
   team_id  = github_team.this.id
   username = each.value.user

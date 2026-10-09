@@ -35,6 +35,32 @@ run "one_membership_per_member_with_its_role" {
   }
 }
 
+run "memberships_are_keyed_by_lowercase_login" {
+  command = plan
+
+  variables {
+    members = [{ user = "Alice", role = "maintainer" }]
+  }
+
+  assert {
+    condition     = github_team_membership.this["alice"].username == "Alice"
+    error_message = "the key must be the lowercase login while the username keeps its case"
+  }
+}
+
+run "rejects_logins_differing_only_by_case" {
+  command = plan
+
+  variables {
+    members = [
+      { user = "Alice", role = "member" },
+      { user = "alice", role = "member" },
+    ]
+  }
+
+  expect_failures = [var.members]
+}
+
 run "rejects_unknown_roles" {
   command = plan
 
