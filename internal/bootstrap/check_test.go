@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"context"
 	"io"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -24,12 +26,12 @@ func TestCheckCleanOrgHasNoFindings(t *testing.T) {
 	installBoth(fake)
 	fake.Writes = nil
 
-	findings, err := b.Check(context.Background())
+	got, err := b.Check(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(findings) != 0 {
-		t.Errorf("findings = %v, want none", findings)
+	if len(got) != 0 {
+		t.Errorf("findings = %v, want none", got)
 	}
 	if len(fake.Writes) != 0 {
 		t.Errorf("check wrote %v; it must be read-only", fake.Writes)
@@ -52,36 +54,45 @@ func TestCheckReportsDrift(t *testing.T) {
 		name    string
 		mutate  func(*fakegithub.Server)
 		install bool
-		want    string
+		want    []string // the exact findings, sorted
 	}{
-		{name: "app not installed", mutate: func(*fakegithub.Server) {}, install: false, want: "app acme-writer: not installed on org acme"},
+		{name: "app not installed", mutate: func(*fakegithub.Server) {}, install: false, want: []string{
+			"app acme-reader: not installed on org acme",
+			"app acme-writer: not installed on org acme",
+		}},
 		{name: "bypass added to main", install: true, mutate: func(f *fakegithub.Server) {
 			f.RulesetByName("idp-main")["bypass_actors"] = []any{map[string]any{"actor_id": float64(9), "actor_type": "User", "bypass_mode": "always"}}
-		}, want: "ruleset idp-main: drift at"},
+		}, want: []string{"ruleset idp-main: drift at [$.bypass_actors]"}},
 		{name: "bypass actors hidden from token", install: true, mutate: func(f *fakegithub.Server) {
 			delete(f.RulesetByName("idp-main"), "bypass_actors")
-		}, want: "not returned to this token"},
+		}, want: []string{"ruleset idp-main: drift at [" + bypassHiddenMsg + "]"}},
 		{name: "secret deleted", install: true, mutate: func(f *fakegithub.Server) {
 			delete(f.Objects, "/repos/acme/idp-claims/actions/secrets/IDP_STATE_PASSPHRASE")
-		}, want: "secret IDP_STATE_PASSPHRASE: missing"},
+		}, want: []string{"secret IDP_STATE_PASSPHRASE: missing"}},
 		{name: "writer key leaked to repo level", install: true, mutate: func(f *fakegithub.Server) {
 			f.Objects["/repos/acme/idp-claims/actions/secrets/IDP_WRITER_PRIVATE_KEY"] = map[string]any{"name": "IDP_WRITER_PRIVATE_KEY"}
-		}, want: "secret IDP_WRITER_PRIVATE_KEY: present at repo level; it must live only in idp-write"},
+		}, want: []string{"secret IDP_WRITER_PRIVATE_KEY: present at repo level; it must live only in idp-write"}},
 		{name: "secret in idp-approval", install: true, mutate: func(f *fakegithub.Server) {
 			f.Objects["/repos/acme/idp-claims/environments/idp-approval/secrets/X"] = map[string]any{"name": "X"}
-		}, want: "environment idp-approval: holds 1 secret(s); it must hold none"},
+		}, want: []string{"environment idp-approval: holds 1 secret(s); it must hold none"}},
 		{name: "private repo", install: true, mutate: func(f *fakegithub.Server) {
 			f.Objects["/repos/acme/idp-claims"].(map[string]any)["visibility"] = "private"
-		}, want: `repo acme/idp-claims: visibility is "private", want public`},
+		}, want: []string{`repo acme/idp-claims: visibility is "private", want public (Free-plan rulesets need public repos)`}},
 		{name: "reviewer removed", install: true, mutate: func(f *fakegithub.Server) {
 			f.Objects["/repos/acme/idp-claims/environments/idp-approval"].(map[string]any)["protection_rules"] = []any{}
-		}, want: "environment idp-approval: drift at"},
+		}, want: []string{"environment idp-approval: drift at [$.reviewer_ids]"}},
 		{name: "variable changed", install: true, mutate: func(f *fakegithub.Server) {
 			f.Objects["/repos/acme/idp-claims/actions/variables/IDP_READER_CLIENT_ID"] = map[string]any{"name": "IDP_READER_CLIENT_ID", "value": "other"}
-		}, want: "variable IDP_READER_CLIENT_ID: value differs"},
+		}, want: []string{"variable IDP_READER_CLIENT_ID: value differs"}},
 		{name: "org defaults loosened", install: true, mutate: func(f *fakegithub.Server) {
 			f.Objects["/orgs/acme/actions/permissions/workflow"] = map[string]any{"default_workflow_permissions": "write", "can_approve_pull_request_reviews": true}
-		}, want: "org acme: workflow permissions"},
+		}, want: []string{"org acme: workflow permissions are {Default:write CanApprove:true}, want {Default:read CanApprove:false}"}},
+		{name: "wet branch missing", install: true, mutate: func(f *fakegithub.Server) {
+			delete(f.Objects, "/repos/acme/idp-claims/git/ref/heads/wet")
+		}, want: []string{"branch wet: missing"}},
+		{name: "wet ruleset missing", install: true, mutate: func(f *fakegithub.Server) {
+			delete(f.Rulesets, f.RulesetByName("idp-wet")["id"].(int64))
+		}, want: []string{"ruleset idp-wet: missing"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -95,16 +106,17 @@ func TestCheckReportsDrift(t *testing.T) {
 			}
 			tt.mutate(fake)
 
-			findings, err := b.Check(context.Background())
+			found, err := b.Check(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
-			var lines []string
-			for _, f := range findings {
-				lines = append(lines, f.String())
+			var got []string
+			for _, f := range found {
+				got = append(got, f.String())
 			}
-			if !strings.Contains(strings.Join(lines, "\n"), tt.want) {
-				t.Errorf("findings =\n%s\nwant one containing %q", strings.Join(lines, "\n"), tt.want)
+			sort.Strings(got)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("findings =\n%s\nwant exactly\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
 			}
 		})
 	}
@@ -114,12 +126,12 @@ func TestCheckMissingRepoStopsEarly(t *testing.T) {
 	_, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 
-	findings, err := b.Check(context.Background())
+	got, err := b.Check(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var sawRepo bool
-	for _, f := range findings {
+	for _, f := range got {
 		if f.Resource == "repo acme/idp-claims" && f.Problem == "missing" {
 			sawRepo = true
 		}
@@ -128,6 +140,6 @@ func TestCheckMissingRepoStopsEarly(t *testing.T) {
 		}
 	}
 	if !sawRepo {
-		t.Errorf("findings = %v, want repo missing", findings)
+		t.Errorf("findings = %v, want repo missing", got)
 	}
 }

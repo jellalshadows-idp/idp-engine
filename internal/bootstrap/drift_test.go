@@ -136,3 +136,34 @@ func TestRulesetDriftWetHiddenBypassActorsReportsOnlyDedicatedMessage(t *testing
 		t.Errorf("drift = %v, want exactly %v", got, want)
 	}
 }
+
+func TestEnvironmentDriftReviewerRemoved(t *testing.T) {
+	fake, api := newFake(t)
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+	ctx := context.Background()
+	if err := b.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.Objects["/repos/acme/idp-claims/environments/idp-approval"].(map[string]any)["protection_rules"] = []any{}
+
+	got, err := b.environmentDrift(ctx, Environments(b.Cfg)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"$.reviewer_ids"}; !slices.Equal(got, want) {
+		t.Errorf("drift = %v, want %v", got, want)
+	}
+}
+
+func TestEnvironmentDriftMissingEnvironment(t *testing.T) {
+	_, api := newFake(t)
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+
+	got, err := b.environmentDrift(context.Background(), Environments(b.Cfg)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"missing"}; !slices.Equal(got, want) {
+		t.Errorf("drift = %v, want %v", got, want)
+	}
+}

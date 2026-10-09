@@ -55,3 +55,23 @@ func TestNormalizeTurnsStructsIntoGenericJSON(t *testing.T) {
 		t.Errorf("normalize = %#v, want %#v", got, want)
 	}
 }
+
+// GitHub omits null fields, so a desired null matches a key that is absent from
+// the live object; pinning this keeps a refactor from turning it into drift.
+func TestMismatchesDesiredNullMatchesMissingKey(t *testing.T) {
+	got := Mismatches(decode(t, `{"integration_id":null}`), decode(t, `{}`))
+	if len(got) != 0 {
+		t.Errorf("Mismatches = %v, want none (GitHub omits null fields)", got)
+	}
+}
+
+func TestAsList(t *testing.T) {
+	if got, want := asList([]any{1.0, "x"}), []any{1.0, "x"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("asList(list) = %#v, want %#v", got, want)
+	}
+	for name, v := range map[string]any{"nil": nil, "string": "x", "map": map[string]any{}} {
+		if got := asList(v); !reflect.DeepEqual(got, []any{}) {
+			t.Errorf("asList(%s) = %#v, want an empty list", name, got)
+		}
+	}
+}
