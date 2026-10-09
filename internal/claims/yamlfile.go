@@ -64,6 +64,11 @@ func parseDiagnostic(file string, err error) Diagnostic {
 
 // lineIndex maps JSON pointers into the tree to lines. Object members point at
 // their key's line, which is where an editor should put the cursor.
+//
+// Aliases are deliberately not expanded: following them risks infinite
+// recursion on self-referential anchors and exponential fan-out. An alias is
+// indexed only at its use site, so errors inside aliased content resolve to the
+// alias's own line. The decoder rejects self-referential anchors later.
 func lineIndex(root *yaml.Node) map[string]int {
 	idx := map[string]int{"": root.Line}
 	var walk func(n *yaml.Node, ptr string)
@@ -81,10 +86,6 @@ func lineIndex(root *yaml.Node) map[string]int {
 				child := ptr + "/" + strconv.Itoa(i)
 				idx[child] = item.Line
 				walk(item, child)
-			}
-		case yaml.AliasNode:
-			if n.Alias != nil {
-				walk(n.Alias, ptr)
 			}
 		}
 	}

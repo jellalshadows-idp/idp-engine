@@ -40,6 +40,29 @@ func TestParseFile(t *testing.T) {
 	}
 }
 
+func TestParseFileSelfReferentialAlias(t *testing.T) {
+	doc, ds := parseFile("f.yaml", []byte("a: &a [*a]\n"))
+	if len(ds) != 0 || doc == nil {
+		t.Fatalf("want a document, got %v", ds)
+	}
+	if got := doc.line([]string{"a"}); got != 1 {
+		t.Errorf("line = %d, want 1", got)
+	}
+}
+
+func TestDocumentLineThroughAlias(t *testing.T) {
+	doc, ds := parseFile("f.yaml", []byte("base: &base\n  role: member\nuse: *base\n"))
+	if len(ds) != 0 || doc == nil {
+		t.Fatalf("want a document, got %v", ds)
+	}
+	if got := doc.line([]string{"use", "role"}); got != 3 {
+		t.Errorf("line(use/role) = %d, want 3", got)
+	}
+	if got := doc.line([]string{"base", "role"}); got != 2 {
+		t.Errorf("line(base/role) = %d, want 2", got)
+	}
+}
+
 func TestDocumentLine(t *testing.T) {
 	src := "apiVersion: idp/v1\nkind: Group\nname: platform\nmembers:\n  - user: alice\n    role: owner\na/b: 1\n"
 	doc, ds := parseFile("g.yaml", []byte(src))
