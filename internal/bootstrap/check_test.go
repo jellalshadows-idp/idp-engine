@@ -36,6 +36,17 @@ func TestCheckCleanOrgHasNoFindings(t *testing.T) {
 	}
 }
 
+func TestCheckListsInstallationsWithPageSize(t *testing.T) {
+	fake, api := newFake(t)
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+	if _, err := b.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := fake.Queries["/orgs/acme/installations"], "per_page=100"; got != want {
+		t.Errorf("installations query = %q, want %q", got, want)
+	}
+}
+
 func TestCheckReportsDrift(t *testing.T) {
 	tests := []struct {
 		name    string

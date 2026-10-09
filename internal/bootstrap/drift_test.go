@@ -42,6 +42,18 @@ func TestDesiredRulesetsMatchLiveGitHub(t *testing.T) {
 	}
 }
 
+// Org-level rulesets inherited by the repo must not be matched by name.
+func TestRulesetIDsListExcludesParentsAndPages(t *testing.T) {
+	fake, api := newFake(t)
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+	if _, err := b.rulesetIDs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := fake.Queries["/repos/acme/idp-claims/rulesets"], "includes_parents=false&per_page=100"; got != want {
+		t.Errorf("ruleset list query = %q, want %q", got, want)
+	}
+}
+
 const bypassHiddenMsg = "$.bypass_actors (not returned to this token; GitHub only shows bypass actors to callers with write access)"
 
 // A read-only token never receives bypass_actors; that must not be read as "[]".

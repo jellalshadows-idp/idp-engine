@@ -37,7 +37,7 @@ func (b *Bootstrapper) rulesetIDs(ctx context.Context) (map[string]int64, error)
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	if err := b.API.Get(ctx, b.repoPath()+"/rulesets", &list); err != nil {
+	if err := b.API.Get(ctx, b.repoPath()+"/rulesets?includes_parents=false&per_page=100", &list); err != nil {
 		return nil, err
 	}
 	ids := make(map[string]int64, len(list))

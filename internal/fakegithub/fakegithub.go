@@ -58,6 +58,10 @@ type Server struct {
 	Forbidden map[string]bool
 	// LastAuthorization is the Authorization header of the latest request.
 	LastAuthorization string
+	// LastQuery is the raw query string (without "?") of the latest request.
+	LastQuery string
+	// Queries maps a request path to the raw query string of its latest request.
+	Queries map[string]string
 
 	t      testing.TB
 	mu     sync.Mutex
@@ -73,6 +77,7 @@ func New(t testing.TB, org string) *Server {
 		Objects:   map[string]any{},
 		Rulesets:  map[int64]map[string]any{},
 		Forbidden: map[string]bool{},
+		Queries:   map[string]string{},
 		nextID:    100,
 	}
 	f.Objects["/orgs/"+org+"/actions/permissions/workflow"] = map[string]any{
@@ -89,6 +94,8 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.LastAuthorization = r.Header.Get("Authorization")
+	f.LastQuery = r.URL.RawQuery
+	f.Queries[r.URL.Path] = r.URL.RawQuery
 	var body map[string]any
 	if r.ContentLength != 0 {
 		_ = json.NewDecoder(r.Body).Decode(&body)
