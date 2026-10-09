@@ -58,11 +58,10 @@ func (b *Bootstrapper) rulesetDrift(ctx context.Context, id int64, want Ruleset)
 	}
 	drift := Mismatches(rulesetView(desired.(map[string]any)), rulesetView(live))
 	// GitHub returns bypass_actors only to callers with write access. A live
-	// ruleset without the key means we cannot verify it, so fail closed instead
-	// of comparing against []. Present-but-empty still compares normally.
-	// For apply this triggers a PUT, which GitHub rejects for a token without
-	// write access; that is acceptable (apply needs a write token anyway).
-	// A JSON null is treated like an absent key.
+	// ruleset with the key absent or null means we cannot verify it, so fail
+	// closed instead of comparing against []. Present-but-empty still compares
+	// normally. For apply this triggers a PUT, which GitHub rejects for a token
+	// without write access; that is acceptable (apply needs a write token anyway).
 	if v, ok := live["bypass_actors"]; !ok || v == nil {
 		drift = withoutPath(drift, "$.bypass_actors")
 		drift = append(drift, bypassHiddenDrift)
