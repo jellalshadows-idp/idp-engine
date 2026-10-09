@@ -1,6 +1,7 @@
 package fakegithub
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ type recorder struct {
 func (r *recorder) Helper()          {}
 func (r *recorder) Cleanup(f func()) { r.cleanup = append(r.cleanup, f) }
 func (r *recorder) Errorf(format string, args ...any) {
-	r.errs = append(r.errs, format)
+	r.errs = append(r.errs, fmt.Sprintf(format, args...))
 }
 
 func TestWritesOutsideTheBootstrapSetAreRejected(t *testing.T) {
@@ -32,6 +33,11 @@ func TestWritesOutsideTheBootstrapSetAreRejected(t *testing.T) {
 		{http.MethodPatch, "/repos/acme/r/actions/secrets/S", false},
 		{http.MethodPut, "/repos/acme/r/actions/variables/V", false},
 		{http.MethodPut, "/anything/else", false},
+		{http.MethodGet, "/repos/acme/r/rulesets/7", true},
+		{http.MethodPatch, "/repos/acme/r/rulesets/7", false},
+		{http.MethodDelete, "/repos/acme/r/rulesets/7", false},
+		{http.MethodPut, "/repos/acme/r/environments/e/deployment-branch-policies", false},
+		{http.MethodPatch, "/repos/acme/r/environments/e/deployment-branch-policies", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
@@ -58,5 +64,27 @@ func TestWritesOutsideTheBootstrapSetAreRejected(t *testing.T) {
 				t.Errorf("recorded errors = %v, wantOK = %v", rec.errs, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestMalformedBodyFailsClearlyInsteadOfPanicking(t *testing.T) {
+	rec := &recorder{TB: t}
+	srv := New(rec, "acme")
+	defer func() {
+		for _, f := range rec.cleanup {
+			f()
+		}
+	}()
+	resp, err := http.Post(srv.URL+"/repos/acme/r/actions/variables", "application/json", strings.NewReader(`{"value":"v"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+	want := "fakegithub: POST /repos/acme/r/actions/variables: missing string field name"
+	if len(rec.errs) != 1 || rec.errs[0] != want {
+		t.Errorf("recorded errors = %q, want [%q]", rec.errs, want)
 	}
 }

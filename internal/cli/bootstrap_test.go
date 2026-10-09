@@ -190,3 +190,22 @@ func TestTokenFallsBackToGithubToken(t *testing.T) {
 		t.Errorf("Authorization = %q, want %q", f.fake.LastAuthorization, want)
 	}
 }
+
+func TestIsLoopback(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:0", true},
+		{"[::1]:0", true},
+		{"localhost:0", true},
+		{"0.0.0.0:8080", false},
+		{":8080", false},
+		{"garbage", false},
+	}
+	for _, tt := range tests {
+		if got := isLoopback(tt.addr); got != tt.want {
+			t.Errorf("isLoopback(%q) = %v, want %v", tt.addr, got, tt.want)
+		}
+	}
+}

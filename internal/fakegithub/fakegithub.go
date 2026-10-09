@@ -115,7 +115,10 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 	switch {
 	case method == http.MethodPost && reOrgRepos.MatchString(path):
 		org := reOrgRepos.FindStringSubmatch(path)[1]
-		name := body["name"].(string)
+		name, ok := f.stringField(method, path, body, "name")
+		if !ok {
+			return http.StatusBadRequest, map[string]any{}
+		}
 		f.Objects["/repos/"+org+"/"+name] = map[string]any{"name": name, "visibility": body["visibility"], "default_branch": "main"}
 		return http.StatusCreated, map[string]any{"name": name}
 	case method == http.MethodPost && strings.HasSuffix(path, "/git/trees"):
@@ -123,7 +126,11 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 	case method == http.MethodPost && strings.HasSuffix(path, "/git/commits"):
 		return http.StatusCreated, map[string]any{"sha": "commit-sha"}
 	case method == http.MethodPost && strings.HasSuffix(path, "/git/refs"):
-		ref := strings.TrimPrefix(body["ref"].(string), "refs/")
+		refName, ok := f.stringField(method, path, body, "ref")
+		if !ok {
+			return http.StatusBadRequest, map[string]any{}
+		}
+		ref := strings.TrimPrefix(refName, "refs/")
 		f.Objects[strings.TrimSuffix(path, "/git/refs")+"/git/ref/"+ref] = map[string]any{"ref": body["ref"]}
 		return http.StatusCreated, map[string]any{"ref": body["ref"]}
 	case method == http.MethodGet && strings.HasSuffix(path, "/rulesets"):
@@ -138,7 +145,7 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 		body["id"] = f.nextID
 		f.Rulesets[f.nextID] = body
 		return http.StatusCreated, body
-	case reRulesetID.MatchString(path):
+	case (method == http.MethodGet || method == http.MethodPut) && reRulesetID.MatchString(path):
 		id, _ := strconv.ParseInt(reRulesetID.FindStringSubmatch(path)[1], 10, 64)
 		if method == http.MethodPut {
 			body["id"] = id
@@ -152,7 +159,7 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 	case method == http.MethodPut && reEnv.MatchString(path):
 		f.Objects[path] = envGetShape(body)
 		return http.StatusOK, f.Objects[path]
-	case reEnvPolicies.MatchString(path):
+	case (method == http.MethodGet || method == http.MethodPost) && reEnvPolicies.MatchString(path):
 		policies := asList(f.Objects[path])
 		if method == http.MethodPost {
 			f.nextID++
@@ -165,7 +172,8 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 		m := reEnvPolicyID.FindStringSubmatch(path)
 		kept := []any{}
 		for _, p := range asList(f.Objects[m[1]]) {
-			if strconv.FormatInt(int64(toFloat(p.(map[string]any)["id"])), 10) != m[2] {
+			pm, _ := p.(map[string]any)
+			if strconv.FormatInt(int64(toFloat(pm["id"])), 10) != m[2] {
 				kept = append(kept, p)
 			}
 		}
@@ -183,7 +191,11 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 		}
 		return http.StatusOK, map[string]any{"total_count": len(list), "secrets": list}
 	case method == http.MethodPost && strings.HasSuffix(path, "/variables"):
-		f.Objects[path+"/"+body["name"].(string)] = map[string]any{"name": body["name"], "value": body["value"]}
+		name, ok := f.stringField(method, path, body, "name")
+		if !ok {
+			return http.StatusBadRequest, map[string]any{}
+		}
+		f.Objects[path+"/"+name] = map[string]any{"name": body["name"], "value": body["value"]}
 		return http.StatusCreated, map[string]any{}
 	case method == http.MethodPut && (reOrgWorkflow.MatchString(path) || reSecret.MatchString(path)),
 		method == http.MethodPatch && reVariable.MatchString(path):
@@ -198,6 +210,17 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 	}
 	f.t.Errorf("fakegithub: unexpected %s %s", method, path)
 	return http.StatusTeapot, map[string]any{}
+}
+
+// stringField returns body[field] as a string. When it is absent or not a
+// string it fails the test with a clear message and reports false, so the caller
+// can answer 400 instead of panicking inside the HTTP handler.
+func (f *Server) stringField(method, path string, body map[string]any, field string) (string, bool) {
+	v, ok := body[field].(string)
+	if !ok {
+		f.t.Errorf("fakegithub: %s %s: missing string field %s", method, path, field)
+	}
+	return v, ok
 }
 
 func (f *Server) rulesetIDs() []int64 {
@@ -225,7 +248,7 @@ func envGetShape(put map[string]any) map[string]any {
 	if reviewers := asList(put["reviewers"]); len(reviewers) > 0 {
 		shaped := []any{}
 		for _, r := range reviewers {
-			rm := r.(map[string]any)
+			rm, _ := r.(map[string]any)
 			shaped = append(shaped, map[string]any{"type": rm["type"], "reviewer": map[string]any{"id": rm["id"]}})
 		}
 		rules = append(rules, map[string]any{"type": "required_reviewers", "prevent_self_review": put["prevent_self_review"], "reviewers": shaped})
