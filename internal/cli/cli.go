@@ -12,6 +12,7 @@ Usage:
   idp <command> [flags]
 
 Commands:
+  bootstrap   Create or verify the protections an org needs before the IDP runs
   help        Show this help
 `
 
@@ -29,6 +30,8 @@ func Run(args []string, stdout, stderr io.Writer, env Env) int {
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
+	case "bootstrap":
+		return runBootstrap(args[1:], stdout, stderr, env)
 	default:
 		fmt.Fprintf(stderr, "idp: unknown command %q\n\n%s", args[0], usage)
 		return 2
