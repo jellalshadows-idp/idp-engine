@@ -740,14 +740,14 @@ use what that phase measured. Each phase ships an engine minor release.
 
 ## 11. Risks (verified in Phase 0 or by E2E)
 
-| # | Risk | Mitigation, or fallback if it materializes |
-|---|---|---|
-| 1 | A Group member who is not yet in the org gets an invitation, and the membership stays "pending", which could leave a permanent plan diff | Fallback: validation requires members to already be org members (checked with the reader token) |
-| 2 | A GitHub apply takes longer than the 1-hour installation token | Measure in Phase 0. Fallback: the provider's `app_auth` with the key file inside `idp-write` |
-| 3 | floci replay time multiplied by the number of stacks drives CI minutes | Measure in Phase 0. Only affected stacks are planned |
-| 4 | floci fidelity gaps (IAM/ECR) | The OIDC provider is already confirmed to exist in floci. Gaps get documented and skipped in level 3 |
-| 5 | `userManaged` adoption edge cases (file deleted between adopt and apply) | `overwrite_on_create = false` on `user_managed`, so the apply fails loudly and the next reconcile retries |
-| 6 | Cron disabled after 60 days of inactivity | Renovate activity. Documented |
+| # | Risk | Mitigation, or fallback if it materializes | Phase 0 result |
+|---|---|---|---|
+| 1 | A Group member who is not yet in the org gets an invitation, and the membership stays "pending", which could leave a permanent plan diff | Fallback: validation requires members to already be org members (checked with the reader token) | Pending S2 (not run: needs a GitHub App). See [ADR-0013](../../adr/0013-phase-0-spike-findings.md) |
+| 2 | A GitHub apply takes longer than the 1-hour installation token | Measure in Phase 0. Fallback: the provider's `app_auth` with the key file inside `idp-write` | Pending S2 (not run: needs a GitHub App) |
+| 3 | floci replay time multiplied by the number of stacks drives CI minutes | Measure in Phase 0. Only affected stacks are planned | Measured in S3: about 26 s per stack (init 7 + apply 13 + plan 6) plus 6 s floci readiness per job. Acceptable |
+| 4 | floci fidelity gaps (IAM/ECR) | The OIDC provider is already confirmed to exist in floci. Gaps get documented and skipped in level 3 | No gaps found for IAM, OIDC and ECR in S3. ECR URL uses the `localhost:4566` host form (cosmetic). Real `AssumeRoleWithWebIdentity` not exercised |
+| 5 | `userManaged` adoption edge cases (file deleted between adopt and apply) | `overwrite_on_create = false` on `user_managed`, so the apply fails loudly and the next reconcile retries | Not in Phase 0 scope: covered in Phase 4 (Features) |
+| 6 | Cron disabled after 60 days of inactivity | Renovate activity. Documented | Not in Phase 0 scope: covered in Phase 1 (drift pipeline) and Phase 5 (docs) |
 
 ## 12. Inputs (resolved 2026-10-08, amended 2026-10-09)
 - A single org, `jellalshadows-idp`, created by hand because Free orgs cannot be

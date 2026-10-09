@@ -16,5 +16,5 @@ An ADR records one decision that shapes this platform: the context that forced i
 | 0010 | [Public repos on the Free plan](0010-public-repos-on-free-plan.md) | Accepted |
 | 0011 | [Bootstrap outside the IDP](0011-bootstrap-outside-the-idp.md) | Accepted |
 | 0012 | [Required Workspace policy](0012-required-workspace-policy.md) | Accepted |
-| 0013 | Phase 0 spike findings | Pending (written after the spikes) |
+| 0013 | [Phase 0 spike findings](0013-phase-0-spike-findings.md) | Accepted (S1, S3); S2 pending |
 | 0014 | [Single org, isolated by repo and prefix](0014-single-org-isolated-by-repo-and-prefix.md) | Accepted |
