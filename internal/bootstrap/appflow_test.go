@@ -278,13 +278,17 @@ func TestAppFlowFormCarriesTheManifestIntact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"name", "url", "redirect_url"} {
-		if got[k] != want[k] {
-			t.Errorf("manifest %s = %v, want %v", k, got[k], want[k])
-		}
+	// Marshal+unmarshal want so number types match what the form decoded.
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got["default_permissions"], want["default_permissions"]) {
-		t.Errorf("default_permissions = %v, want %v", got["default_permissions"], want["default_permissions"])
+	var wantRT map[string]any
+	if err := json.Unmarshal(raw, &wantRT); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, wantRT) {
+		t.Errorf("manifest in the form differs from Manifest():\n got: %v\nwant: %v", got, wantRT)
 	}
 }
 

@@ -91,8 +91,9 @@ type flowResult struct {
 
 // Run serves the form on ln and blocks until GitHub calls back or ctx ends.
 func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, error) {
-	if f.Log == nil {
-		f.Log = io.Discard
+	log := f.Log
+	if log == nil {
+		log = io.Discard
 	}
 	state, err := randomState()
 	if err != nil {
@@ -127,7 +128,7 @@ func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, err
 		creds, err := f.convert(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
 			// The detail goes to the terminal only: the browser must not see API errors.
-			fmt.Fprintf(f.Log, "App creation failed: %v\n", err)
+			fmt.Fprintf(log, "App creation failed: %v\n", err)
 			http.Error(w, "App creation failed; see the terminal for details.", http.StatusBadGateway)
 		} else {
 			fmt.Fprintf(w, "App %s created. You can close this tab.\n", creds.Slug)
@@ -142,7 +143,7 @@ func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, err
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 	}()
-	fmt.Fprintf(f.Log, "Open http://%s/ in your browser to create %s-%s\n", ln.Addr(), f.Org, f.Role)
+	fmt.Fprintf(log, "Open http://%s/ in your browser to create %s-%s\n", ln.Addr(), f.Org, f.Role)
 
 	select {
 	case <-ctx.Done():
@@ -197,12 +198,17 @@ func writeOwnerOnly(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
+	// A SIGKILL mid-write can leave a 0600 temp file next to the credentials (never a world-readable one).
 	defer os.Remove(tmp.Name()) // no-op after a successful rename
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return err
 	}

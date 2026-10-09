@@ -157,6 +157,8 @@ func TestNotFoundWithEmptyBodyIsPlain(t *testing.T) {
 	}
 }
 
+// TestBodyLimitBoundary mutates the package-level maxBodyBytes, so tests in
+// this package must not use t.Parallel().
 func TestBodyLimitBoundary(t *testing.T) {
 	old := maxBodyBytes
 	maxBodyBytes = 16
@@ -179,8 +181,12 @@ func TestBodyLimitBoundary(t *testing.T) {
 
 			var out map[string]any
 			err := New(srv.URL, "").Get(context.Background(), "/x", &out)
-			if tt.wantErr != (err != nil && strings.Contains(err.Error(), "exceeds")) || (!tt.wantErr && err != nil) {
-				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "exceeds") {
+					t.Fatalf("err = %v, want an over-limit error", err)
+				}
+			} else if err != nil {
+				t.Fatalf("err = %v, want success", err)
 			}
 		})
 	}
