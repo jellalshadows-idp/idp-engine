@@ -24,6 +24,8 @@ func (b *Bootstrapper) Apply(ctx context.Context) error {
 		b.ensureOrgWorkflowPermissions,
 		b.ensureRepo,
 		b.ensureWetBranch,
+		b.ensureRulesets,
+		b.ensureEnvironments,
 	}
 	for _, step := range steps {
 		if err := step(ctx); err != nil {
@@ -134,4 +136,76 @@ func (b *Bootstrapper) repoFullName() string { return b.Cfg.Org + "/" + b.Cfg.Cl
 
 func (b *Bootstrapper) logf(format string, args ...any) {
 	fmt.Fprintf(b.Log, format+"\n", args...)
+}
+
+func (b *Bootstrapper) ensureRulesets(ctx context.Context) error {
+	ids, err := b.rulesetIDs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, want := range []Ruleset{MainRuleset(), WetRuleset(b.Cfg.Writer.ID)} {
+		id, found := ids[want.Name]
+		if !found {
+			if err := b.API.Post(ctx, b.repoPath()+"/rulesets", want, nil); err != nil {
+				return err
+			}
+			b.logf("created ruleset %s", want.Name)
+			continue
+		}
+		drift, err := b.rulesetDrift(ctx, id, want)
+		if err != nil {
+			return err
+		}
+		if len(drift) == 0 {
+			continue
+		}
+		if err := b.API.Put(ctx, fmt.Sprintf("%s/rulesets/%d", b.repoPath(), id), want, nil); err != nil {
+			return err
+		}
+		b.logf("updated ruleset %s (drift at %v)", want.Name, drift)
+	}
+	return nil
+}
+
+func (b *Bootstrapper) ensureEnvironments(ctx context.Context) error {
+	for _, env := range Environments(b.Cfg) {
+		drift, err := b.environmentDrift(ctx, env)
+		if err != nil {
+			return err
+		}
+		if len(drift) == 0 {
+			continue
+		}
+		if err := b.API.Put(ctx, b.repoPath()+"/environments/"+env.Name, env.putBody(), nil); err != nil {
+			return err
+		}
+		if err := b.ensureBranchPolicy(ctx, env); err != nil {
+			return err
+		}
+		b.logf("configured environment %s (drift at %v)", env.Name, drift)
+	}
+	return nil
+}
+
+// ensureBranchPolicy leaves exactly env.Branch as the environment's only deployment branch.
+func (b *Bootstrapper) ensureBranchPolicy(ctx context.Context, env Environment) error {
+	policies, err := b.branchPolicies(ctx, env.Name)
+	if err != nil {
+		return err
+	}
+	base := b.repoPath() + "/environments/" + env.Name + "/deployment-branch-policies"
+	present := false
+	for _, p := range policies {
+		if p.Name == env.Branch {
+			present = true
+			continue
+		}
+		if err := b.API.Delete(ctx, fmt.Sprintf("%s/%d", base, p.ID)); err != nil {
+			return err
+		}
+	}
+	if present {
+		return nil
+	}
+	return b.API.Post(ctx, base, map[string]any{"name": env.Branch, "type": "branch"}, nil)
 }
