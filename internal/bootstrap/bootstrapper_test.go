@@ -145,3 +145,67 @@ func TestRulesetDriftIgnoresGitHubExtras(t *testing.T) {
 		t.Errorf("drift = %v, want none (extra fields, omitted bypass_actors and rule order must not count)", got)
 	}
 }
+
+// dropRule removes every rule of the given type from a normalized ruleset.
+func dropRule(m map[string]any, typ string) {
+	kept := []any{}
+	for _, r := range asList(m["rules"]) {
+		if r.(map[string]any)["type"] != typ {
+			kept = append(kept, r)
+		}
+	}
+	m["rules"] = kept
+}
+
+func TestRulesetDriftDetectsWeakening(t *testing.T) {
+	cases := []struct {
+		name   string
+		weaken func(live map[string]any)
+		want   string // path that must be reported; "" means no mismatch at all
+	}{
+		{
+			name:   "removed deletion rule is drift",
+			weaken: func(live map[string]any) { dropRule(live, "deletion") },
+			want:   "$.rules.deletion",
+		},
+		{
+			name: "extra bypass actor is drift",
+			weaken: func(live map[string]any) {
+				live["bypass_actors"] = []any{map[string]any{"actor_id": float64(9), "actor_type": "User", "bypass_mode": "always"}}
+			},
+			want: "$.bypass_actors",
+		},
+		{
+			name: "extra stricter rule is tolerated",
+			weaken: func(live map[string]any) {
+				live["rules"] = append(asList(live["rules"]), map[string]any{"type": "required_linear_history"})
+			},
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			desired, err := normalize(MainRuleset())
+			if err != nil {
+				t.Fatal(err)
+			}
+			liveAny, err := normalize(MainRuleset())
+			if err != nil {
+				t.Fatal(err)
+			}
+			live := liveAny.(map[string]any)
+			tc.weaken(live)
+
+			got := Mismatches(rulesetView(desired.(map[string]any)), rulesetView(live))
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Errorf("drift = %v, want none", got)
+				}
+				return
+			}
+			if !slices.Contains(got, tc.want) {
+				t.Errorf("drift = %v, want it to include %q", got, tc.want)
+			}
+		})
+	}
+}
