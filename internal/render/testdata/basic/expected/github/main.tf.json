@@ -1,0 +1,67 @@
+{
+  "module": {
+    "component_api": {
+      "archive_on_destroy": true,
+      "description": "Orders API",
+      "environments": {
+        "dev": {
+          "protected": false
+        },
+        "pro": {
+          "protected": true
+        }
+      },
+      "name": "api",
+      "owner_team_id": "${module.group_platform.team_id}",
+      "required_approvals": 1,
+      "source": "git::https://github.com/jellalshadows-idp/idp-engine.git//modules/github/component?ref=v0.0.0-test",
+      "topics": [
+        "java",
+        "orders"
+      ],
+      "writer_app_id": 5255579
+    },
+    "group_platform": {
+      "description": "Platform team",
+      "members": [
+        {
+          "role": "maintainer",
+          "user": "alice"
+        },
+        {
+          "role": "member",
+          "user": "bob"
+        }
+      ],
+      "name": "platform",
+      "source": "git::https://github.com/jellalshadows-idp/idp-engine.git//modules/github/group?ref=v0.0.0-test"
+    }
+  },
+  "provider": {
+    "github": {
+      "owner": "acme"
+    }
+  },
+  "terraform": {
+    "backend": {
+      "local": {
+        "path": "../../tfstate/github.tfstate"
+      }
+    },
+    "encryption": {
+      "plan": {
+        "enforced": true
+      },
+      "state": {
+        "enforced": true
+      }
+    },
+    "required_providers": {
+      "github": {
+        "source": "integrations/github",
+        "version": "6.13.0"
+      }
+    },
+    "required_version": "1.12.6"
+  }
+}

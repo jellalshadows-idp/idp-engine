@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Component",
+  "description": "A service: its GitHub repository and environments (spec §4.4). The aws and features fields arrive in Phases 2 and 4.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "name", "owner"],
+  "properties": {
+    "apiVersion": { "const": "idp/v1" },
+    "kind": { "const": "Component" },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,38}[a-z0-9]$" },
+    "description": { "type": "string", "maxLength": 350, "pattern": "^[^\\r\\n]*$" },
+    "owner": { "type": "string", "pattern": "^group:[a-z][a-z0-9-]{0,38}[a-z0-9]$" },
+    "environments": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9]{0,9}$" }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topics": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,49}$" }
+        }
+      }
+    }
+  }
+}

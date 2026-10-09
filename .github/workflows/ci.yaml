@@ -45,3 +45,64 @@ jobs:
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: zizmor
         run: pipx run zizmor==1.30.1 .github/workflows
+
+  modules:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [github/group, github/component]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      - name: tofu fmt and test
+        working-directory: modules/${{ matrix.module }}
+        run: |
+          tofu fmt -check -recursive
+          cp "$GITHUB_WORKSPACE/lockfiles/github.terraform.lock.hcl" .terraform.lock.hcl
+          tofu init -input=false -lockfile=readonly
+          tofu test
+
+  render-smoke:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      - name: render the fixture with local module sources
+        run: go run ./cmd/idp render --dir internal/render/testdata/basic --out "$RUNNER_TEMP/rendered" --modules-dir modules
+      - name: tofu validate the rendered stack (proves the JSON syntax, lock file and modules)
+        working-directory: ${{ runner.temp }}/rendered/github
+        env:
+          TF_ENCRYPTION: |
+            key_provider "pbkdf2" "ci" {
+              passphrase = "render-smoke-only-not-a-secret"
+            }
+            method "aes_gcm" "ci" {
+              keys = key_provider.pbkdf2.ci
+            }
+            state {
+              method = method.aes_gcm.ci
+            }
+            plan {
+              method = method.aes_gcm.ci
+            }
+        run: |
+          tofu init -backend=false -input=false
+          tofu validate

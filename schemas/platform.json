@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Platform",
+  "description": "config/platform.yaml of a claims repo (spec §4.6).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "github", "environments"],
+  "properties": {
+    "apiVersion": { "const": "idp/v1" },
+    "kind": { "const": "Platform" },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["org", "writerAppId"],
+      "properties": {
+        "org": { "type": "string", "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$" },
+        "writerAppId": { "type": "integer", "minimum": 1 },
+        "archiveOnDestroy": { "type": "boolean", "default": true },
+        "requiredApprovals": { "type": "integer", "minimum": 0, "maximum": 10, "default": 1 }
+      }
+    },
+    "naming": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requiredPrefix": { "type": "string", "pattern": "^[a-z][a-z0-9]*-$" },
+        "reservedPrefixes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9]*-$" }
+        }
+      }
+    },
+    "environments": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9]{0,9}$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "protected": { "type": "boolean", "default": false },
+          "aws": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["accountId", "region"],
+            "properties": {
+              "accountId": { "type": "string", "pattern": "^[0-9]{12}$" },
+              "region": { "type": "string", "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]$" }
+            }
+          }
+        }
+      }
+    },
+    "modules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowedSources": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

@@ -8,6 +8,7 @@ The engine of an internal developer platform (IDP) that reconciles on **GitHub A
 
 - Design: [docs/superpowers/specs/2026-10-08-idp-on-actions-design.md](docs/superpowers/specs/2026-10-08-idp-on-actions-design.md)
 - Decisions: [docs/adr/](docs/adr/)
+- Claims reference: [docs/claims.md](docs/claims.md)
 - Phase log: [docs/phases/](docs/phases/)
 - Plans: [docs/superpowers/plans/](docs/superpowers/plans/)
 

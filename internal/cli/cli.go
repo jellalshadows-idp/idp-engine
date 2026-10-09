@@ -12,6 +12,8 @@ Usage:
   idp <command> [flags]
 
 Commands:
+  validate    Validate a claims repo (schema + semantic checks)
+  render      Render a claims repo into OpenTofu stacks
   bootstrap   Create or verify the protections an org needs before the IDP runs
   help        Show this help
 `
@@ -30,6 +32,10 @@ func Run(args []string, stdout, stderr io.Writer, env Env) int {
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
+	case "validate":
+		return runValidate(args[1:], stdout, stderr, env)
+	case "render":
+		return runRender(args[1:], stdout, stderr, env)
 	case "bootstrap":
 		return runBootstrap(args[1:], stdout, stderr, env)
 	default:

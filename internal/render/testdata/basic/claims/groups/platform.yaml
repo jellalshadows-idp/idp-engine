@@ -1,0 +1,9 @@
+apiVersion: idp/v1
+kind: Group
+name: platform
+description: Platform team
+members:
+  - user: alice
+    role: maintainer
+  - user: bob
+    role: member

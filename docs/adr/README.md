@@ -18,3 +18,4 @@ An ADR records one decision that shapes this platform: the context that forced i
 | 0012 | [Required Workspace policy](0012-required-workspace-policy.md) | Accepted |
 | 0013 | [Phase 0 spike findings](0013-phase-0-spike-findings.md) | Accepted |
 | 0014 | [Single org, isolated by repo and prefix](0014-single-org-isolated-by-repo-and-prefix.md) | Accepted |
+| 0015 | [Claim parsing and validation libraries](0015-claim-parsing-and-validation.md) | Accepted |

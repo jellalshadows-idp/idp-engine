@@ -1,0 +1,9 @@
+apiVersion: idp/v1
+kind: Platform
+github:
+  org: acme
+  writerAppId: 5255579
+environments:
+  dev: {}
+  pro:
+    protected: true
