@@ -46,13 +46,13 @@ const bypassHiddenMsg = "$.bypass_actors (not returned to this token; GitHub onl
 
 // A read-only token never receives bypass_actors; that must not be read as "[]".
 func TestRulesetDriftFailsClosedWhenBypassActorsHidden(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 	ctx := context.Background()
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	main := fake.rulesetByName("idp-main")
+	main := fake.RulesetByName("idp-main")
 	delete(main, "bypass_actors")
 
 	got, err := b.rulesetDrift(ctx, main["id"].(int64), MainRuleset())
@@ -66,13 +66,13 @@ func TestRulesetDriftFailsClosedWhenBypassActorsHidden(t *testing.T) {
 
 // The owner-token shape (present but empty) keeps comparing normally.
 func TestRulesetDriftEmptyBypassActorsIsNotHidden(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 	ctx := context.Background()
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	main := fake.rulesetByName("idp-main")
+	main := fake.RulesetByName("idp-main")
 	main["bypass_actors"] = []any{}
 
 	got, err := b.rulesetDrift(ctx, main["id"].(int64), MainRuleset())
@@ -86,13 +86,13 @@ func TestRulesetDriftEmptyBypassActorsIsNotHidden(t *testing.T) {
 
 // A JSON null is as unverifiable as an absent key.
 func TestRulesetDriftFailsClosedWhenBypassActorsNull(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 	ctx := context.Background()
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	main := fake.rulesetByName("idp-main")
+	main := fake.RulesetByName("idp-main")
 	main["bypass_actors"] = nil
 
 	got, err := b.rulesetDrift(ctx, main["id"].(int64), MainRuleset())
@@ -107,13 +107,13 @@ func TestRulesetDriftFailsClosedWhenBypassActorsNull(t *testing.T) {
 // idp-wet desires one bypass actor, so the generic mismatch must be replaced
 // by the dedicated message, not reported next to it.
 func TestRulesetDriftWetHiddenBypassActorsReportsOnlyDedicatedMessage(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 	ctx := context.Background()
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	wet := fake.rulesetByName("idp-wet")
+	wet := fake.RulesetByName("idp-wet")
 	delete(wet, "bypass_actors")
 
 	got, err := b.rulesetDrift(ctx, wet["id"].(int64), WetRuleset(b.Cfg.Writer.ID))
