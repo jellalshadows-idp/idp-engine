@@ -106,7 +106,7 @@ func jsonInstance(root *yaml.Node) (any, error) {
 	}
 	raw, err := json.Marshal(v)
 	if err != nil {
-		return nil, fmt.Errorf("unsupported YAML (mapping keys must be strings): %w", err)
+		return nil, fmt.Errorf("unsupported YAML value: %w", err)
 	}
 	return jsonschema.UnmarshalJSON(bytes.NewReader(raw))
 }

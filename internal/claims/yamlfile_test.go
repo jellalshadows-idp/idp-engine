@@ -17,6 +17,10 @@ func TestParseFile(t *testing.T) {
 		{name: "two documents", data: "a: 1\n---\nb: 2\n", wantMsg: "only one YAML document per file is allowed", wantLine: -1},
 		{name: "not a mapping", data: "- a\n- b\n", wantMsg: "the document must be a mapping", wantLine: 1},
 		{name: "invalid YAML reports a line", data: "a: 1\nb: [unclosed\n", wantMsg: "invalid YAML", wantLine: -1},
+		{name: "non-string key", data: "1: a\n", wantMsg: "mapping keys must be strings", wantLine: 1},
+		{name: "non-finite number", data: "a: .inf\n", wantMsg: "numbers must be finite", wantLine: 1},
+		{name: "date-like value", data: "a: 2024-01-01\n"},
+		{name: "merge key", data: "base: &b {x: 1}\nuse:\n  <<: *b\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

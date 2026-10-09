@@ -36,7 +36,6 @@ func TestValidate(t *testing.T) {
 		{name: "owner without group prefix", kind: "Component", src: "apiVersion: idp/v1\nkind: Component\nname: api\nowner: platform\n", wantLine: 4, wantContains: "/owner"},
 		{name: "aws is not supported yet", kind: "Component", src: "apiVersion: idp/v1\nkind: Component\nname: api\nowner: group:platform\naws:\n  registry: true\n", wantLine: 5, wantContains: "aws"},
 		{name: "a group filed as a component", kind: "Component", src: group, wantLine: 2, wantContains: "/kind"},
-		{name: "non-string keys", kind: "Group", src: "1: a\n", wantLine: 1, wantContains: "mapping keys must be strings"},
 		{name: "self-referential anchor is a diagnostic, not a hang", kind: "Group", src: "a: &a [*a]\n", wantLine: 1, wantContains: "cannot read document"},
 	}
 	for _, tt := range tests {
@@ -55,5 +54,20 @@ func TestValidate(t *testing.T) {
 			}
 			t.Fatalf("diagnostics = %v, want one at line %d containing %q", ds, tt.wantLine, tt.wantContains)
 		})
+	}
+}
+
+func TestJSONInstanceKeepsTimestampsAsWritten(t *testing.T) {
+	doc := mustDoc(t, "a: 2024-01-01\nb: 2024-01-01T10:00:00Z\n")
+	inst, err := jsonInstance(doc.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := inst.(map[string]any)
+	if !ok {
+		t.Fatalf("instance = %T, want map", inst)
+	}
+	if m["a"] != "2024-01-01" || m["b"] != "2024-01-01T10:00:00Z" {
+		t.Errorf("instance = %v, want the dates exactly as written", m)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -51,7 +52,50 @@ func parseFile(file string, data []byte) (*document, []Diagnostic) {
 		return nil, []Diagnostic{{File: file, Line: line, Message: "the document must be a mapping (key: value pairs)"}}
 	}
 	root := doc.Content[0]
+	if ds := normalize(file, root); len(ds) > 0 {
+		return nil, ds
+	}
 	return &document{file: file, root: root, lines: lineIndex(root)}, nil
+}
+
+// normalize makes the YAML tree fit the JSON value model the schemas validate.
+// Claims have no timestamp type, so date-like scalars are retagged as strings
+// and decode as the exact text written (not rewritten to RFC 3339). JSON has
+// neither non-string object keys nor non-finite numbers, so those are reported
+// at their line instead of surfacing later as a marshalling error. Aliases are
+// not followed, consistent with lineIndex.
+func normalize(file string, root *yaml.Node) []Diagnostic {
+	var out []Diagnostic
+	var walk func(n *yaml.Node)
+	walk = func(n *yaml.Node) {
+		switch n.Kind {
+		case yaml.ScalarNode:
+			switch n.ShortTag() {
+			case "!!timestamp":
+				n.Tag = "!!str"
+			case "!!float":
+				var f float64
+				if err := n.Decode(&f); err == nil && (math.IsInf(f, 0) || math.IsNaN(f)) {
+					out = append(out, Diagnostic{File: file, Line: n.Line, Message: "numbers must be finite (.inf and .nan are not supported)"})
+				}
+			}
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				key, val := n.Content[i], n.Content[i+1]
+				walk(key)
+				if key.Kind != yaml.ScalarNode || (key.ShortTag() != "!!str" && key.ShortTag() != "!!merge") {
+					out = append(out, Diagnostic{File: file, Line: key.Line, Message: "mapping keys must be strings"})
+				}
+				walk(val)
+			}
+		case yaml.SequenceNode:
+			for _, c := range n.Content {
+				walk(c)
+			}
+		}
+	}
+	walk(root)
+	return out
 }
 
 func parseDiagnostic(file string, err error) Diagnostic {
