@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestPostSendsHeadersAndBodyAndDecodes(t *testing.T) {
@@ -98,5 +100,126 @@ func TestNoContentWithOutIsFine(t *testing.T) {
 	var out map[string]any
 	if err := New(srv.URL, "t").Put(context.Background(), "/x", map[string]any{}, &out); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNewSetsATimeout(t *testing.T) {
+	if got := New("http://x", "").http.Timeout; got != 30*time.Second {
+		t.Errorf("http timeout = %v, want 30s", got)
+	}
+}
+
+// TestOversizedNotFoundStillMapsToErrNotFound mutates maxBodyBytes: no t.Parallel().
+func TestOversizedNotFoundStillMapsToErrNotFound(t *testing.T) {
+	old := maxBodyBytes
+	maxBodyBytes = 16
+	defer func() { maxBodyBytes = old }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, strings.Repeat("a", 64))
+	}))
+	defer srv.Close()
+
+	err := New(srv.URL, "").Get(context.Background(), "/x", nil)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("errors.Is(err, ErrNotFound) = false (err %v)", err)
+	}
+	if strings.Contains(err.Error(), strings.Repeat("a", 64)) {
+		t.Errorf("err = %q, want the oversized message truncated", err)
+	}
+}
+
+func TestNotFoundKeepsGitHubMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, "  {\"message\":\"Not Found\"}\n")
+	}))
+	defer srv.Close()
+
+	err := New(srv.URL, "").Get(context.Background(), "/x", nil)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("errors.Is(err, ErrNotFound) = false (err %v)", err)
+	}
+	if !strings.Contains(err.Error(), `{"message":"Not Found"}`) {
+		t.Errorf("err = %q, want it to include the response body", err)
+	}
+}
+
+func TestNotFoundWithEmptyBodyIsPlain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, " \n")
+	}))
+	defer srv.Close()
+
+	err := New(srv.URL, "").Get(context.Background(), "/x", nil)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("errors.Is(err, ErrNotFound) = false (err %v)", err)
+	}
+	if got, want := err.Error(), "github GET /x: not found"; got != want {
+		t.Errorf("err = %q, want %q", got, want)
+	}
+}
+
+// TestBodyLimitBoundary mutates the package-level maxBodyBytes, so tests in
+// this package must not use t.Parallel().
+func TestBodyLimitBoundary(t *testing.T) {
+	old := maxBodyBytes
+	maxBodyBytes = 16
+	defer func() { maxBodyBytes = old }()
+
+	tests := []struct {
+		name    string
+		size    int64
+		wantErr bool
+	}{
+		{name: "exactly the limit is accepted", size: 16},
+		{name: "one byte over is rejected", size: 17, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, strings.Repeat(" ", int(tt.size)-2)+"{}")
+			}))
+			defer srv.Close()
+
+			var out map[string]any
+			err := New(srv.URL, "").Get(context.Background(), "/x", &out)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "exceeds") {
+					t.Fatalf("err = %v, want an over-limit error", err)
+				}
+			} else if err != nil {
+				t.Fatalf("err = %v, want success", err)
+			}
+		})
+	}
+}
+
+func TestMalformedJSONOnSuccessIsADecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"id":`)
+	}))
+	defer srv.Close()
+
+	var out map[string]any
+	err := New(srv.URL, "").Get(context.Background(), "/x", &out)
+	if err == nil || !strings.Contains(err.Error(), "decode") {
+		t.Fatalf("err = %v, want a decode error", err)
+	}
+}
+
+func TestCancelledContextFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := New(srv.URL, "").Get(ctx, "/x", nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }

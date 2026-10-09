@@ -10,12 +10,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // DefaultBaseURL is the public GitHub REST API.
 const DefaultBaseURL = "https://api.github.com"
 
 const apiVersion = "2022-11-28"
+
+// maxBodyBytes bounds how much of a response is read (a variable so tests can shrink it).
+var maxBodyBytes int64 = 10 << 20
 
 // ErrNotFound is returned (wrapped) when the API answers 404.
 var ErrNotFound = errors.New("not found")
@@ -41,7 +45,7 @@ type Client struct {
 
 // New returns a client. An empty token sends unauthenticated requests.
 func New(baseURL, token string) *Client {
-	return &Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: &http.Client{}}
+	return &Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: &http.Client{Timeout: 30 * time.Second}}
 }
 
 // Get decodes the JSON answer of GET path into out (out may be nil).
@@ -97,12 +101,23 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
 		return fmt.Errorf("read %s %s: %w", method, path, err)
 	}
+	oversized := int64(len(raw)) > maxBodyBytes
+	if oversized {
+		raw = raw[:maxBodyBytes] // keep the message bounded
+	}
+	// A 404 stays ErrNotFound even when its body is oversized: callers branch on it.
 	if resp.StatusCode == http.StatusNotFound {
+		if msg := strings.TrimSpace(string(raw)); msg != "" {
+			return fmt.Errorf("github %s %s: %w: %s", method, path, ErrNotFound, msg)
+		}
 		return fmt.Errorf("github %s %s: %w", method, path, ErrNotFound)
+	}
+	if oversized {
+		return fmt.Errorf("read %s %s: response body exceeds %d bytes", method, path, maxBodyBytes)
 	}
 	if resp.StatusCode >= 300 {
 		return &APIError{Method: method, Path: path, Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}

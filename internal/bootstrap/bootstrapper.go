@@ -81,8 +81,14 @@ func orgAdminHint(err error) error {
 }
 
 func (b *Bootstrapper) ensureRepo(ctx context.Context) error {
-	err := b.API.Get(ctx, b.repoPath(), nil)
+	var repo struct {
+		Visibility string `json:"visibility"`
+	}
+	err := b.API.Get(ctx, b.repoPath(), &repo)
 	if err == nil {
+		if repo.Visibility != "public" {
+			return fmt.Errorf("repo %s is %q; rulesets on the GitHub Free plan require a public repo", b.repoFullName(), repo.Visibility)
+		}
 		return nil
 	}
 	if !errors.Is(err, ghapi.ErrNotFound) {
@@ -251,22 +257,30 @@ func (b *Bootstrapper) ensureSecrets(ctx context.Context) error {
 		if !errors.Is(err, ghapi.ErrNotFound) {
 			return err
 		}
-		var key struct {
-			KeyID string `json:"key_id"`
-			Key   string `json:"key"`
-		}
-		if err := b.API.Get(ctx, base+"/public-key", &key); err != nil {
+		if err := b.createSecret(ctx, base, s); err != nil {
 			return err
 		}
-		sealed, err := Seal(key.Key, s.value)
-		if err != nil {
-			return err
-		}
-		if err := b.API.Put(ctx, base+"/"+s.name, map[string]any{"encrypted_value": sealed, "key_id": key.KeyID}, nil); err != nil {
-			return err
-		}
-		b.logf("created secret %s", s.label())
 	}
+	return nil
+}
+
+// createSecret seals s.value with the scope's public key and stores it under base.
+func (b *Bootstrapper) createSecret(ctx context.Context, base string, s secretSpec) error {
+	var key struct {
+		KeyID string `json:"key_id"`
+		Key   string `json:"key"`
+	}
+	if err := b.API.Get(ctx, base+"/public-key", &key); err != nil {
+		return err
+	}
+	sealed, err := Seal(key.Key, s.value)
+	if err != nil {
+		return err
+	}
+	if err := b.API.Put(ctx, base+"/"+s.name, map[string]any{"encrypted_value": sealed, "key_id": key.KeyID}, nil); err != nil {
+		return err
+	}
+	b.logf("created secret %s", s.label())
 	return nil
 }
 

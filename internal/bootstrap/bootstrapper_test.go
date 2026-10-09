@@ -10,11 +10,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jellalshadows-idp/idp-engine/internal/fakegithub"
+	"github.com/jellalshadows-idp/idp-engine/internal/ghapi"
 	"golang.org/x/crypto/nacl/box"
 )
 
+// newFake starts a fake GitHub for org "acme" and a client pointed at it.
+func newFake(t *testing.T) (*fakegithub.Server, *ghapi.Client) {
+	t.Helper()
+	fake := fakegithub.New(t, "acme")
+	return fake, ghapi.New(fake.URL, "test-token")
+}
+
 func TestApplyCreatesOrgSettingsRepoAndWetBranch(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	var log bytes.Buffer
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: &log}
 
@@ -28,19 +37,19 @@ func TestApplyCreatesOrgSettingsRepoAndWetBranch(t *testing.T) {
 		"POST /repos/acme/idp-claims/git/commits",
 		"POST /repos/acme/idp-claims/git/refs",
 	} {
-		if !slices.Contains(fake.writes, want) {
-			t.Errorf("missing write %q in %v", want, fake.writes)
+		if !slices.Contains(fake.Writes, want) {
+			t.Errorf("missing write %q in %v", want, fake.Writes)
 		}
 	}
-	perms := fake.objects["/orgs/acme/actions/permissions/workflow"].(map[string]any)
+	perms := fake.Objects["/orgs/acme/actions/permissions/workflow"].(map[string]any)
 	if perms["default_workflow_permissions"] != "read" || perms["can_approve_pull_request_reviews"] != false {
 		t.Errorf("org workflow permissions = %v, want read-only and no PR approval", perms)
 	}
-	repo := fake.objects["/repos/acme/idp-claims"].(map[string]any)
+	repo := fake.Objects["/repos/acme/idp-claims"].(map[string]any)
 	if repo["visibility"] != "public" {
 		t.Errorf("repo visibility = %v, want public", repo["visibility"])
 	}
-	if _, ok := fake.objects["/repos/acme/idp-claims/git/ref/heads/wet"]; !ok {
+	if _, ok := fake.Objects["/repos/acme/idp-claims/git/ref/heads/wet"]; !ok {
 		t.Error("wet branch was not created")
 	}
 	if !strings.Contains(log.String(), "created repo acme/idp-claims") {
@@ -48,9 +57,24 @@ func TestApplyCreatesOrgSettingsRepoAndWetBranch(t *testing.T) {
 	}
 }
 
+func TestApplyRefusesAnExistingPrivateClaimsRepo(t *testing.T) {
+	fake, api := newFake(t)
+	fake.Objects["/repos/acme/idp-claims"] = map[string]any{"name": "idp-claims", "visibility": "private"}
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+
+	err := b.Apply(context.Background())
+	want := `repo acme/idp-claims is "private"; rulesets on the GitHub Free plan require a public repo`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to contain %q", err, want)
+	}
+	if slices.Contains(fake.Writes, "POST /repos/acme/idp-claims/rulesets") {
+		t.Errorf("writes = %v, want no rulesets on a private repo", fake.Writes)
+	}
+}
+
 func TestApplyExplainsMissingAdminOrgScope(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
-	fake.forbidden["/orgs/acme/actions/permissions/workflow"] = true
+	fake, api := newFake(t)
+	fake.Forbidden["/orgs/acme/actions/permissions/workflow"] = true
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 
 	err := b.Apply(context.Background())
@@ -60,26 +84,26 @@ func TestApplyExplainsMissingAdminOrgScope(t *testing.T) {
 }
 
 func TestApplyCreatesRulesetsAndEnvironments(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 
 	if err := b.Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if fake.rulesetByName("idp-main") == nil || fake.rulesetByName("idp-wet") == nil {
-		t.Fatalf("rulesets = %v, want idp-main and idp-wet", fake.rulesets)
+	if fake.RulesetByName("idp-main") == nil || fake.RulesetByName("idp-wet") == nil {
+		t.Fatalf("rulesets = %v, want idp-main and idp-wet", fake.Rulesets)
 	}
-	wet := fake.rulesetByName("idp-wet")
+	wet := fake.RulesetByName("idp-wet")
 	actor := asList(wet["bypass_actors"])[0].(map[string]any)
 	if actor["actor_id"] != float64(2) || actor["actor_type"] != "Integration" {
 		t.Errorf("idp-wet bypass = %v, want the writer app (id 2)", actor)
 	}
-	approval := fake.objects["/repos/acme/idp-claims/environments/idp-approval"].(map[string]any)
+	approval := fake.Objects["/repos/acme/idp-claims/environments/idp-approval"].(map[string]any)
 	if len(asList(approval["protection_rules"])) != 1 {
 		t.Errorf("idp-approval protection rules = %v, want one required_reviewers rule", approval["protection_rules"])
 	}
 	for _, env := range []string{"idp-approval", "idp-write"} {
-		policies := asList(fake.objects["/repos/acme/idp-claims/environments/"+env+"/deployment-branch-policies"])
+		policies := asList(fake.Objects["/repos/acme/idp-claims/environments/"+env+"/deployment-branch-policies"])
 		if len(policies) != 1 || policies[0].(map[string]any)["name"] != "main" {
 			t.Errorf("%s branch policies = %v, want only main", env, policies)
 		}
@@ -87,42 +111,42 @@ func TestApplyCreatesRulesetsAndEnvironments(t *testing.T) {
 }
 
 func TestApplyRepairsRulesetDrift(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 	ctx := context.Background()
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// Someone adds a bypass actor to idp-main by hand.
-	main := fake.rulesetByName("idp-main")
+	main := fake.RulesetByName("idp-main")
 	main["bypass_actors"] = []any{map[string]any{"actor_id": float64(9), "actor_type": "User", "bypass_mode": "always"}}
-	fake.writes = nil
+	fake.Writes = nil
 
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	want := "PUT /repos/acme/idp-claims/rulesets/" + strconv.FormatInt(int64(main["id"].(int64)), 10)
-	if !slices.Equal(fake.writes, []string{want}) {
-		t.Errorf("writes = %v, want only %q", fake.writes, want)
+	want := "PUT /repos/acme/idp-claims/rulesets/" + strconv.FormatInt(main["id"].(int64), 10)
+	if !slices.Equal(fake.Writes, []string{want}) {
+		t.Errorf("writes = %v, want only %q", fake.Writes, want)
 	}
 }
 
 func TestApplyRemovesExtraBranchPolicy(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 	ctx := context.Background()
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	path := "/repos/acme/idp-claims/environments/idp-write/deployment-branch-policies"
-	fake.objects[path] = append(asList(fake.objects[path]), map[string]any{"id": float64(999), "name": "dev"})
-	fake.writes = nil
+	fake.Objects[path] = append(asList(fake.Objects[path]), map[string]any{"id": float64(999), "name": "dev"})
+	fake.Writes = nil
 
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(fake.writes, "DELETE "+path+"/999") {
-		t.Errorf("writes = %v, want the dev policy deleted", fake.writes)
+	if !slices.Contains(fake.Writes, "DELETE "+path+"/999") {
+		t.Errorf("writes = %v, want the dev policy deleted", fake.Writes)
 	}
 }
 
@@ -162,7 +186,7 @@ func dropRule(m map[string]any, typ string) {
 	m["rules"] = kept
 }
 
-func TestRulesetDriftDetectsWeakening(t *testing.T) {
+func TestRulesetDriftWeakeningAndTolerance(t *testing.T) {
 	cases := []struct {
 		name   string
 		weaken func(live map[string]any)
@@ -216,7 +240,7 @@ func TestRulesetDriftDetectsWeakening(t *testing.T) {
 }
 
 func TestApplyFromScratchWritesInOrder(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 
 	if err := b.Apply(context.Background()); err != nil {
@@ -240,35 +264,40 @@ func TestApplyFromScratchWritesInOrder(t *testing.T) {
 		"POST /repos/acme/idp-claims/actions/variables",
 		"POST /repos/acme/idp-claims/environments/idp-write/variables",
 	}
-	if !slices.Equal(fake.writes, want) {
-		t.Errorf("writes =\n%s\nwant\n%s", strings.Join(fake.writes, "\n"), strings.Join(want, "\n"))
+	if !slices.Equal(fake.Writes, want) {
+		t.Errorf("writes =\n%s\nwant\n%s", strings.Join(fake.Writes, "\n"), strings.Join(want, "\n"))
 	}
 }
 
 func TestApplyTwiceIsIdempotent(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	var log bytes.Buffer
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: &log}
 	ctx := context.Background()
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	fake.writes = nil
+	fake.Writes = nil
 	log.Reset()
 
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.writes) != 0 {
-		t.Errorf("second apply wrote %v, want nothing", fake.writes)
+	if len(fake.Writes) != 0 {
+		t.Errorf("second apply wrote %v, want nothing", fake.Writes)
 	}
-	if !strings.Contains(log.String(), "kept existing secret IDP_STATE_PASSPHRASE") {
-		t.Errorf("log = %q, want it to say existing secrets were kept (they cannot be compared)", log.String())
+	for _, want := range []string{
+		"kept existing secret IDP_STATE_PASSPHRASE",
+		"kept existing secret idp-write/IDP_WRITER_PRIVATE_KEY",
+	} {
+		if !strings.Contains(log.String(), want) {
+			t.Errorf("log = %q, want it to contain %q (existing secrets cannot be compared)", log.String(), want)
+		}
 	}
 }
 
 func TestApplyStoresSealedPassphraseAndWriterKeyInIdpWrite(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	cfg := validConfig()
 	b := &Bootstrapper{API: api, Cfg: cfg, Log: io.Discard}
 	if err := b.Apply(context.Background()); err != nil {
@@ -278,7 +307,7 @@ func TestApplyStoresSealedPassphraseAndWriterKeyInIdpWrite(t *testing.T) {
 		"/repos/acme/idp-claims/actions/secrets/IDP_STATE_PASSPHRASE":                  cfg.Passphrase,
 		"/repos/acme/idp-claims/environments/idp-write/secrets/IDP_WRITER_PRIVATE_KEY": cfg.Writer.PrivateKey,
 	} {
-		stored, ok := fake.objects[path].(map[string]any)
+		stored, ok := fake.Objects[path].(map[string]any)
 		if !ok {
 			t.Fatalf("%s was not stored", path)
 		}
@@ -286,31 +315,31 @@ func TestApplyStoresSealedPassphraseAndWriterKeyInIdpWrite(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		opened, ok := box.OpenAnonymous(nil, raw, testPub, testPriv)
+		opened, ok := box.OpenAnonymous(nil, raw, fakegithub.PublicKey, fakegithub.PrivateKey)
 		if !ok || string(opened) != want {
 			t.Errorf("%s decrypts to %q, want %q", path, opened, want)
 		}
 	}
-	if _, ok := fake.objects["/repos/acme/idp-claims/actions/secrets/IDP_WRITER_PRIVATE_KEY"]; ok {
+	if _, ok := fake.Objects["/repos/acme/idp-claims/actions/secrets/IDP_WRITER_PRIVATE_KEY"]; ok {
 		t.Error("the writer key must never be a repo-level secret (spec §7.3)")
 	}
 }
 
 func TestApplyUpdatesChangedVariable(t *testing.T) {
-	fake, api := newFakeGitHub(t, "acme")
+	fake, api := newFake(t)
 	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
 	ctx := context.Background()
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	b.Cfg.Reader.ClientID = "Iv-reader-rotated"
-	fake.writes = nil
+	fake.Writes = nil
 
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"PATCH /repos/acme/idp-claims/actions/variables/IDP_READER_CLIENT_ID"}
-	if !slices.Equal(fake.writes, want) {
-		t.Errorf("writes = %v, want %v", fake.writes, want)
+	if !slices.Equal(fake.Writes, want) {
+		t.Errorf("writes = %v, want %v", fake.Writes, want)
 	}
 }

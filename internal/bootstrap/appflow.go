@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync/atomic"
 	"time"
 
@@ -32,10 +34,19 @@ const (
 // maxAppName is GitHub's limit for App names, which must also be unique across GitHub.
 const maxAppName = 34
 
+// orgNameRE matches GitHub organization logins: alphanumerics and inner hyphens, up to 39 characters.
+var orgNameRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
+
+// ValidOrgName reports whether org is a syntactically valid GitHub organization login.
+func ValidOrgName(org string) bool { return orgNameRE.MatchString(org) }
+
 // Manifest returns the GitHub App manifest for org and role, named <org>-<role>.
 func Manifest(org string, role AppRole, callback string) (map[string]any, error) {
 	if role != RoleReader && role != RoleWriter {
 		return nil, fmt.Errorf("unknown app role %q (want reader or writer)", role)
+	}
+	if !ValidOrgName(org) {
+		return nil, fmt.Errorf("invalid org name %q", org)
 	}
 	name := org + "-" + string(role)
 	if len(name) > maxAppName {
@@ -83,6 +94,10 @@ type flowResult struct {
 
 // Run serves the form on ln and blocks until GitHub calls back or ctx ends.
 func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, error) {
+	log := f.Log
+	if log == nil {
+		log = io.Discard
+	}
 	state, err := randomState()
 	if err != nil {
 		return AppCredentials{}, err
@@ -104,7 +119,7 @@ func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, err
 		_ = formTmpl.Execute(w, map[string]string{"Action": action, "Manifest": string(manifestJSON)})
 	})
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("state") != state {
+		if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("state")), []byte(state)) != 1 {
 			http.Error(w, "state mismatch", http.StatusBadRequest)
 			return
 		}
@@ -115,7 +130,9 @@ func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, err
 		}
 		creds, err := f.convert(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			// The detail reaches the terminal through Run's returned error; the
+			// browser must not see API errors, and this goroutine must not write the log.
+			http.Error(w, "App creation failed; see the terminal for details.", http.StatusBadGateway)
 		} else {
 			fmt.Fprintf(w, "App %s created. You can close this tab.\n", creds.Slug)
 		}
@@ -129,7 +146,7 @@ func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, err
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 	}()
-	fmt.Fprintf(f.Log, "Open http://%s/ in your browser to create %s-%s\n", ln.Addr(), f.Org, f.Role)
+	fmt.Fprintf(log, "Open http://%s/ in your browser to create %s-%s\n", ln.Addr(), f.Org, f.Role)
 
 	select {
 	case <-ctx.Done():
@@ -159,6 +176,9 @@ func (f *AppFlow) convert(ctx context.Context, code string) (AppCredentials, err
 	if err := f.API.Post(ctx, "/app-manifests/"+url.PathEscape(code)+"/conversions", nil, &resp); err != nil {
 		return AppCredentials{}, err
 	}
+	if err := validSlug(resp.Slug); err != nil {
+		return AppCredentials{}, fmt.Errorf("GitHub returned an unusable app: %w", err)
+	}
 	return AppCredentials{ID: resp.ID, ClientID: resp.ClientID, Slug: resp.Slug, PrivateKey: resp.PEM}, nil
 }
 
@@ -177,13 +197,28 @@ func (f *AppFlow) save(c AppCredentials) error {
 	return writeOwnerOnly(filepath.Join(f.OutDir, c.Slug+".json"), append(meta, '\n'))
 }
 
-// writeOwnerOnly forces 0600 even when the file already exists: WriteFile
-// applies its mode only on creation, so a pre-existing looser file would keep it.
+// writeOwnerOnly writes data to a 0600 temp file next to path and renames it
+// into place, so the key never sits in a pre-existing file with looser permissions.
 func writeOwnerOnly(path string, data []byte) error {
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
+	if err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o600)
+	// A SIGKILL mid-write can leave a 0600 temp file next to the credentials (never a world-readable one).
+	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	// os.CreateTemp already creates the file 0600 on Unix; Windows does not enforce modes (see the runbook).
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 func randomState() (string, error) {

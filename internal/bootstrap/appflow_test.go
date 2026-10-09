@@ -1,13 +1,17 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strings"
@@ -55,6 +59,17 @@ func TestManifestReaderIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestManifestOrgName(t *testing.T) {
+	if _, err := Manifest("acme", RoleWriter, "cb"); err != nil {
+		t.Errorf("acme: %v", err)
+	}
+	for _, org := range []string{"-bad", "bad-", "a/b", "a b", ""} {
+		if _, err := Manifest(org, RoleWriter, "cb"); err == nil || !strings.Contains(err.Error(), "invalid org name") {
+			t.Errorf("org %q: err = %v, want invalid org name", org, err)
+		}
+	}
+}
+
 func TestManifestRejects(t *testing.T) {
 	if _, err := Manifest("a-very-long-organization-name", RoleWriter, "cb"); err == nil || !strings.Contains(err.Error(), "34") {
 		t.Errorf("long name: err = %v, want the 34-character limit", err)
@@ -78,14 +93,29 @@ func httpGet(t *testing.T, url string, wantStatus int) string {
 	return string(body)
 }
 
+// stateFrom extracts the CSRF state from the served form, failing the test if absent.
+func stateFrom(t *testing.T, form string) string {
+	t.Helper()
+	m := regexp.MustCompile(`state=([A-Za-z0-9_-]+)`).FindStringSubmatch(form)
+	if m == nil {
+		t.Fatalf("no state in form:\n%s", form)
+	}
+	return m[1]
+}
+
 func startFlow(t *testing.T, apiURL, outDir string) (base string, done chan error, creds *AppCredentials, cancel context.CancelFunc) {
+	t.Helper()
+	return startFlowLog(t, apiURL, outDir, io.Discard)
+}
+
+func startFlowLog(t *testing.T, apiURL, outDir string, log io.Writer) (base string, done chan error, creds *AppCredentials, cancel context.CancelFunc) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	flow := &AppFlow{Org: "acme", Role: RoleWriter, API: ghapi.New(apiURL, ""), OutDir: outDir, Log: io.Discard, GitHubWeb: "https://github.example"}
+	flow := &AppFlow{Org: "acme", Role: RoleWriter, API: ghapi.New(apiURL, ""), OutDir: outDir, Log: log, GitHubWeb: "https://github.example"}
 	done = make(chan error, 1)
 	creds = &AppCredentials{}
 	go func() {
@@ -112,7 +142,7 @@ func TestAppFlowCreatesAndSavesApp(t *testing.T) {
 	if !strings.Contains(form, "https://github.example/organizations/acme/settings/apps/new?state=") {
 		t.Fatalf("form does not post to the org's new-app page:\n%s", form)
 	}
-	state := regexp.MustCompile(`state=([A-Za-z0-9_-]+)`).FindStringSubmatch(form)[1]
+	state := stateFrom(t, form)
 	httpGet(t, base+"/callback?code=the-code&state="+state, http.StatusOK)
 
 	if err := <-done; err != nil {
@@ -127,6 +157,13 @@ func TestAppFlowCreatesAndSavesApp(t *testing.T) {
 	}
 	if loaded.ClientID != "Iv23abc" || loaded.PrivateKey != creds.PrivateKey {
 		t.Errorf("saved credentials = %+v", loaded)
+	}
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("out dir has %d entries, want only the .json and .pem (no temp files left)", len(entries))
 	}
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(filepath.Join(out, "acme-writer.pem"))
@@ -159,7 +196,7 @@ func TestAppFlowConvertsOnlyOnce(t *testing.T) {
 	base, done, creds, cancel := startFlow(t, gh.URL, t.TempDir())
 	defer cancel()
 
-	state := regexp.MustCompile(`state=([A-Za-z0-9_-]+)`).FindStringSubmatch(httpGet(t, base+"/", http.StatusOK))[1]
+	state := stateFrom(t, httpGet(t, base+"/", http.StatusOK))
 
 	var wg sync.WaitGroup
 	statuses := make([]int, 2)
@@ -209,7 +246,7 @@ func TestAppFlowSaveTightensExistingPemMode(t *testing.T) {
 	base, done, _, cancel := startFlow(t, gh.URL, out)
 	defer cancel()
 
-	state := regexp.MustCompile(`state=([A-Za-z0-9_-]+)`).FindStringSubmatch(httpGet(t, base+"/", http.StatusOK))[1]
+	state := stateFrom(t, httpGet(t, base+"/", http.StatusOK))
 	httpGet(t, base+"/callback?code=the-code&state="+state, http.StatusOK)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -220,5 +257,99 @@ func TestAppFlowSaveTightensExistingPemMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("pem mode = %v, want 0600 even when the file pre-existed", info.Mode().Perm())
+	}
+}
+
+func TestAppFlowFormCarriesTheManifestIntact(t *testing.T) {
+	base, done, _, cancel := startFlow(t, "http://127.0.0.1:1", t.TempDir())
+	form := httpGet(t, base+"/", http.StatusOK)
+	cancel()
+	<-done
+
+	m := regexp.MustCompile(`name="manifest" value="([^"]*)"`).FindStringSubmatch(form)
+	if m == nil {
+		t.Fatalf("no manifest input in form:\n%s", form)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(html.UnescapeString(m[1])), &got); err != nil {
+		t.Fatalf("manifest does not round-trip: %v\n%s", err, m[1])
+	}
+	want, err := Manifest("acme", RoleWriter, base+"/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Marshal+unmarshal want so number types match what the form decoded.
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wantRT map[string]any
+	if err := json.Unmarshal(raw, &wantRT); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, wantRT) {
+		t.Errorf("manifest in the form differs from Manifest():\n got: %v\nwant: %v", got, wantRT)
+	}
+}
+
+func TestAppFlowFailedConversionDoesNotEchoUpstreamError(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "secret-upstream-detail", http.StatusInternalServerError)
+	}))
+	defer gh.Close()
+	var log bytes.Buffer
+	base, done, _, cancel := startFlowLog(t, gh.URL, t.TempDir(), &log)
+	defer cancel()
+
+	state := stateFrom(t, httpGet(t, base+"/", http.StatusOK))
+	body := httpGet(t, base+"/callback?code=the-code&state="+state, http.StatusBadGateway)
+
+	if strings.TrimSpace(body) != "App creation failed; see the terminal for details." {
+		t.Errorf("browser body = %q, want the generic message", body)
+	}
+	if strings.Contains(body, "secret-upstream-detail") {
+		t.Errorf("browser body leaks the upstream error: %q", body)
+	}
+	err := <-done
+	if err == nil || !strings.Contains(err.Error(), "secret-upstream-detail") {
+		t.Errorf("Run err = %v, want the detailed error", err)
+	}
+	// The CLI prints the returned error; the handler goroutine must not touch the log.
+	if strings.Contains(log.String(), "secret-upstream-detail") {
+		t.Errorf("log = %q, want no write from the callback handler", log.String())
+	}
+}
+
+func TestAppFlowRejectsEscapingSlug(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"id": 77, "client_id": "Iv23abc", "slug": "../escaped", "pem": "key"}`)
+	}))
+	defer gh.Close()
+	parent := t.TempDir()
+	outDir := filepath.Join(parent, "out")
+	base, done, _, cancel := startFlowLog(t, gh.URL, outDir, nil)
+	defer cancel()
+
+	state := stateFrom(t, httpGet(t, base+"/", http.StatusOK))
+	httpGet(t, base+"/callback?code=the-code&state="+state, http.StatusBadGateway)
+
+	err := <-done
+	if err == nil || !strings.Contains(err.Error(), "invalid app slug") {
+		t.Fatalf("Run err = %v, want an invalid app slug error", err)
+	}
+	for _, dir := range []string{parent, outDir} {
+		matches, _ := filepath.Glob(filepath.Join(dir, "escaped*"))
+		if len(matches) != 0 {
+			t.Errorf("files written outside the plain-name rule: %v", matches)
+		}
+	}
+}
+
+func TestAppFlowNilLogDoesNotPanic(t *testing.T) {
+	base, done, _, cancel := startFlowLog(t, "http://127.0.0.1:1", t.TempDir(), nil)
+	httpGet(t, base+"/", http.StatusOK)
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("want the context error after cancel, got nil")
 	}
 }
