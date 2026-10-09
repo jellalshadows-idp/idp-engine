@@ -58,7 +58,7 @@ environments:
 apiVersion: idp/v1
 kind: Group
 name: platform
-description: Platform team   # optional
+description: Platform team   # optional, single line
 members:
   - user: alice            # GitHub login; each login at most once (case-insensitive)
     role: maintainer       # maintainer | member
@@ -72,7 +72,7 @@ A Group renders a closed GitHub team with these memberships. Adding someone who 
 apiVersion: idp/v1
 kind: Component
 name: api                  # = repository name
-description: Orders API    # optional
+description: Orders API    # optional, single line
 owner: group:platform      # must name an existing Group
 environments: [dev, pro]   # must exist in config/platform.yaml
 github:
@@ -98,5 +98,7 @@ The `aws` and `features` fields arrive in Phases 2 and 4. Until then they fail v
 - `rendered/github/main.tf.json`: the provider, the local backend at `../../tfstate/github.tfstate`, enforced state and plan encryption, and one module call per claim, pinned to the engine's release tag;
 - `rendered/github/.terraform.lock.hcl`: the pinned provider checksums;
 - `rendered/.idp-rendered`: a marker. `--out` must not exist, be empty, or hold a previous render, so a mistyped path can never wipe unrelated data.
+
+`--out` is relative to the current directory, not to `--dir`. The stack's local backend writes its state to `<out>/../tfstate/github.tfstate`, which is where the `wet` branch keeps it (spec §5.4).
 
 Development builds must pass `--module-ref <ref>`, or `--modules-dir <path>` to validate against local modules.
