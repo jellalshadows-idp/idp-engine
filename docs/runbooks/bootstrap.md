@@ -34,7 +34,7 @@ Open each printed `https://github.com/apps/<slug>/installations/new` link, choos
 Generate the passphrase and save it in your password manager **first**. Then write it to a file outside any repo, as UTF-8 **without BOM**, on a single line. In Git Bash, this avoids leaving it in your shell history:
 
 ```bash
-read -rs P && printf '%s' "$P" > ~/.idp/<name>.pass && unset P
+IFS= read -rs P && printf '%s' "$P" > ~/.idp/<name>.pass && unset P
 ```
 
 `apply` rejects files with a BOM, UTF-16 encoding (the default of PowerShell 5.1 redirection, `>`) or control characters. It never overwrites an existing secret, so a bad value would otherwise persist.
@@ -97,6 +97,14 @@ Secret values are write-only, so `apply` never overwrites an existing secret. To
 2. Run `apply` again.
 
 **Never rotate `IDP_STATE_PASSPHRASE` this way.** The encrypted state in `wet` can only be read with the passphrase it was written with. Rotating it requires an OpenTofu `fallback` migration first (spec §7.2); deleting the secret and re-running `apply` makes the existing state unreadable.
+
+## Changing an App's permissions
+
+The manifests in `bootstrap/apps/*.json` are only read when an App is **created**. Editing a manifest does not change an App that already exists. To apply a new permission set to an existing App:
+
+1. Open `https://github.com/organizations/<org>/settings/apps/<app-slug>/permissions` and set the same permissions as the updated manifest.
+2. GitHub then asks the installation to accept the new permissions: open the org's **Settings → GitHub Apps**, select the App and accept the request.
+3. Run `check` to confirm nothing else drifted.
 
 ## Known gaps
 

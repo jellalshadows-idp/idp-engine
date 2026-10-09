@@ -73,6 +73,7 @@ A ruling is a controller decision that deviated from, or filled a gap in, the pl
 
 - **R19. Fix the `update` rule shape by sending GitHub's canonical form, and pin live fixtures.** The real second apply reported `updated ruleset idp-wet (drift at [$.rules.update.parameters])`: GitHub returns the `update` rule without `parameters` when `update_allows_fetch_and_merge` is false. The desired `WetRuleset` now emits `{type: update}` with no parameters, and both live rulesets are pinned as `testdata/live-ruleset-idp-main.json` and `live-ruleset-idp-wet.json`, checked by `TestDesiredRulesetsMatchLiveGitHub` (RED then GREEN; the wet golden lost only `update.parameters`). Branch `fix/wet-ruleset-update-shape`, fix `e7b1959`, [PR #2](https://github.com/jellalshadows-idp/idp-engine/pull/2), merge `c042915`. Re-verified on real GitHub before merging. *Why:* loosening `Mismatches` would hide real drift. *Cost if wrong:* none; it matches the API schema, where `parameters` is optional for `update`.
 - **R20. Close the I3 fail-open in Phase 0 instead of deferring it.** The data removed the risk that blocked the fix (R12): owner tokens always return `bypass_actors` (even `[]`), so an absent key can only mean "hidden from this token". `check` now reports that explicitly (fail closed; `null` counts as hidden; the wet ruleset yields exactly one message), and the runbook says to run `check` with a write-capable token. Branch `fix/bypass-actors-fail-closed`, [PR #3](https://github.com/jellalshadows-idp/idp-engine/pull/3), merge `c062837`. The Phase 1 ADR still decides the drift-workflow token strategy. *Cost if wrong:* a read-only drift check reports one explicit finding per ruleset until Phase 1.
+- **R21. Clean the spike repo and do not rotate the App keys.** Before archiving `jellalshadows-idp/idp-spike`, every secret (`SPIKE_READER_PRIVATE_KEY`, `SPIKE_WRITER_PRIVATE_KEY`, `SPIKE_TF_ENCRYPTION`) and variable (`SPIKE_*_CLIENT_ID`, `SPIKE_WRITER_APP_ID`) was deleted, so an archived repo keeps no key material. The App keys are not rotated: they only ever lived as encrypted Actions secrets of an org repo whose workflows were written in this phase, and rotation needs the browser plus a re-bootstrap of both claims repos. *Cost if wrong:* a key that existed in one more secret store than necessary; to rotate, generate a new key in the App settings, delete the `IDP_*_PRIVATE_KEY` secrets and re-run `idp bootstrap apply` (runbook, "Rotating a secret").
 
 Also decided by the owner (not numbered rulings):
 
@@ -172,9 +173,9 @@ Statuses: **open** (still true, no decision), **parked** (consciously left, with
 - Fixed: M2, M4, M6, M7. Parked: M1, M3, M5, M8, M9 (ruling R13). Together these cover M1 to M9. The ledger records only the short topic of each, not longer text.
 
 ### Final fix wave residuals
-- The runbook's `read -rs P` should be `IFS= read -rs P` to preserve edge spaces. Open.
+- The runbook's `read -rs P` should be `IFS= read -rs P` to preserve edge spaces. Fixed in the closing docs.
 - The new CLI test ignores `os.WriteFile` errors. Open.
-- The runbook lacks a note that existing Apps keep their old permissions after a manifest change (update them in the App settings and accept on the installation). Open; the Apps were created after the last manifest change, so it did not bite, and the reader probe (10 of 10) confirmed the permissions.
+- The runbook lacks a note that existing Apps keep their old permissions after a manifest change (update them in the App settings and accept on the installation). Fixed in the closing docs (runbook section "Changing an App's permissions"); it never bit, because the Apps were created after the last manifest change and the reader probe returned 10 of 10.
 - Checked by the controller and confirmed: `GET environments/{env}/secrets` needs `environments:read`, which the reader has.
 
 ## Final whole-branch review
@@ -217,7 +218,7 @@ Note on the two accounts: `Adrian-Manuel` is the owner's other account (its invi
 
 ## Status
 
-**Phase 0 is complete.** The `idp bootstrap` command shipped and ran against the real org; `idp-claims-e2e` and `idp-claims` are bootstrapped, idempotent and drift-free; spikes S1, S2 and S3 are measured and recorded in [ADR-0013](../adr/0013-phase-0-spike-findings.md); spec §11 risks 1 and 2 are closed; ADRs 0001 to 0014 are accepted. The spike repo `jellalshadows-idp/idp-spike` is archived at the end of Phase 0 (`gh repo archive jellalshadows-idp/idp-spike --yes`).
+**Phase 0 is complete.** The `idp bootstrap` command shipped and ran against the real org; `idp-claims-e2e` and `idp-claims` are bootstrapped, idempotent and drift-free; spikes S1, S2 and S3 are measured and recorded in [ADR-0013](../adr/0013-phase-0-spike-findings.md); spec §11 risks 1 and 2 are closed; ADRs 0001 to 0014 are accepted. The spike repo `jellalshadows-idp/idp-spike` was emptied of all secrets and variables and archived (ruling R21).
 
 Owner-only items left:
 
