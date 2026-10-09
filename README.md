@@ -2,7 +2,7 @@
 
 The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. Desired state lives in claims (YAML in Git), with no Kubernetes involved.
 
-> **Status:** Phase 0 (bootstrap + spike) is complete. The `idp bootstrap` command shipped and was run against the real org, and the spikes are done; see the [phase log](docs/phases/phase-0.md). Nothing else is usable yet.
+> **Status:** Phase 1a is complete: `idp validate` and `idp render` turn a claims repo into a validated GitHub stack, backed by the tested `github/group` and `github/component` modules; see the [phase 1a log](docs/phases/phase-1a.md). Phase 1b (pipelines) is next, so nothing is reconciled automatically yet.
 
 **What exists today:** `idp-claims` and `idp-claims-e2e` are bootstrapped and protected. Phase 1 (pipelines) is next.
 
