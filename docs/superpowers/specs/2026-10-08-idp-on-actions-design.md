@@ -25,7 +25,7 @@ to bootstrap it on their own GitHub organization.
 **Success criteria for v1 (`1.0.0`):**
 1. Claims for Group, Component (GitHub + AWS) and Workspace go from PR to applied
    resources through the pipelines described here.
-2. The end-to-end harness passes nightly in a sandbox organization.
+2. The end-to-end harness passes nightly against the `idp-claims-e2e` repo.
 3. Someone external can bootstrap a new org by following only the README.
 4. Every major decision has an ADR, and the limitations are stated up front.
 
@@ -67,8 +67,9 @@ to bootstrap it on their own GitHub organization.
 
 ### 3.1 Repositories
 
-The main org is `<org>`, and the sandbox org is `<org>-sandbox` (both names are
-inputs for the plan, see §12).
+Everything lives in **one** org, `<org>` (see §12). Production and tests are separated
+by claims repo, not by org: each claims repo has its own `wet` branch, its own
+encrypted state and its own passphrase (owner decision, 2026-10-09; see §8.5).
 
 | Repo | Role | Versioning |
 |---|---|---|
@@ -76,7 +77,7 @@ inputs for the plan, see §12).
 | `idp-features` | Catalog of features (`features/<name>/`) | release-please multi-component, tags `<name>-v<semver>` |
 | `idp-modules` | Catalog of Workspace modules (`modules/<name>/`). v1 ships `s3-bucket` | release-please multi-component, tags `<name>-v<semver>` |
 | `idp-claims` | `main` = desired state (DRY). `wet` = rendered output + encrypted GitHub state, written only by `idp-writer` | None. Renovate bumps the engine version |
-| `<org>-sandbox/idp-claims-e2e` | E2E harness target (see §8.5) | None |
+| `idp-claims-e2e` | E2E harness target (see §8.5): same shape as `idp-claims`, but only `e2e-`-prefixed resources | None |
 
 ### 3.2 Flow
 
@@ -226,7 +227,7 @@ apiVersion: idp/v1
 kind: Platform
 github:
   org: <org>
-  archiveOnDestroy: true          # false in the sandbox org
+  archiveOnDestroy: true          # false in idp-claims-e2e
   requiredApprovals: 1
 environments:                     # names match ^[a-z][a-z0-9]{0,9}$
   dev:     { aws: { accountId: "000000000001", region: eu-west-1 } }
@@ -544,8 +545,9 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 
 - `idp-reader` and `idp-writer` are **roles**. GitHub App names are unique across
   GitHub and limited to 34 characters, so the real Apps are named
-  `<org>-reader` and `<org>-writer`. For example, `jellalshadows-idp-sandbox-writer`
-  is 32 characters.
+  `<org>-reader` and `<org>-writer`. For example, `jellalshadows-idp-writer` is 24
+  characters. Both claims repos (`idp-claims` and `idp-claims-e2e`) share the same
+  two Apps, because Apps are installed per org.
 - Tokens are minted per job with `actions/create-github-app-token` and expire after
   1 hour. A longer apply is a known limitation, and Phase 0 measures how long
   applies take.
@@ -597,7 +599,7 @@ Runbooks live in the repo and are written in English:
 | 1. Go unit + golden | CLI logic, render | ✅ | ✅ | |
 | 2. `tofu test` + `mock_provider` | Module logic | ✅ (needs the `tofu` binary only) | ✅ | |
 | 3. AWS integration | `modules/aws/*`, `idp-modules` against real floci | ❌ | ✅ | |
-| 4. E2E sandbox | Whole flow, PR → merge → apply → cleanup | ❌ | engine release PR | ✅ |
+| 4. E2E | Whole flow, PR → merge → apply → cleanup, in `idp-claims-e2e` | ❌ | engine release PR | ✅ |
 
 ### 8.1 Practice
 Strict TDD (red → green → refactor) for Go and for module assertions. Go tests follow
@@ -628,8 +630,8 @@ destroy. It also includes a **replay test**: apply the old version, plan the new
 and check that the diff is exactly the expected one.
 
 ### 8.5 Level 4: E2E
-The harness targets `<org>-sandbox/idp-claims-e2e`, using the reusable workflows at
-the candidate SHA. This mirrors Firestartr's `smoke-tests/scripts/smoke.sh`. The
+The harness targets `<org>/idp-claims-e2e`, using the reusable workflows at the
+candidate SHA. This mirrors Firestartr's `smoke-tests/scripts/smoke.sh`. The
 harness:
 1. Creates a branch with fixture claims and opens a PR.
 2. Waits for `idp-gate` and checks the plan comment.
@@ -637,8 +639,21 @@ harness:
 4. Asserts with `gh api` that the repo, team, ruleset, environments and files exist.
 5. Opens a PR that deletes the claims and verifies the cleanup.
 
-The sandbox uses `archiveOnDestroy: false`. The harness runs nightly and on engine
-release PRs, not on every PR, to protect the rate limit and CI minutes.
+`idp-claims-e2e` uses `archiveOnDestroy: false`. The harness runs nightly and on
+engine release PRs, not on every PR, to protect the rate limit and CI minutes.
+
+**One org, isolated by repo and prefix (owner decision, 2026-10-09).** There is no
+separate sandbox org, so the isolation is enforced in three ways:
+- `idp-claims-e2e` has its own `wet` branch, encrypted state and passphrase, so
+  production state and test state never mix.
+- Every resource the harness or a spike creates is prefixed `e2e-` or `spike-`, and
+  the harness refuses to delete anything without that prefix.
+- `idp-claims` validation rejects claim names that start with `e2e-` or `spike-`.
+
+What a sandbox org would have added, and is accepted as lost:
+- The Apps and their keys are shared between production and tests.
+- Org-level settings (Actions permissions, invitations) are shared.
+- The rate limit is shared.
 
 ### 8.6 Features and workflows
 - Feature golden tests run with `idp feature test`.
@@ -717,7 +732,7 @@ use what that phase measured. Each phase ships an engine minor release.
 | Phase | Delivers | Exit criteria |
 |---|---|---|
 | 0 | Bootstrap + spike | Orgs, Apps and repos exist. An ADR with measurements: encrypted state round-trip via Git, the GitHub provider with an App token, apply duration vs the 1-hour token, floci replay time per stack, and pending-invite behavior |
-| 1 → `0.1.0` | Group + Component (GitHub part), all pipelines (§6), **E2E harness born** | E2E creates, modifies and deletes a repo and a team in the sandbox |
+| 1 → `0.1.0` | Group + Component (GitHub part), all pipelines (§6), **E2E harness born** | E2E creates, modifies and deletes an `e2e-` repo and team through `idp-claims-e2e` |
 | 2 → `0.2.0` | Component AWS part: baseline, ECR + role, deterministic env variables | E2E checks the env variables, and floci integration is green |
 | 3 → `0.3.0` | Workspace: allowlist, policies, orphans, `idp-modules/s3-bucket` | E2E covers the two-step delete and the `apply`-policy rejection |
 | 4 → `0.4.0` | Features: `idp-features` + the 3 features, managed and userManaged | Golden tests, plus E2E with one managed and one userManaged file |
@@ -734,9 +749,10 @@ use what that phase measured. Each phase ships an engine minor release.
 | 5 | `userManaged` adoption edge cases (file deleted between adopt and apply) | `overwrite_on_create = false` on `user_managed`, so the apply fails loudly and the next reconcile retries |
 | 6 | Cron disabled after 60 days of inactivity | Renovate activity. Documented |
 
-## 12. Inputs (resolved 2026-10-08)
-- Main org: `jellalshadows-idp`. Sandbox org: `jellalshadows-idp-sandbox`. Both are
-  created by hand, because Free orgs cannot be created through the API.
+## 12. Inputs (resolved 2026-10-08, amended 2026-10-09)
+- A single org, `jellalshadows-idp`, created by hand because Free orgs cannot be
+  created through the API. The 2026-10-08 plan for a separate sandbox org was
+  dropped by the owner on 2026-10-09; tests are isolated by repo and prefix (§8.5).
 - Test account for Group members and the pending-invite spike: `adrian-da-silva`.
   The approver and platform admin is `jellalshadows`.
 - Timing: this runs in parallel with `chart-base`.

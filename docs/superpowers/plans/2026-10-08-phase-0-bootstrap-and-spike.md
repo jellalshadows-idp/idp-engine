@@ -9,9 +9,9 @@ on, and record everything in ADRs.
 **Architecture:**
 - **The bootstrap is real product code.** It is a Go subcommand in `idp-engine`
   (`idp bootstrap app|apply|check`), built TDD against an in-memory fake of the
-  GitHub REST API, then run for real against both orgs.
-- **The spikes are throwaway.** They live in a separate sandbox repo
-  (`jellalshadows-idp-sandbox/idp-spike`) and run in GitHub Actions, because
+  GitHub REST API, then run for real against both claims repos of the single org.
+- **The spikes are throwaway.** They live in a separate throwaway repo
+  (`jellalshadows-idp/idp-spike`) and run in GitHub Actions, because
   floci needs Docker and the owner has none locally. Their output is numbers and
   verdicts in ADR-0013; their code is not kept.
 
@@ -31,10 +31,12 @@ on, and record everything in ADRs.
 - Go module: `github.com/jellalshadows-idp/idp-engine`. Go directive `go 1.26.0`.
   The only non-stdlib dependency allowed in this phase is
   `golang.org/x/crypto v0.57.0`.
-- Orgs: `jellalshadows-idp` (main) and `jellalshadows-idp-sandbox`. Both are
-  GitHub Free.
-- Claims repos: `idp-claims` (main org) and `idp-claims-e2e` (sandbox).
-- Apps are named `<org>-reader` and `<org>-writer`, at most 34 characters each.
+- Org: a single GitHub Free org, `jellalshadows-idp` (owner decision 2026-10-09: no
+  sandbox org; tests are isolated by repo and by the `e2e-`/`spike-` prefix, spec §8.5).
+- Claims repos: `idp-claims` (production) and `idp-claims-e2e` (tests), each with its own
+  `wet` branch, encrypted state and passphrase.
+- Apps: `jellalshadows-idp-reader` and `jellalshadows-idp-writer` (at most 34 characters),
+  created once and shared by both claims repos.
 - Approver: `jellalshadows`. Test account: `adrian-da-silva`.
 - Names shared with Phase 1 workflows (changing one is a breaking change):
   - branch `wet`;
@@ -134,7 +136,7 @@ idp-engine/
 ├─ docs/adr/0001…0013-*.md
 └─ .github/workflows/ci.yaml            # go test/vet/gofmt + actionlint + zizmor
 
-idp-spike/  (separate local folder → jellalshadows-idp-sandbox/idp-spike, THROWAWAY)
+idp-spike/  (separate local folder → jellalshadows-idp/idp-spike, THROWAWAY)
 ├─ README.md
 ├─ state/main.tf                        # S1: encrypted state round-trip
 ├─ github/main.tf                       # S2: GitHub provider with App token
@@ -150,14 +152,14 @@ idp-spike/  (separate local folder → jellalshadows-idp-sandbox/idp-spike, THRO
 **Files:** none.
 
 **Interfaces:**
-- Produces: the orgs `jellalshadows-idp` and `jellalshadows-idp-sandbox`, and a
+- Produces: the org `jellalshadows-idp`, and a
   `gh` token for `jellalshadows` with the `admin:org` scope.
 
-- [ ] **Step 1: Create both orgs**
+- [ ] **Step 1: Create the org**
 
 Go to https://github.com/account/organizations/new, choose the **Free** plan, and
-create `jellalshadows-idp`. Repeat for `jellalshadows-idp-sandbox`. The owner is
-`jellalshadows` in both.
+create `jellalshadows-idp`. The owner is `jellalshadows`. (Done by the owner on
+2026-10-09.)
 
 - [ ] **Step 2: Add the `admin:org` scope to the local gh token**
 
@@ -165,10 +167,10 @@ Run: `gh auth switch --user jellalshadows; gh auth refresh -h github.com -s admi
 Expected: the browser device flow completes. Then
 `gh auth status 2>&1 | rg "Token scopes"` lists `admin:org`.
 
-- [ ] **Step 3: Verify both orgs exist**
+- [ ] **Step 3: Verify the org exists**
 
 Run: `gh api user/orgs --jq '.[].login'`
-Expected: both `jellalshadows-idp` and `jellalshadows-idp-sandbox`.
+Expected: `jellalshadows-idp`.
 
 ---
 
@@ -3833,29 +3835,29 @@ is green.
 
 ---
 
-### Task 13: Bootstrap the sandbox org (real run)
+### Task 13: Create the Apps and bootstrap `idp-claims-e2e` (real run)
 
 **Files:** none in git. The credentials go to `~/.idp/apps/`.
 
 **Interfaces:**
 - Consumes: the merged CLI (Task 12) and the orgs (Task 0).
 - Produces:
-  - Apps `jellalshadows-idp-sandbox-reader` and `jellalshadows-idp-sandbox-writer`,
+  - Apps `jellalshadows-idp-reader` and `jellalshadows-idp-writer`,
     installed on all repositories.
-  - Repo `jellalshadows-idp-sandbox/idp-claims-e2e`, bootstrapped, with
+  - Repo `jellalshadows-idp/idp-claims-e2e`, bootstrapped, with
     `check` clean.
 
-- [ ] **Step 1: The owner creates the sandbox passphrase**
+- [ ] **Step 1: The owner creates the e2e passphrase**
 
 The owner generates a passphrase of 24+ characters in their password manager,
-saves it there as "idp sandbox state", and writes it to a local file **outside any
-repo**, for example `~/.idp/sandbox.pass`.
+saves it there as "idp e2e state", and writes it to a local file **outside any
+repo**, for example `~/.idp/e2e.pass`.
 
 - [ ] **Step 2: Create both Apps** (the owner confirms in the browser)
 
-Run: `go run ./cmd/idp bootstrap app --org jellalshadows-idp-sandbox --role reader`
-Then: `go run ./cmd/idp bootstrap app --org jellalshadows-idp-sandbox --role writer`
-Expected: `Created jellalshadows-idp-sandbox-reader (id N)` and the same for the
+Run: `go run ./cmd/idp bootstrap app --org jellalshadows-idp --role reader`
+Then: `go run ./cmd/idp bootstrap app --org jellalshadows-idp --role writer`
+Expected: `Created jellalshadows-idp-reader (id N)` and the same for the
 writer. The Glob tool on `~/.idp/apps/*` lists 4 files (two `.json`, two `.pem`).
 
 - [ ] **Step 3: Install both Apps** (the owner, in the browser)
@@ -3864,13 +3866,13 @@ Open the two printed install links and select **All repositories**.
 
 - [ ] **Step 4: Check before applying (expect findings)**
 
-Run: `GH_TOKEN="$(gh auth token)" go run ./cmd/idp bootstrap check --org jellalshadows-idp-sandbox --claims-repo idp-claims-e2e --approver jellalshadows --reader ~/.idp/apps/jellalshadows-idp-sandbox-reader.json --writer ~/.idp/apps/jellalshadows-idp-sandbox-writer.json`
-Expected: exit code 1, with `repo jellalshadows-idp-sandbox/idp-claims-e2e: missing`
+Run: `GH_TOKEN="$(gh auth token)" go run ./cmd/idp bootstrap check --org jellalshadows-idp --claims-repo idp-claims-e2e --approver jellalshadows --reader ~/.idp/apps/jellalshadows-idp-reader.json --writer ~/.idp/apps/jellalshadows-idp-writer.json`
+Expected: exit code 1, with `repo jellalshadows-idp/idp-claims-e2e: missing`
 and **no** `app … not installed` lines. If those lines appear, Step 3 is incomplete.
 
 - [ ] **Step 5: Apply** (outward-facing: ask first)
 
-Run: `GH_TOKEN="$(gh auth token)" go run ./cmd/idp bootstrap apply --org jellalshadows-idp-sandbox --claims-repo idp-claims-e2e --approver jellalshadows --reader ~/.idp/apps/jellalshadows-idp-sandbox-reader.json --writer ~/.idp/apps/jellalshadows-idp-sandbox-writer.json --passphrase-file ~/.idp/sandbox.pass`
+Run: `GH_TOKEN="$(gh auth token)" go run ./cmd/idp bootstrap apply --org jellalshadows-idp --claims-repo idp-claims-e2e --approver jellalshadows --reader ~/.idp/apps/jellalshadows-idp-reader.json --writer ~/.idp/apps/jellalshadows-idp-writer.json --passphrase-file ~/.idp/e2e.pass`
 Expected: lines like `created repo …`, `created ruleset idp-main`, and so on, ending
 with `bootstrap apply: done`.
 
@@ -3880,12 +3882,21 @@ Run the Step 5 command again.
 Expected: only `kept existing secret …` lines and `bootstrap apply: done`. There
 must be no `created`, `updated` or `configured` lines. If there are, the real API
 shape differs from the fake. Capture the live JSON with
-`gh api repos/jellalshadows-idp-sandbox/idp-claims-e2e/rulesets/<id>`, add it as
+`gh api repos/jellalshadows-idp/idp-claims-e2e/rulesets/<id>`, add it as
 a case to `TestRulesetDriftIgnoresGitHubExtras`, fix the code through a PR, and
 re-run.
 
 Run the Step 4 command again.
 Expected: `bootstrap check: no drift`, exit code 0.
+
+- [ ] **Step 7: Capture the live ruleset shape (owner token)** (added by ruling R12)
+
+For each ruleset id listed by `gh api repos/jellalshadows-idp/idp-claims-e2e/rulesets --jq '.[].id'`,
+run `gh api repos/jellalshadows-idp/idp-claims-e2e/rulesets/<id>` and save the
+output in the scratch notes for ADR-0013. Record one fact explicitly: for
+`idp-main`, whose bypass list is empty, does GitHub return `"bypass_actors": []`
+or omit the field, even for an admin token? This decides how `check` must treat
+a missing `bypass_actors` (final-review finding I3).
 
 ---
 
@@ -3895,9 +3906,11 @@ Expected: `bootstrap check: no drift`, exit code 0.
 - Create: `README.md`, `state/main.tf`, `.github/workflows/spike-state.yaml`
 
 **Interfaces:**
-- Consumes: the sandbox org (Task 0).
+- Consumes: the org (Task 0).
 - Produces: job-summary numbers `state_bytes` and `apply_seconds`, plus three
   verdicts (round-trip, tamper rejected, plaintext refused), for ADR-0013.
+
+- [ ] **Step 0: Prerequisite** — Task 13 has created both Apps; Task 15 Step 8 also needs the reader's credentials.
 
 - [ ] **Step 1: Create the spike repo locally**
 
@@ -4026,12 +4039,12 @@ If `encrypted_data` is not the ciphertext field name in OpenTofu 1.12.6, the
 tamper step fails with a `KeyError`. In that case, read `state_keys` from the
 `write` job summary, use the field that holds the ciphertext, and re-run.
 
-- [ ] **Step 4: Create the sandbox repo, set the secret, push** (outward-facing: ask first)
+- [ ] **Step 4: Create the spike repo, set the secret, push** (outward-facing: ask first)
 
 ```bash
 cd C:/Users/Usuario/idp-spike
 git add . && git commit -m "chore: add phase 0 spike s1"
-gh repo create jellalshadows-idp-sandbox/idp-spike --public --source . --remote origin --push --description "THROWAWAY phase 0 spikes for idp-engine"
+gh repo create jellalshadows-idp/idp-spike --public --source . --remote origin --push --description "THROWAWAY phase 0 spikes for idp-engine"
 ```
 
 Set `SPIKE_TF_ENCRYPTION`. Write this HCL to a local temp file outside the repo,
@@ -4053,13 +4066,13 @@ plan {
 }
 ```
 
-Run: `gh secret set SPIKE_TF_ENCRYPTION --repo jellalshadows-idp-sandbox/idp-spike < <that file>`
+Run: `gh secret set SPIKE_TF_ENCRYPTION --repo jellalshadows-idp/idp-spike < <that file>`
 Then delete the temp file.
 
 - [ ] **Step 5: Run it and collect the results**
 
-Run: `gh workflow run spike-state.yaml --repo jellalshadows-idp-sandbox/idp-spike`
-Then: `gh run watch --repo jellalshadows-idp-sandbox/idp-spike $(gh run list --repo jellalshadows-idp-sandbox/idp-spike --workflow spike-state.yaml --limit 1 --json databaseId --jq '.[0].databaseId')`
+Run: `gh workflow run spike-state.yaml --repo jellalshadows-idp/idp-spike`
+Then: `gh run watch --repo jellalshadows-idp/idp-spike $(gh run list --repo jellalshadows-idp/idp-spike --workflow spike-state.yaml --limit 1 --json databaseId --jq '.[0].databaseId')`
 Expected: both jobs are green, and the summaries show `roundtrip=ok`,
 `tamper=rejected` and `plaintext=refused`. Copy `apply_seconds`, `state_bytes`,
 `state_keys` and the three verdicts into a scratch note for ADR-0013.
@@ -4072,7 +4085,7 @@ Expected: both jobs are green, and the summaries show `roundtrip=ok`,
 - Create: `github/main.tf`, `.github/workflows/spike-github.yaml`
 
 **Interfaces:**
-- Consumes: the sandbox writer App (Task 13) and the spike repo (Task 14).
+- Consumes: the writer App (Task 13) and the spike repo (Task 14).
 - Produces, for ADR-0013:
   - apply, plan and destroy seconds for 10 resources;
   - whether the ruleset bypass works (files committed after the ruleset exists);
@@ -4097,8 +4110,8 @@ variable "writer_app_id" {
 }
 
 provider "github" {
-  owner = "jellalshadows-idp-sandbox"
-  # token: GITHUB_TOKEN env, minted from the sandbox writer App
+  owner = "jellalshadows-idp"
+  # token: GITHUB_TOKEN env, minted from the writer App
 }
 
 resource "github_team" "spike" {
@@ -4188,7 +4201,7 @@ resource "github_repository_file" "codeowners" {
   repository          = github_repository.spike.name
   branch              = "main"
   file                = ".github/CODEOWNERS"
-  content             = "* @jellalshadows-idp-sandbox/spike-team\n"
+  content             = "* @jellalshadows-idp/spike-team\n"
   overwrite_on_create = true
   depends_on          = [github_repository_ruleset.main]
 }
@@ -4235,7 +4248,7 @@ jobs:
         with:
           client-id: ${{ vars.SPIKE_WRITER_CLIENT_ID }}
           private-key: ${{ secrets.SPIKE_WRITER_PRIVATE_KEY }}
-          owner: jellalshadows-idp-sandbox
+          owner: jellalshadows-idp
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
           tofu_version: 1.12.6
@@ -4268,7 +4281,7 @@ jobs:
           echo "${ACTION}_exit=${code}" >> "$GITHUB_STEP_SUMMARY"
           echo "resources_in_state=$(tofu state list 2>/dev/null | wc -l)" >> "$GITHUB_STEP_SUMMARY"
           if [ "$ACTION" != "plan" ] && [ "$code" != "0" ]; then exit "$code"; fi
-      - name: save state (spike only; plaintext is acceptable in the sandbox)
+      - name: save state (spike only; plaintext of spike- resources is acceptable)
         if: always()
         run: |
           [ -f github/terraform.tfstate ] || exit 0
@@ -4283,21 +4296,21 @@ jobs:
           git push -f origin spike-github-state
 ```
 
-- [ ] **Step 3: Give the spike repo the sandbox writer credentials** (outward-facing: ask first)
+- [ ] **Step 3: Give the spike repo the writer credentials** (outward-facing: ask first)
 
 ```bash
 cd C:/Users/Usuario/idp-spike
 git add . && git commit -m "chore: add phase 0 spike s2" && git push
-W=~/.idp/apps/jellalshadows-idp-sandbox-writer
-gh variable set SPIKE_WRITER_CLIENT_ID --repo jellalshadows-idp-sandbox/idp-spike --body "$(rg -o --no-filename '"client_id":\s*"([^"]+)"' -r '$1' "$W.json")"
-gh variable set SPIKE_WRITER_APP_ID --repo jellalshadows-idp-sandbox/idp-spike --body "$(rg -o --no-filename '"id":\s*(\d+)' -r '$1' "$W.json")"
-gh secret set SPIKE_WRITER_PRIVATE_KEY --repo jellalshadows-idp-sandbox/idp-spike < "$W.pem"
-gh variable list --repo jellalshadows-idp-sandbox/idp-spike
+W=~/.idp/apps/jellalshadows-idp-writer
+gh variable set SPIKE_WRITER_CLIENT_ID --repo jellalshadows-idp/idp-spike --body "$(rg -o --no-filename '"client_id":\s*"([^"]+)"' -r '$1' "$W.json")"
+gh variable set SPIKE_WRITER_APP_ID --repo jellalshadows-idp/idp-spike --body "$(rg -o --no-filename '"id":\s*(\d+)' -r '$1' "$W.json")"
+gh secret set SPIKE_WRITER_PRIVATE_KEY --repo jellalshadows-idp/idp-spike < "$W.pem"
+gh variable list --repo jellalshadows-idp/idp-spike
 ```
 
 - [ ] **Step 4: Apply and measure**
 
-Run: `gh workflow run spike-github.yaml --repo jellalshadows-idp-sandbox/idp-spike -f action=apply`, then watch it as in Task 14 Step 5.
+Run: `gh workflow run spike-github.yaml --repo jellalshadows-idp/idp-spike -f action=apply`, then watch it as in Task 14 Step 5.
 Expected: green. `resources_in_state=10`, and `apply_seconds` is recorded.
 - If the file resources fail with `refusing to allow a GitHub App to create or
   update workflow`, the writer manifest lacks `workflows: write`. That is a Task 11
@@ -4314,7 +4327,7 @@ which is the refresh time for 10 resources.
 - [ ] **Step 6: Accept the invitation as adrian-da-silva, then plan again** (manual)
 
 The owner logs in to github.com as `adrian-da-silva` (for example in a private
-window), opens https://github.com/orgs/jellalshadows-idp-sandbox/invitation, and
+window), opens https://github.com/orgs/jellalshadows-idp/invitation, and
 accepts. Then run the workflow with `-f action=plan` again and record `plan_exit`.
 
 Decision rule for ADR-0013 and spec §11 risk 1:
@@ -4327,9 +4340,75 @@ Decision rule for ADR-0013 and spec §11 risk 1:
 
 Run the workflow with `-f action=destroy`. Record `destroy_seconds`.
 Then (outward-facing: ask first):
-`gh api --method DELETE /orgs/jellalshadows-idp-sandbox/members/adrian-da-silva`
-Expected: `gh api orgs/jellalshadows-idp-sandbox/members --jq '.[].login'` no
+`gh api --method DELETE /orgs/jellalshadows-idp/members/adrian-da-silva`
+Expected: `gh api orgs/jellalshadows-idp/members --jq '.[].login'` no
 longer lists `adrian-da-silva`.
+
+- [ ] **Step 8: Reader probe — what the reader App can actually see** (added by ruling R12)
+
+Give the spike repo the reader credentials, the same way Step 3 did for the
+writer (outward-facing: ask first):
+
+```bash
+R=~/.idp/apps/jellalshadows-idp-reader
+gh variable set SPIKE_READER_CLIENT_ID --repo jellalshadows-idp/idp-spike --body "$(rg -o --no-filename '"client_id":\s*"([^"]+)"' -r '$1' "$R.json")"
+gh secret set SPIKE_READER_PRIVATE_KEY --repo jellalshadows-idp/idp-spike < "$R.pem"
+```
+
+Add `.github/workflows/spike-reader-probe.yaml`:
+
+```yaml
+name: spike-reader-probe
+
+on: workflow_dispatch
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app
+        with:
+          client-id: ${{ vars.SPIKE_READER_CLIENT_ID }}
+          private-key: ${{ secrets.SPIKE_READER_PRIVATE_KEY }}
+          owner: jellalshadows-idp
+      - name: probe what the reader token can read
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          R: jellalshadows-idp/idp-claims-e2e
+        run: |
+          probe() {
+            code=$( (gh api -i "$1" 2>/dev/null || true) | head -n1 | awk '{print $2}')
+            echo "| \`$1\` | ${code:-error} |" >> "$GITHUB_STEP_SUMMARY"
+          }
+          { echo "| endpoint | status |"; echo "|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
+          probe "repos/$R"
+          probe "repos/$R/rulesets"
+          probe "repos/$R/environments/idp-approval"
+          probe "repos/$R/environments/idp-approval/deployment-branch-policies"
+          probe "repos/$R/environments/idp-approval/secrets"
+          probe "repos/$R/environments/idp-write/variables/IDP_WRITER_CLIENT_ID"
+          probe "repos/$R/actions/variables/IDP_READER_CLIENT_ID"
+          probe "repos/$R/actions/secrets/IDP_STATE_PASSPHRASE"
+          probe "orgs/jellalshadows-idp/actions/permissions/workflow"
+          probe "orgs/jellalshadows-idp/installations"
+          for id in $(gh api "repos/$R/rulesets" --jq '.[].id'); do
+            gh api "repos/$R/rulesets/$id" --jq '"- ruleset " + .name + ": bypass_actors present = " + (has("bypass_actors") | tostring)' >> "$GITHUB_STEP_SUMMARY"
+          done
+```
+
+Commit, push, then run: `gh workflow run spike-reader-probe.yaml --repo jellalshadows-idp/idp-spike`. Watch it as in Task 14 Step 5.
+
+Decision rules, recorded in ADR-0013:
+- **Any 403/404 in the table** means the reader manifest lacks a permission. Fix
+  `bootstrap/apps/reader.json` through a PR, update the App's permissions in its
+  settings, and accept the change on the installation **before Task 17**.
+- **`bypass_actors present = false`** confirms final-review finding I3: a reader
+  token cannot verify ruleset bypass lists. Phase 1 must decide in an ADR how the
+  drift check verifies them before `drift.yaml` exists.
 
 ---
 
@@ -4542,7 +4621,7 @@ jobs:
 ```bash
 cd C:/Users/Usuario/idp-spike
 git add . && git commit -m "chore: add phase 0 spike s3" && git push
-gh workflow run spike-floci.yaml --repo jellalshadows-idp-sandbox/idp-spike
+gh workflow run spike-floci.yaml --repo jellalshadows-idp/idp-spike
 ```
 Watch it as in Task 14 Step 5.
 Expected: green, with `isolation=ok`, the role ARN containing `000000000001`, and
@@ -4557,26 +4636,26 @@ gap):
 
 ---
 
-### Task 17: Bootstrap the main org (real run)
+### Task 17: Bootstrap the production claims repo `idp-claims` (real run)
 
 **Files:** none in git.
 
 **Interfaces:**
-- Consumes: the CLI (Task 12). It runs after the spikes, so a manifest bug they
-  find can be fixed before the production Apps exist.
-- Produces: Apps `jellalshadows-idp-reader` and `jellalshadows-idp-writer`, and the
-  repo `jellalshadows-idp/idp-claims` with `check` clean.
+- Consumes: the CLI (Task 12) and the Apps created in Task 13. It runs after the
+  spikes, so if they expose a manifest permission gap, the Apps' permissions are
+  updated (and re-approved on the installation) before production depends on them.
+- Produces: the repo `jellalshadows-idp/idp-claims` with `check` clean.
 
 - [ ] **Step 1: The owner creates the production passphrase**
 
 As in Task 13 Step 1, but a **different** passphrase, saved as "idp main state",
 in the file `~/.idp/main.pass`.
 
-- [ ] **Step 2: Create and install both Apps** (the owner confirms in the browser)
+- [ ] **Step 2: Reuse the Apps** (no new Apps: there is a single org)
 
-Run: `go run ./cmd/idp bootstrap app --org jellalshadows-idp --role reader`
-Then: `go run ./cmd/idp bootstrap app --org jellalshadows-idp --role writer`
-Install both with **All repositories**.
+Confirm `~/.idp/apps/jellalshadows-idp-reader.json` and `…-writer.json` exist from
+Task 13. If Task 15 changed the writer manifest, update the App's permissions in
+its GitHub settings and accept the change on the installation first.
 
 - [ ] **Step 3: Apply** (outward-facing: ask first)
 
@@ -4593,7 +4672,7 @@ Expected: `bootstrap check: no drift`, exit code 0.
 ### Task 18: ADRs, spec risk update, archive the spike
 
 **Files:**
-- Create: `docs/adr/0001-edge-triggered-reconciliation-on-actions.md` … `docs/adr/0013-phase-0-spike-findings.md`
+- Create: `docs/adr/0001-edge-triggered-reconciliation-on-actions.md` … `docs/adr/0014-single-org-isolated-by-repo-and-prefix.md`, and `docs/phases/phase-0.md` (execution log: every ledger ruling with cost-if-wrong, every task's review outcome and fix rounds, every deferred minor finding with its triage — written before the SDD workspace is deleted)
 - Modify: `docs/superpowers/specs/2026-10-08-idp-on-actions-design.md` (§11: add a "Phase 0 result" column), `README.md` (link the ADRs)
 
 **Interfaces:**
@@ -4601,7 +4680,7 @@ Expected: `bootstrap check: no drift`, exit code 0.
   and 17.
 - Produces: the ADR index that Phase 1's plan starts from.
 
-- [ ] **Step 1: Write ADRs 0001 to 0012 with this exact template**
+- [ ] **Step 1: Write ADRs 0001 to 0012 and 0014 with this exact template**
 
 ```markdown
 # NNNN. <Title>
@@ -4643,6 +4722,7 @@ Content per ADR. Use these sentences as the body. Do not invent new claims.
 | 0010 `public-repos-on-free-plan` | §2.3 | On Free, rulesets and environment reviewers exist only for public repos. | Every repo, including Component repos, is public. | Nothing secret may live in repos, logs or state; private repos need the Team plan. | Team plan; private repos without protections. |
 | 0011 `bootstrap-outside-the-idp` | §9.2 | The IDP must not manage the protections that guard it. | `idp bootstrap apply/check`, run by an org owner; `check` runs in drift. | Apps are created via the browser manifest flow; there is a small manual runbook. | Managing the claims repo through claims; a bootstrap OpenTofu stack (state chicken-and-egg). |
 | 0012 `required-workspace-policy` | §4.5 | Firestartr defaults to `observe`, so a forgotten field silently does nothing. | `policy` is required; only `full-control` may delete. | Explicit intent in every Workspace; deleting a non-`full-control` workspace takes two PRs. | Defaulting to `observe` or to `full-control`. |
+| 0014 `single-org-isolated-by-repo-and-prefix` | §3.1, §8.5 | The plan called for a separate sandbox org for E2E and spikes. | Owner decision (2026-10-09): one org; tests are isolated by claims repo (`idp-claims-e2e`, own `wet`, state and passphrase) and by the `e2e-`/`spike-` prefix. | Simpler: two Apps instead of four, one bootstrap of the org settings; Apps, keys, org settings and rate limit are shared between production and tests; the harness must refuse to delete unprefixed resources and `idp-claims` must reject prefixed names. | A sandbox org per environment (stronger isolation, double the Apps and bootstrap). |
 
 - [ ] **Step 2: Write `docs/adr/0013-phase-0-spike-findings.md`**
 
@@ -4709,6 +4789,6 @@ git push
 
 - [ ] **Step 6: Archive the spike repo** (outward-facing: ask first)
 
-Run: `gh repo archive jellalshadows-idp-sandbox/idp-spike --yes`
+Run: `gh repo archive jellalshadows-idp/idp-spike --yes`
 Expected: the repo shows as archived, and ADR-0013 is the only place the results
 live.

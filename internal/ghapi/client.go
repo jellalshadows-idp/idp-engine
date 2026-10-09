@@ -1,0 +1,117 @@
+// Package ghapi is a minimal GitHub REST client: JSON in, JSON out, typed errors.
+package ghapi
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+// DefaultBaseURL is the public GitHub REST API.
+const DefaultBaseURL = "https://api.github.com"
+
+const apiVersion = "2022-11-28"
+
+// ErrNotFound is returned (wrapped) when the API answers 404.
+var ErrNotFound = errors.New("not found")
+
+// APIError is any non-2xx answer other than 404.
+type APIError struct {
+	Method string
+	Path   string
+	Status int
+	Body   string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("github %s %s: %d %s", e.Method, e.Path, e.Status, e.Body)
+}
+
+// Client talks to the GitHub REST API. Build it with New.
+type Client struct {
+	baseURL string
+	token   string
+	http    *http.Client
+}
+
+// New returns a client. An empty token sends unauthenticated requests.
+func New(baseURL, token string) *Client {
+	return &Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: &http.Client{}}
+}
+
+// Get decodes the JSON answer of GET path into out (out may be nil).
+func (c *Client) Get(ctx context.Context, path string, out any) error {
+	return c.Do(ctx, http.MethodGet, path, nil, out)
+}
+
+// Post sends in as JSON (in may be nil) and decodes the answer into out (out may be nil).
+func (c *Client) Post(ctx context.Context, path string, in, out any) error {
+	return c.Do(ctx, http.MethodPost, path, in, out)
+}
+
+// Put sends in as JSON and decodes the answer into out (out may be nil).
+func (c *Client) Put(ctx context.Context, path string, in, out any) error {
+	return c.Do(ctx, http.MethodPut, path, in, out)
+}
+
+// Patch sends in as JSON and decodes the answer into out (out may be nil).
+func (c *Client) Patch(ctx context.Context, path string, in, out any) error {
+	return c.Do(ctx, http.MethodPatch, path, in, out)
+}
+
+// Delete sends DELETE path.
+func (c *Client) Delete(ctx context.Context, path string) error {
+	return c.Do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// Do performs one request. A 404 returns an error wrapping ErrNotFound;
+// any other status >= 300 returns *APIError.
+func (c *Client) Do(ctx context.Context, method, path string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		buf, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("encode %s %s: %w", method, path, err)
+		}
+		body = bytes.NewReader(buf)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", method, path, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read %s %s: %w", method, path, err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("github %s %s: %w", method, path, ErrNotFound)
+	}
+	if resp.StatusCode >= 300 {
+		return &APIError{Method: method, Path: path, Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
+	}
+	if out == nil || len(raw) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("decode %s %s: %w", method, path, err)
+	}
+	return nil
+}

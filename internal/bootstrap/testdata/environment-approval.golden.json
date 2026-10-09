@@ -1,0 +1,14 @@
+{
+  "deployment_branch_policy": {
+    "custom_branch_policies": true,
+    "protected_branches": false
+  },
+  "prevent_self_review": false,
+  "reviewers": [
+    {
+      "id": 42,
+      "type": "User"
+    }
+  ],
+  "wait_timer": 0
+}
