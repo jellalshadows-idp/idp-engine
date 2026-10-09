@@ -67,6 +67,43 @@ func TestWritesOutsideTheBootstrapSetAreRejected(t *testing.T) {
 	}
 }
 
+func TestBadRulesetBodiesFailClearlyInsteadOfPanicking(t *testing.T) {
+	tests := []struct {
+		name, method, path, body, want string
+	}{
+		{"body-less POST", http.MethodPost, "/repos/acme/r/rulesets", "",
+			"fakegithub: POST /repos/acme/r/rulesets: request body is required"},
+		{"malformed PUT", http.MethodPut, "/repos/acme/r/rulesets/7", `{"name":`,
+			"fakegithub: PUT /repos/acme/r/rulesets/7: invalid JSON body: unexpected EOF"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := &recorder{TB: t}
+			srv := New(rec, "acme")
+			defer func() {
+				for _, f := range rec.cleanup {
+					f()
+				}
+			}()
+			req, err := http.NewRequest(tt.method, srv.URL+tt.path, strings.NewReader(tt.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", resp.StatusCode)
+			}
+			if len(rec.errs) != 1 || rec.errs[0] != tt.want {
+				t.Errorf("recorded errors = %q, want [%q]", rec.errs, tt.want)
+			}
+		})
+	}
+}
+
 func TestMalformedBodyFailsClearlyInsteadOfPanicking(t *testing.T) {
 	rec := &recorder{TB: t}
 	srv := New(rec, "acme")

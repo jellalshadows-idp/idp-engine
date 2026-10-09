@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -95,7 +97,11 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.Queries[r.URL.Path] = r.URL.RawQuery
 	var body map[string]any
 	if r.ContentLength != 0 {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			f.t.Errorf("fakegithub: %s %s: invalid JSON body: %v", r.Method, r.URL.Path, err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 	}
 	if r.Method != http.MethodGet {
 		f.Writes = append(f.Writes, r.Method+" "+r.URL.Path)
@@ -145,6 +151,9 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 		return http.StatusOK, list
 	// The fake echoes ruleset bodies verbatim; live-ruleset-*.json fixtures pin the real GitHub shape.
 	case method == http.MethodPost && strings.HasSuffix(path, "/rulesets"):
+		if body == nil {
+			return f.bodyRequired(method, path)
+		}
 		f.nextID++
 		body["id"] = f.nextID
 		f.Rulesets[f.nextID] = body
@@ -152,6 +161,9 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 	case (method == http.MethodGet || method == http.MethodPut) && reRulesetID.MatchString(path):
 		id, _ := strconv.ParseInt(reRulesetID.FindStringSubmatch(path)[1], 10, 64)
 		if method == http.MethodPut {
+			if body == nil {
+				return f.bodyRequired(method, path)
+			}
 			body["id"] = id
 			f.Rulesets[id] = body
 		}
@@ -214,6 +226,12 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 	}
 	f.t.Errorf("fakegithub: unexpected %s %s", method, path)
 	return http.StatusTeapot, map[string]any{}
+}
+
+// bodyRequired fails the test and answers 400 for a write that needs a JSON body.
+func (f *Server) bodyRequired(method, path string) (int, any) {
+	f.t.Errorf("fakegithub: %s %s: request body is required", method, path)
+	return http.StatusBadRequest, map[string]any{}
 }
 
 // stringField returns body[field] as a string. When it is absent or not a
