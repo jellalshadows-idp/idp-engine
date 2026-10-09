@@ -114,6 +114,7 @@ func (f *fakeGitHub) route(method, path string, body map[string]any) (int, any) 
 			list = append(list, map[string]any{"id": id, "name": f.rulesets[id]["name"]})
 		}
 		return http.StatusOK, list
+	// The fake echoes ruleset bodies verbatim; live-ruleset-*.json fixtures pin the real GitHub shape.
 	case method == http.MethodPost && strings.HasSuffix(path, "/rulesets"):
 		f.nextID++
 		body["id"] = f.nextID
