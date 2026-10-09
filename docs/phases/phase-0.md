@@ -4,18 +4,19 @@
 - Plan: [2026-10-08-phase-0-bootstrap-and-spike.md](../superpowers/plans/2026-10-08-phase-0-bootstrap-and-spike.md)
 - Spec: [2026-10-08-idp-on-actions-design.md](../superpowers/specs/2026-10-08-idp-on-actions-design.md) (§10 roadmap, §11 risks)
 - Findings: [ADR-0013](../adr/0013-phase-0-spike-findings.md)
-- Status: **in progress**. Code and the measurable spikes are done; everything that needs a GitHub App is blocked on browser actions by the owner.
+- Status: **complete** (two owner-only items remain, see "Status" at the end).
 
 This file is the durable copy of the execution ledger that was kept while the plan ran. The ledger lived in a git-ignored scratch folder and is deleted later, so everything it recorded is reproduced here: the rulings, every task's review outcome, every deferred minor finding with its triage, the final review, the environment limits and what remains.
 
 ## Summary
 
-Phase 0 delivers the `idp bootstrap` command (create the two GitHub Apps through the manifest flow, apply the org and claims-repo protections, check them for drift), CI, a bootstrap runbook, twelve plus two architecture decision records, and spike measurements.
+Phase 0 delivers the `idp bootstrap` command (create the two GitHub Apps through the manifest flow, apply the org and claims-repo protections, check them for drift), CI, a bootstrap runbook, fourteen architecture decision records, and spike measurements. Both claims repos, `idp-claims-e2e` and `idp-claims`, are bootstrapped on the real org, idempotent and drift-free.
 
 - Engine code (Tasks 2 to 12) was built task by task with TDD and a review after each task, then reviewed as a whole branch. It was merged through [PR #1](https://github.com/jellalshadows-idp/idp-engine/pull/1) with a merge commit, `fe78a1e`. CI was green on the first run (Go with `-race`, including the Linux-only chmod test; actionlint; zizmor clean).
 - Spikes S1 (encrypted state through Git) and S3 (floci multi-account, OIDC/IAM/ECR, replay timing) ran in the throwaway repo [jellalshadows-idp/idp-spike](https://github.com/jellalshadows-idp/idp-spike): S1 run [37986095179](https://github.com/jellalshadows-idp/idp-spike/actions/runs/37986095179), S3 run [37986181743](https://github.com/jellalshadows-idp/idp-spike/actions/runs/37986181743). Numbers are in ADR-0013.
-- ADRs 0001 to 0012 and 0014 are written; 0013 is written with S2 marked pending.
-- **Not done:** Task 13 (create and install the Apps, bootstrap `idp-claims-e2e`), Task 15 (spike S2) and Task 17 (bootstrap `idp-claims`). They depend on browser steps only the owner can do.
+- Spike S2 (GitHub provider with the writer App token, pending-invite behavior, reader probe) ran after the Apps existed: apply 32 s for 10 resources, no fallback needed, see ADR-0013.
+- The real runs found two defects that the fake GitHub could not show: R19 (the `update` rule shape made apply non-idempotent, fixed in [PR #2](https://github.com/jellalshadows-idp/idp-engine/pull/2), merge `c042915`) and I3 (`bypass_actors` hidden from the reader token, fixed in [PR #3](https://github.com/jellalshadows-idp/idp-engine/pull/3), merge `c062837`).
+- ADRs 0001 to 0014 are written and accepted; 0013 holds the final S2 results.
 
 ## Timeline and tasks
 
@@ -23,7 +24,7 @@ Phase 0 delivers the `idp bootstrap` command (create the two GitHub Apps through
 
 | Task | Outcome | Commits / PR | Review | Fix rounds |
 |---|---|---|---|---|
-| 0 Owner setup | Done: org `jellalshadows-idp` created by the owner on 2026-10-09. `admin:org` scope on the local gh token still pending (needed before Task 13) | n/a | n/a | 0 |
+| 0 Owner setup | Done: org `jellalshadows-idp` created by the owner on 2026-10-09. The `admin:org` scope was added later through the device flow in the browser-automation session | n/a | n/a | 0 |
 | 1 Repo hygiene and publish | Steps 1 to 5 on main at `ce45402`; step 6 (public repo, push) done after the org existed | `ce45402`; repo created public | No task review (R2) | 0 |
 | 2 Go module, CLI skeleton, CI | Done | `ce45402..0fd3ff9` | Clean | 0 |
 | 3 GitHub REST client | Done | `0fd3ff9..60a8204` | Clean | 0 |
@@ -37,14 +38,15 @@ Phase 0 delivers the `idp bootstrap` command (create the two GitHub Apps through
 | 11 App manifests and local manifest flow | Done | `07feb3b..2656315` | Needs fixes at `7d15d70` | 1 |
 | 12 Wire `idp bootstrap`, runbook, merge | Done; merged via PR #1 | `2656315..c08ba7b`; merge `fe78a1e` | Clean | 0 |
 | Final whole-branch review (Tasks 2 to 12) | Ready to merge with fixes; fix wave applied and re-reviewed | review of `ce45402..c08ba7b`; fixes `64a310b..f2178e5` | Important I1 to I4, minor M1 to M9 | 1 wave |
-| 13 Create Apps, bootstrap `idp-claims-e2e` | **Not run.** Blocked on browser steps | n/a | n/a | n/a |
+| 13 Create Apps, bootstrap `idp-claims-e2e` | Done. Apps created and installed in the browser session (reader id 5255573, writer id 5255579). First real apply created the repo, `wet`, 2 rulesets, 2 environments, 3 secrets and 2 variables. The second apply exposed the R19 defect; fixed, then the second apply printed only `kept existing secret` and `check` reported no drift. Live ruleset JSON captured (owner token: `bypass_actors` present even when `[]`) | fix `e7b1959`; [PR #2](https://github.com/jellalshadows-idp/idp-engine/pull/2) merge `c042915` | Task review of the fix: Approved | 0 |
 | 14 Spike S1 | Done, run 37986095179 | spike repo | n/a | 2 re-runs for readable metrics |
-| 15 Spike S2 | **Not run.** Files staged in the spike repo (commit `chore: add phase 0 spike s2`) | spike repo | n/a | n/a |
+| 15 Spike S2 and reader probe | Done: apply 32 s / 10 resources, plan 5 s pending and 3 s accepted (exit 0 both), destroy 18 s; writer bypass and Workflows permission work; reader probe 10 of 10 endpoints 200, `bypass_actors` not visible to the reader. Cleanup verified (see below) | spike repo (`745bec5` tee fix); runs in ADR-0013 | n/a | 0 |
 | 16 Spike S3 | Done, run 37986181743, green on first attempt | spike repo | n/a | 0 |
-| 17 Bootstrap `idp-claims` | **Not run.** Blocked behind Task 13 | n/a | n/a | n/a |
-| 18 ADRs, spec risk update, archive spike | In progress: ADRs 0001 to 0012 and 0014 (`7c64600`, deepened in `0230a42`, ADR 0011 follow-up corrected in `b81c925`); 0013, this log and spec §11 in this commit. Archiving the spike waits for S2 | see Git history | n/a | n/a |
+| 17 Bootstrap `idp-claims` | Done from a clean main worktree at `c042915`: pre-check showed only "repo missing"; apply created everything; second apply printed only `kept existing secret`; `check` reported no drift (exit 0). Apps reused, no manifest change needed (reader probe 10 of 10) | main at `c042915` | n/a | 0 |
+| PR #3 `bypass_actors` fail closed | Done: `check` reports one explicit finding per ruleset when the token does not return `bypass_actors` (ruling R20). Post-merge real `check` with the owner token: `idp-claims` and `idp-claims-e2e` no drift | `2a34e5b`, `0316e09`, `8063f05`, `1cb8cbd`; merge `c062837` | Approved; two minors closed in a follow-up | 1 follow-up |
+| 18 ADRs, spec risk update, archive spike | Done: ADRs 0001 to 0012 and 0014 (`7c64600`, deepened in `0230a42`, ADR 0011 follow-up corrected in `b81c925`); ADR-0013 final, this log, spec §11 and README in the closing docs commit. The spike repo is archived at the end of Phase 0 | see Git history | n/a | n/a |
 
-Other commits worth knowing: `64a310b` amended the spec and plan for the single-org decision and added ADR 0014 and this log to Task 18; `49c2413` added the reader probe and ruleset capture steps to the plan (ruling R12).
+Other commits worth knowing: `64a310b` amended the spec and plan for the single-org decision and added ADR 0014 and this log to Task 18; `49c2413` added the reader probe and ruleset capture steps to the plan (ruling R12). PR #2 (task 13 fix) and PR #3 were merged with CI green.
 
 ## Rulings
 
@@ -68,6 +70,9 @@ A ruling is a controller decision that deviated from, or filled a gap in, the pl
 - **R16. State passphrases generated locally.** Both (e2e and main) were generated with Python `secrets.token_urlsafe(32)` into `~/.idp/e2e.pass` and `~/.idp/main.pass` (ASCII, no BOM, never printed) instead of the owner generating them in a password manager. *Why:* the owner asked for full autonomy and the runbook's "password manager first" step cannot be done by Claude. *Cost if wrong:* if the owner never copies them into a password manager and deletes the files, the wet state becomes unreadable.
 - **R17. Both `idp bootstrap app` flows started in the background** on fixed ports 8765 (reader) and 8766 (writer), so the owner's browser work is only clicking Create and Install; completion would notify the controller, which then continues Tasks 13, 15 and 17 unattended. *Cost if wrong:* two idle local listeners until the owner acts.
 - **R18. Rewrite all ADRs in depth.** Context of 2 to 4 paragraphs, consequences split into positive, negative and follow-ups, each rejected alternative with its reason, and references to verified sources. *Why:* the owner wants exhaustive in-repo docs and terse ADRs fail the "repo explains itself" goal. *Cost if wrong:* longer docs.
+
+- **R19. Fix the `update` rule shape by sending GitHub's canonical form, and pin live fixtures.** The real second apply reported `updated ruleset idp-wet (drift at [$.rules.update.parameters])`: GitHub returns the `update` rule without `parameters` when `update_allows_fetch_and_merge` is false. The desired `WetRuleset` now emits `{type: update}` with no parameters, and both live rulesets are pinned as `testdata/live-ruleset-idp-main.json` and `live-ruleset-idp-wet.json`, checked by `TestDesiredRulesetsMatchLiveGitHub` (RED then GREEN; the wet golden lost only `update.parameters`). Branch `fix/wet-ruleset-update-shape`, fix `e7b1959`, [PR #2](https://github.com/jellalshadows-idp/idp-engine/pull/2), merge `c042915`. Re-verified on real GitHub before merging. *Why:* loosening `Mismatches` would hide real drift. *Cost if wrong:* none; it matches the API schema, where `parameters` is optional for `update`.
+- **R20. Close the I3 fail-open in Phase 0 instead of deferring it.** The data removed the risk that blocked the fix (R12): owner tokens always return `bypass_actors` (even `[]`), so an absent key can only mean "hidden from this token". `check` now reports that explicitly (fail closed; `null` counts as hidden; the wet ruleset yields exactly one message), and the runbook says to run `check` with a write-capable token. Branch `fix/bypass-actors-fail-closed`, [PR #3](https://github.com/jellalshadows-idp/idp-engine/pull/3), merge `c062837`. The Phase 1 ADR still decides the drift-workflow token strategy. *Cost if wrong:* a read-only drift check reports one explicit finding per ruleset until Phase 1.
 
 Also decided by the owner (not numbered rulings):
 
@@ -116,7 +121,7 @@ Statuses: **open** (still true, no decision), **parked** (consciously left, with
 - The `"main"` literal appears twice in `Environments` (no default-branch constant). Parked as M8 (ruling R13).
 - `-update` golden mode is self-comparing. Parked: plan-mandated pattern; the goldens were compared against the brief by hand.
 - Comment wording at `desired.go:73`. Open (cosmetic).
-- GitHub's acceptance of `update_allows_fetch_and_merge` and `~DEFAULT_BRANCH`. Pending: verified by the real apply in Task 13.
+- GitHub's acceptance of `update_allows_fetch_and_merge` and `~DEFAULT_BRANCH`. **Fixed**: the real apply in Task 13 accepted `~DEFAULT_BRANCH`, but showed GitHub drops the `update` parameters when the flag is false (R19, PR #2).
 
 ### Task 7
 - The idempotency promise is untested in Task 7. Parked: covered by Task 9's `TestApplyTwiceIsIdempotent`.
@@ -131,14 +136,14 @@ Statuses: **open** (still true, no decision), **parked** (consciously left, with
 - Redundant `int64` conversion in a test. Open (cosmetic).
 - A PUT followed by a policy failure leaves partial state, which self-heals on the next apply. Parked: documented behavior.
 - The test name `TestRulesetDriftDetectsWeakening` also covers a tolerated case. Open (cosmetic).
-- The fake versus real GitHub shape risk (Task 9 also): verified in Task 13. Pending.
+- The fake versus real GitHub shape risk (Task 9 also): **fixed**, verified in Task 13. It found exactly one shape defect (R19); the rest matched.
 
 ### Task 9
 - `secretSpec` and `variableSpec` helpers are near-duplicates. Parked: plan-mandated, Task 10 consumes both.
 - `ensureSecrets` is long. Open.
 - The "kept" log is asserted only for the repo-scoped passphrase. Open.
 - Names are unescaped in paths. Parked: they are constants.
-- A `PATCH` variable body that includes the name is accepted by the GitHub API. Pending: confirmed in Task 13.
+- A `PATCH` variable body that includes the name is accepted by the GitHub API. **Fixed**: confirmed by the real runs (second apply clean).
 
 ### Task 10
 - Installations are not paginated, so more than 30 installs could be false-reported. Open.
@@ -169,7 +174,7 @@ Statuses: **open** (still true, no decision), **parked** (consciously left, with
 ### Final fix wave residuals
 - The runbook's `read -rs P` should be `IFS= read -rs P` to preserve edge spaces. Open.
 - The new CLI test ignores `os.WriteFile` errors. Open.
-- The runbook lacks a note that existing Apps keep their old permissions after a manifest change (update them in the App settings and accept on the installation). Open; relevant only if the Apps predate a manifest change, and Task 15 Step 8 covers it.
+- The runbook lacks a note that existing Apps keep their old permissions after a manifest change (update them in the App settings and accept on the installation). Open; the Apps were created after the last manifest change, so it did not bite, and the reader probe (10 of 10) confirmed the permissions.
 - Checked by the controller and confirmed: `GET environments/{env}/secrets` needs `environments:read`, which the reader has.
 
 ## Final whole-branch review
@@ -180,39 +185,43 @@ Important findings:
 
 - **I1. A Windows-encoded passphrase (BOM or UTF-16) was accepted silently.** Fixed (`2b5631d`).
 - **I2. The reader manifest lacked permissions that `check` needs.** Fixed (`6d4b10c`): added `actions:read` and `actions_variables:read` after verifying the mapping (ruling R11).
-- **I3. `bypass_actors` is omitted for non-write tokens, so `check` can fail open on `idp-main` with a reader token.** Parked (ruling R12). Open question recorded in ADR-0013, routed to the reader probe (Task 15 Step 8), the owner-token ruleset capture (Task 13 Step 7) and a Phase 1 ADR on the drift-check token strategy.
+- **I3. `bypass_actors` is omitted for non-write tokens, so `check` can fail open on `idp-main` with a reader token.** Parked first (ruling R12), then confirmed by the reader probe and the owner-token capture, and **fixed** by failing closed (ruling R20, PR #3). The drift-workflow token strategy remains a Phase 1 ADR.
 - **I4. The runbook was bash-only and used `~` on Windows.** Fixed (`f2178e5`).
 
 Minor findings:
 
 - **Fixed:** M2 (`4fcfa53`: `check` asserts the writer key is absent at repo level and `idp-approval` has zero secrets), M4 and M6 (runbook notes, `f2178e5`), M7 (`2a4012c`: local validation before network).
-- **Parked (ruling R13):** M1 (drift versus error exit codes, Phase 1 ADR), M3 (apply on private or empty repo raw error), M5 (manifest without `hook_attributes`, verify at Task 13 step 2), M8 (`"main"` literal), M9 (CI pins exact Go patch version).
+- **Parked (ruling R13):** M1 (drift versus error exit codes, Phase 1 ADR), M3 (apply on private or empty repo raw error), M8 (`"main"` literal), M9 (CI pins exact Go patch version). M5 (manifest without `hook_attributes`) was verified at Task 13 step 2: GitHub accepted both manifests, so it is **closed**.
 
 Fix wave: commits `64a310b..f2178e5` (`2b5631d` I1, `6d4b10c` I2, `4fcfa53` M2, `2a4012c` M7, `f2178e5` docs I4/M4/M6). A scoped re-review found everything addressed and no new Critical or Important findings.
 
-## Environment limits and owner checklist
+## Environment limits and the browser-automation session
 
-Limit: the Claude in Chrome extension was not connected (no connected browsers), and no browser automation was available in the session. Four steps GitHub only offers through a browser were therefore blocked (ruling R15):
+At first the Claude in Chrome extension was not connected (no connected browsers), and four steps that GitHub only offers through a browser were blocked (ruling R15): creating the Apps through the manifest flow, installing them on all repositories, the `gh auth refresh -s admin:org` device flow, and accepting the org invitation for `Adrian-Manuel`.
 
-1. GitHub App creation through the manifest flow (Task 13 step 2).
-2. App installation on all repositories (Task 13 step 3).
-3. `gh auth refresh -s admin:org` (a device flow; `idp bootstrap apply/check` need the scope).
-4. Accepting the pending org invitation for `Adrian-Manuel`, the owner's other GitHub account, which is not logged in to `gh`. This is unrelated to the spikes: the pending-invite spike uses a **different** account, `adrian-da-silva` (spec §12). That account must stay a non-member until Task 15 Step 6, where the spike itself invites it and the invitation is accepted afterwards.
+On 2026-10-09 the owner connected Claude in Chrome, after first testing that the integration left no history in claude.ai (the owner checked the recents page and found nothing). The owner then confirmed the exact list of browser actions ("vale probado, adelante"). In that session Claude:
 
-Owner checklist still pending:
+- created the reader App (id 5255573) and the writer App (id 5255579) through the manifest flows,
+- installed both on `jellalshadows-idp` for all repositories (verified through `orgs/jellalshadows-idp/installations`),
+- authorized the `admin:org` scope of the local gh token through the device flow.
 
-- [ ] Run `gh auth refresh -s admin:org` and complete the device flow.
-- [ ] Complete both App creations in the browser (the flows wait on `127.0.0.1:8765` for the reader and `127.0.0.1:8766` for the writer; restart them with `idp bootstrap app` if they have timed out) and install both Apps on all repositories.
-- [ ] Accept the org invitation for `Adrian-Manuel` at https://github.com/orgs/jellalshadows-idp/invitation, logged in as that account.
-- [ ] **Copy the two passphrases from `~/.idp/e2e.pass` and `~/.idp/main.pass` into a password manager now**, and delete the files only after Tasks 13 and 17 have bootstrapped both claims repos (bootstrap runbook, "After bootstrapping"). They were generated by Claude (ruling R16). If they are lost, the wet state encrypted with them cannot be read.
-- [ ] Remove the test account from the org after Task 15 Step 7 (`gh api --method DELETE /orgs/jellalshadows-idp/members/<login>`), if it was added.
+Not possible: accepting the invitation for `Adrian-Manuel`. That account is not signed in to the browser's GitHub account switcher, and Claude cannot sign in (passwords are off limits), so the invitation stays an owner action.
 
-## What remains to close Phase 0
+Note on the two accounts: `Adrian-Manuel` is the owner's other account (its invitation is to be accepted). `adrian-da-silva` is the spike's test account; it stayed a non-member until the S2 pending-invite test, was invited by the spike, accepted through the API and then removed.
 
-1. **Task 13:** create and install the Apps; run `bootstrap check` (expect `repo ... missing`, no `app ... not installed`), `apply`, `apply` again (expect only `kept existing secret ...` lines), `check` (expect no drift); capture the live ruleset JSON and record whether an empty `bypass_actors` is returned or omitted (Step 7). Resolve the open "verified in Task 13" items above (acceptance of `update_allows_fetch_and_merge` and `~DEFAULT_BRANCH`, fake versus real shapes, M5). If the second apply prints `created`, `updated` or `configured` lines, add the live JSON as a case to `TestRulesetDriftIgnoresGitHubExtras`, fix by PR and re-run.
-2. **Task 15 (S2):** give the spike repo the writer (and reader) credentials; apply, plan with a pending invite, plan after acceptance, destroy; run the reader probe. Consider the `tee -a` change on the two S2 workflows first.
-3. **Task 17:** apply `bootstrap` for `idp-claims` with the main passphrase, then `check`.
-4. **Finish ADR-0013:** fill the S2 table, set Status to `Accepted`, and apply the decision rules for risks 1 and 2.
-5. **Finish spec §11:** replace the "pending S2" cells in the "Phase 0 result" column for risks 1 and 2.
-6. **Archive the spike repo:** `gh repo archive jellalshadows-idp/idp-spike --yes`, after the S2 results are in ADR-0013.
-7. Update this log and the README status line to "Phase 0 complete", and then start the Phase 1 plan (which also owns the drift-check token ADR from finding I3, the exit-code ADR from M1, and the cryptic-plaintext-error handling from S1).
+## Cleanup verification (S2)
+
+- `DELETE orgs/jellalshadows-idp/members/adrian-da-silva` done; the members list contains only `jellalshadows` (the account still listed for about five seconds after the delete); `memberships/adrian-da-silva` returns 404.
+- The `spike-component` repo and the `spike-team` team return 404 (destroy removed all 10 resources, `resources_in_state=0`).
+- The pre-existing pending invitation for `Adrian-Manuel` was not created by the spike and was left untouched.
+
+## Status
+
+**Phase 0 is complete.** The `idp bootstrap` command shipped and ran against the real org; `idp-claims-e2e` and `idp-claims` are bootstrapped, idempotent and drift-free; spikes S1, S2 and S3 are measured and recorded in [ADR-0013](../adr/0013-phase-0-spike-findings.md); spec §11 risks 1 and 2 are closed; ADRs 0001 to 0014 are accepted. The spike repo `jellalshadows-idp/idp-spike` is archived at the end of Phase 0 (`gh repo archive jellalshadows-idp/idp-spike --yes`).
+
+Owner-only items left:
+
+1. Accept the org invitation for `Adrian-Manuel` at https://github.com/orgs/jellalshadows-idp/invitation. That account is not signed in to the browser, and Claude cannot sign in.
+2. Copy `~/.idp/e2e.pass` and `~/.idp/main.pass` into a password manager (they were generated by Claude, ruling R16; if lost, the wet state encrypted with them cannot be read), then delete them together with `~/.idp/apps/*.pem`, following the runbook's "After bootstrapping" section.
+
+Next: the Phase 1 plan (pipelines). It owns the drift-workflow token ADR (reader token cannot see bypass actors), the exit-code ADR (M1), the pre-`tofu` passphrase check from S1, and the single-org prefix rules from ADR-0014.

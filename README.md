@@ -2,7 +2,9 @@
 
 The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. It is inspired by [Firestartr](https://github.com/firestartr-pro/firestartr).
 
-> **Status:** Phase 0 (bootstrap + spike) is in progress. The `idp bootstrap` command has shipped and spikes S1 and S3 are done; the steps that need a GitHub App (S2, bootstrapping the claims repos) are pending. Nothing else is usable yet.
+> **Status:** Phase 0 (bootstrap + spike) is complete. The `idp bootstrap` command shipped and was run against the real org, and the spikes are done; see the [phase log](docs/phases/phase-0.md). Nothing else is usable yet.
+
+**What exists today:** `idp-claims` and `idp-claims-e2e` are bootstrapped and protected. Phase 1 (pipelines) is next.
 
 - Design: [docs/superpowers/specs/2026-10-08-idp-on-actions-design.md](docs/superpowers/specs/2026-10-08-idp-on-actions-design.md)
 - Decisions: [docs/adr/](docs/adr/)
