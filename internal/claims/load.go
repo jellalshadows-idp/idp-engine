@@ -140,11 +140,18 @@ func (l *loader) claimFiles(dirRel string) []string {
 
 func fileStem(rel string) string { return strings.TrimSuffix(path.Base(rel), ".yaml") }
 
-func (l *loader) checkFileName(doc *document, name string) {
-	if want := fileStem(doc.file); name != want {
-		l.add(Diagnostic{File: doc.file, Line: doc.lines["/name"],
-			Message: fmt.Sprintf("name %q must match the file name %q", name, want)})
+// checkFileName reports whether name equals the file's stem, adding a diagnostic
+// when it does not. A claim whose name mismatches is excluded from the model: the
+// mismatch diagnostic already covers it, and since names then equal file stems
+// they are unique per directory, so semantic checks never mix up documents.
+func (l *loader) checkFileName(doc *document, name string) bool {
+	want := fileStem(doc.file)
+	if name == want {
+		return true
 	}
+	l.add(Diagnostic{File: doc.file, Line: doc.lines["/name"],
+		Message: fmt.Sprintf("name %q must match the file name %q", name, want)})
+	return false
 }
 
 func (l *loader) loadGroups() {
@@ -158,7 +165,9 @@ func (l *loader) loadGroups() {
 		if !l.decode("Group", doc, &g) {
 			continue
 		}
-		l.checkFileName(doc, g.Name)
+		if !l.checkFileName(doc, g.Name) {
+			continue
+		}
 		l.docs["Group/"+g.Name] = doc
 		l.model.Groups = append(l.model.Groups, g)
 	}
@@ -174,7 +183,9 @@ func (l *loader) loadComponents() {
 		if !l.decode("Component", doc, &c) {
 			continue
 		}
-		l.checkFileName(doc, c.Name)
+		if !l.checkFileName(doc, c.Name) {
+			continue
+		}
 		l.docs["Component/"+c.Name] = doc
 		l.model.Components = append(l.model.Components, c)
 	}

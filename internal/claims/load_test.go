@@ -126,6 +126,10 @@ func TestLoadDiagnostics(t *testing.T) {
 			[]string{"claims/workspaces: Workspace claims are not supported yet (they arrive in Phase 3)"}},
 		{"unexpected entry in claims", func(r map[string]string) { r["claims/notes.md"] = "# notes\n" },
 			[]string{"claims/notes.md: unexpected entry; claims/ holds only groups/ and components/"}},
+		{"mismatched name never borrows another file's lines", func(r map[string]string) {
+			r["claims/components/api.yaml"] = strings.Replace(strings.Replace(validComponent, "name: api", "name: orders", 1), "[dev, pro]", "[staging]", 1)
+			r["claims/components/orders.yaml"] = strings.Replace(validComponent, "name: api", "name: orders", 1)
+		}, []string{`claims/components/api.yaml:3: name "orders" must match the file name "api"`}},
 		{"gitkeep ignored", func(r map[string]string) { r["claims/groups/.gitkeep"] = "" }, nil},
 	}
 	for _, tt := range tests {
