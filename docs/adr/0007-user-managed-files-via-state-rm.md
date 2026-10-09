@@ -8,7 +8,7 @@
 
 Features install file bundles into Component repos as `github_repository_file` resources (spec §5.7). Most files should be **managed**: the platform owns them and reverts manual edits on the next apply. Some files, however, must be created by the platform once and then belong to the user or to another tool. The v1 example is `.release-please-manifest.json`, which release-please bumps itself.
 
-OpenTofu has no native "create once, then let go". Firestartr solves it with `userManaged` files: the file is created, then removed from state so it is no longer tracked (`packages/gh_provisioner/src/entities/ghfeature/helpers/managed_files.ts:76-81`). This project keeps the same resource names and the same mechanism, replacing Firestartr's `installed_managed_files` output with `.idp/manifest.json` (§13).
+OpenTofu has no native "create once, then let go". This project solves it with `userManaged` files: the file is created, then removed from state so it is no longer tracked, and `.idp/manifest.json` records what was installed (§5.7).
 
 The obvious OpenTofu-only tools both fail, which is why the decision needs a record. `lifecycle { ignore_changes = [content] }` keeps the resource in state, so removing the feature would **delete** the user's file, and deleting the file by hand would bring it back. A `removed` block would forget the resource without destroying it, but its `from` "cannot include instance keys" (verified), and these files use `for_each`.
 
@@ -30,7 +30,6 @@ Feature files have two modes, and both are written to the default branch (spec �
 ### Positive
 
 - The user's file survives feature removal, manual deletion and later renders: the platform has truly let go of it.
-- Same mechanism and names as Firestartr, so the comparison document can list `userManaged` as kept (§9.3).
 - The manifest in `wet` is an auditable list of what the platform installed and then released.
 
 ### Negative / costs
@@ -49,10 +48,9 @@ Feature files have two modes, and both are written to the default branch (spec �
 - **`lifecycle { ignore_changes = [content] }`.** Rejected: removing the feature would delete the user's file, and deleting the file by hand would recreate it.
 - **A `removed` block.** Rejected: `from` cannot include instance keys, and these files use `for_each`.
 - **Treat every file as managed.** Rejected: release-please must be able to bump its own manifest.
-- **Per-file target branches (Firestartr's `target_branch`).** Out of scope for v1 (§2.2); files always go to the default branch.
+- **Per-file target branches.** Out of scope for v1 (§2.2); files always go to the default branch.
 
 ## References
 
-- Spec §2.2, §4.7, §5.1, §5.7, §6.2, §6.3, §7.7, §9.3, §11 (risk 5), §13.
-- Firestartr: `packages/gh_provisioner/src/entities/ghfeature/helpers/managed_files.ts:76-81`.
+- Spec §2.2, §4.7, §5.1, §5.7, §6.2, §6.3, §7.7, §11 (risk 5).
 - Verified: OpenTofu `removed` block `from` "cannot include instance keys".

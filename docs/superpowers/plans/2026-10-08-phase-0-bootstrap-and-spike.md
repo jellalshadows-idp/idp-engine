@@ -206,7 +206,7 @@ Expected: `rg -c "Apache License" LICENSE` prints a number ≥ 1.
 ```markdown
 # idp-engine
 
-The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. It is inspired by [Firestartr](https://github.com/firestartr-pro/firestartr).
+The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. Desired state lives in claims (YAML in Git), with no Kubernetes involved.
 
 > **Status:** Phase 0 (bootstrap + spike). Nothing here is usable yet.
 
@@ -233,7 +233,7 @@ git commit -m "chore: add license, readme and lf normalization"
 
 - [ ] **Step 6: Create the public repo and push** (outward-facing: ask the owner first)
 
-Run: `gh repo create jellalshadows-idp/idp-engine --public --source . --remote origin --push --description "IDP engine: claims to GitHub/AWS via GitHub Actions (Firestartr-inspired)"`
+Run: `gh repo create jellalshadows-idp/idp-engine --public --source . --remote origin --push --description "IDP engine: claims to GitHub/AWS via GitHub Actions"`
 Expected: the URL `https://github.com/jellalshadows-idp/idp-engine` is printed, and
 `git log origin/main --oneline | rg -c .` prints `4`: spec, spec amendment, this
 plan, and the chore commit.
@@ -4710,18 +4710,18 @@ Content per ADR. Use these sentences as the body. Do not invent new claims.
 
 | # / file slug | Spec | Context | Decision | Consequences | Alternatives |
 |---|---|---|---|---|---|
-| 0001 `edge-triggered-reconciliation-on-actions` | §1, §6 | Firestartr reconciles with a Kubernetes operator; this project must not require a cluster. | Reconcile on GitHub Actions events: PR, merge, manual dispatch, and a daily drift report. | No continuous reconciliation; drift is reported, never auto-fixed; zero infrastructure to run. | Kubernetes operator (Firestartr): level-triggered, but needs a cluster. |
+| 0001 `edge-triggered-reconciliation-on-actions` | §1, §6 | Reconciling with a Kubernetes operator is the usual approach; this project must not require a cluster. | Reconcile on GitHub Actions events: PR, merge, manual dispatch, and a daily drift report. | No continuous reconciliation; drift is reported, never auto-fixed; zero infrastructure to run. | A Kubernetes operator that reconciles continuously: level-triggered, but needs a cluster. |
 | 0002 `encrypted-opentofu-state-in-git` | §7.2 | The GitHub stack needs durable state, with no cloud backend available. | Keep the GitHub stack's state in `wet`, encrypted with OpenTofu (PBKDF2 + AES-GCM, `enforced = true`). | Authenticated encryption detects tampering; every commit is a state version; the passphrase must never be lost. | An S3 backend (no real AWS in v1); plaintext state in a public repo. |
-| 0003 `wet-branch-and-single-pr` | §3.2 | Firestartr needs two PRs (claims, then hydrate). | Render into a `wet` branch that only the reconcile writes; humans review one PR. | Smaller loop; `wet` history shows exactly what was applied. | Two PRs as in Firestartr; rendering into `main`. |
+| 0003 `wet-branch-and-single-pr` | §3.2 | Rendered output needs a home, and a two-PR flow (claims, then hydrate) is heavy. | Render into a `wet` branch that only the reconcile writes; humans review one PR. | Smaller loop; `wet` history shows exactly what was applied. | Two PRs (claims, then hydrate); rendering into `main`. |
 | 0004 `floci-multi-account-emulation` | §5.6 | AWS is emulated; envs map to accounts. | One floci per job; the 12-digit access key ID selects the account. | Real-looking ARNs; nothing persists between jobs, so stacks are replayed from `wet`. | One floci per env on separate ports: the original design, replaced once floci's multi-account support was verified. |
 | 0005 `tf-json-render-output` | §5.2 | The renderer must be deterministic and testable. | Emit `.tf.json` via `encoding/json`, which sorts map keys. | Byte-stable golden tests; humans read plans, not JSON. | Generating HCL text with templates. |
 | 0006 `deterministic-identities` | §5.5 | The GitHub stack needs AWS identifiers, but AWS state is ephemeral. | Compute ARNs and URLs from the platform config by convention. | Stacks are independent and plan in parallel; names are constrained (≤ 40-character claims, ≤ 10-character envs). | `terraform_remote_state` between stacks. |
-| 0007 `user-managed-files-via-state-rm` | §5.7 | Some feature files must become the user's after creation. | Create once, `state rm`, record in `.idp/manifest.json`, as Firestartr does. | User edits are never reverted or deleted; mode switches are rejected in v1. | `ignore_changes` (deletes on removal); a `removed` block (no instance keys). |
+| 0007 `user-managed-files-via-state-rm` | §5.7 | Some feature files must become the user's after creation. | Create once, `state rm`, record in `.idp/manifest.json`. | User edits are never reverted or deleted; mode switches are rejected in v1. | `ignore_changes` (deletes on removal); a `removed` block (no instance keys). |
 | 0008 `no-dflook` | §6.5 | The gate needs fingerprint subsets, policies and one commit per run. | Own steps plus `idp plan-summary` instead of the dflook actions. | More code, all of it testable; removes the undocumented-encryption risk. | dflook tofu-plan/apply. |
 | 0009 `two-apps-and-split-environments` | §7.3 | Required reviewers gate every job that references an environment. | Reader App for plans; writer App key only in `idp-write`; approval in a secret-less `idp-approval`. | PR code never sees a write token; one approval per run. | One App with the key in the approval env (several approvals per run). |
 | 0010 `public-repos-on-free-plan` | §2.3 | On Free, rulesets and environment reviewers exist only for public repos. | Every repo, including Component repos, is public. | Nothing secret may live in repos, logs or state; private repos need the Team plan. | Team plan; private repos without protections. |
 | 0011 `bootstrap-outside-the-idp` | §9.2 | The IDP must not manage the protections that guard it. | `idp bootstrap apply/check`, run by an org owner; `check` runs in drift. | Apps are created via the browser manifest flow; there is a small manual runbook. | Managing the claims repo through claims; a bootstrap OpenTofu stack (state chicken-and-egg). |
-| 0012 `required-workspace-policy` | §4.5 | Firestartr defaults to `observe`, so a forgotten field silently does nothing. | `policy` is required; only `full-control` may delete. | Explicit intent in every Workspace; deleting a non-`full-control` workspace takes two PRs. | Defaulting to `observe` or to `full-control`. |
+| 0012 `required-workspace-policy` | §4.5 | A default of `observe` would make a forgotten field silently do nothing. | `policy` is required; only `full-control` may delete. | Explicit intent in every Workspace; deleting a non-`full-control` workspace takes two PRs. | Defaulting to `observe` or to `full-control`. |
 | 0014 `single-org-isolated-by-repo-and-prefix` | §3.1, §8.5 | The plan called for a separate sandbox org for E2E and spikes. | Owner decision (2026-10-09): one org; tests are isolated by claims repo (`idp-claims-e2e`, own `wet`, state and passphrase) and by the `e2e-`/`spike-` prefix. | Simpler: two Apps instead of four, one bootstrap of the org settings; Apps, keys, org settings and rate limit are shared between production and tests; the harness must refuse to delete unprefixed resources and `idp-claims` must reject prefixed names. | A sandbox org per environment (stronger isolation, double the Apps and bootstrap). |
 
 - [ ] **Step 2: Write `docs/adr/0013-phase-0-spike-findings.md`**

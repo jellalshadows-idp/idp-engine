@@ -8,13 +8,13 @@
 
 A `Workspace` claim runs a generic OpenTofu module (v1 ships `s3-bucket`) in a given environment. Unlike the Group and Component kinds, whose resources the platform fully understands, a Workspace is arbitrary module code, so the platform cannot know in advance which changes are safe. The question is how much the pipeline is allowed to do with each one: only plan, create and update, or also destroy.
 
-Firestartr models this with policies (`full-control`, `apply`, `observe`, `create-only`) and defaults to `observe` (spec §13). A default is attractive because it is safe, but it hides the decision: a claim author who forgets the field silently gets a Workspace that is planned and never applied, and the claim looks done. The opposite default, `full-control`, would silently allow destroy.
+The answer is a per-Workspace policy (`full-control`, `apply` or `observe`). It could have a default. A default is attractive because it is safe, but it hides the decision: a claim author who forgets the field silently gets a Workspace that is planned and never applied, and the claim looks done. The opposite default, `full-control`, would silently allow destroy.
 
 The deletion path matters too. When a claim file is deleted, there is no claim left to read the policy from, so the policy has to come from the **last render in `wet`** (§6.3). The policy therefore also decides what a deletion means.
 
 ## Decision
 
-Workspace claims carry a **required** `policy` field, with no default. Validation fails if it is missing (spec §4.5). Three policies are supported; `create-only` is not in v1 (§13).
+Workspace claims carry a **required** `policy` field, with no default. Validation fails if it is missing (spec §4.5). Three policies are supported.
 
 | Policy | Create/update | Delete or replace | Applied? |
 |---|---|---|---|
@@ -39,7 +39,6 @@ Workspace claims carry a **required** `policy` field, with no default. Validatio
 
 - Slightly more friction: every Workspace needs a policy, even trivial ones.
 - Deleting an `apply` Workspace takes two PRs. That is intended friction, but it is friction.
-- Differs from Firestartr (which defaults to `observe`), so users coming from it must be told (§13, §9.3).
 - No `create-only` policy in v1.
 
 ### Follow-ups
@@ -49,11 +48,11 @@ Workspace claims carry a **required** `policy` field, with no default. Validatio
 
 ## Alternatives considered
 
-- **Default to `observe`, as Firestartr does.** Rejected: a forgotten field silently yields a Workspace that is never applied, which hides a decision that should be explicit.
+- **Default to `observe`.** Rejected: a forgotten field silently yields a Workspace that is never applied, which hides a decision that should be explicit.
 - **Default to `full-control`.** Rejected: destroy power would be granted by omission.
 - **Only a global setting, not per claim.** Not chosen: different Workspaces in one repo need different safety levels.
-- **Include `create-only`.** Deferred: not in v1 (§13).
+- **Include `create-only`.** Deferred: not in v1.
 
 ## References
 
-- Spec §4.5, §6.1-§6.3, §8.2, §9.3, §10, §13.
+- Spec §4.5, §6.1-§6.3, §8.2, §10.
