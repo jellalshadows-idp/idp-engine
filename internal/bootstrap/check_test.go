@@ -45,6 +45,9 @@ func TestCheckReportsDrift(t *testing.T) {
 		{name: "bypass added to main", install: true, mutate: func(f *fakeGitHub) {
 			f.rulesetByName("idp-main")["bypass_actors"] = []any{map[string]any{"actor_id": float64(9), "actor_type": "User", "bypass_mode": "always"}}
 		}, want: "ruleset idp-main: drift at"},
+		{name: "bypass actors hidden from token", install: true, mutate: func(f *fakeGitHub) {
+			delete(f.rulesetByName("idp-main"), "bypass_actors")
+		}, want: "not returned to this token"},
 		{name: "secret deleted", install: true, mutate: func(f *fakeGitHub) {
 			delete(f.objects, "/repos/acme/idp-claims/actions/secrets/IDP_STATE_PASSPHRASE")
 		}, want: "secret IDP_STATE_PASSPHRASE: missing"},

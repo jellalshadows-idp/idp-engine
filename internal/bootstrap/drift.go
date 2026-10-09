@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/ghapi"
 )
@@ -55,7 +56,32 @@ func (b *Bootstrapper) rulesetDrift(ctx context.Context, id int64, want Ruleset)
 	if err != nil {
 		return nil, err
 	}
-	return Mismatches(rulesetView(desired.(map[string]any)), rulesetView(live)), nil
+	drift := Mismatches(rulesetView(desired.(map[string]any)), rulesetView(live))
+	// GitHub returns bypass_actors only to callers with write access. A live
+	// ruleset without the key means we cannot verify it, so fail closed instead
+	// of comparing against []. Present-but-empty still compares normally.
+	// For apply this triggers a PUT, which GitHub rejects for a token without
+	// write access; that is acceptable (apply needs a write token anyway).
+	if _, ok := live["bypass_actors"]; !ok {
+		drift = withoutPath(drift, "$.bypass_actors")
+		drift = append(drift, bypassHiddenDrift)
+	}
+	return drift, nil
+}
+
+const bypassHiddenDrift = "$.bypass_actors (not returned to this token; GitHub only shows bypass actors to callers with write access)"
+
+// withoutPath drops generic mismatches at path (and below) so the dedicated
+// hidden-field entry is not accompanied by a misleading comparison against [].
+func withoutPath(paths []string, path string) []string {
+	kept := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p == path || strings.HasPrefix(p, path+".") || strings.HasPrefix(p, path+"[") {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept
 }
 
 type envView struct {

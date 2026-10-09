@@ -131,8 +131,10 @@ func TestRulesetDriftIgnoresGitHubExtras(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// bypass_actors is present (empty) because owner tokens always receive it; extras around it must be ignored.
 	live := decode(t, `{
 	  "id": 7, "name": "idp-main", "target": "branch", "source_type": "Repository", "source": "acme/idp-claims",
+	  "bypass_actors": [],
 	  "enforcement": "active", "node_id": "RRS_x", "created_at": "2026-10-08T00:00:00Z",
 	  "_links": {"self": {"href": "https://api.github.com/x"}},
 	  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
