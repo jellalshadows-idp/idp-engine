@@ -3889,6 +3889,15 @@ re-run.
 Run the Step 4 command again.
 Expected: `bootstrap check: no drift`, exit code 0.
 
+- [ ] **Step 7: Capture the live ruleset shape (owner token)** (added by ruling R12)
+
+For each ruleset id listed by `gh api repos/jellalshadows-idp/idp-claims-e2e/rulesets --jq '.[].id'`,
+run `gh api repos/jellalshadows-idp/idp-claims-e2e/rulesets/<id>` and save the
+output in the scratch notes for ADR-0013. Record one fact explicitly: for
+`idp-main`, whose bypass list is empty, does GitHub return `"bypass_actors": []`
+or omit the field, even for an admin token? This decides how `check` must treat
+a missing `bypass_actors` (final-review finding I3).
+
 ---
 
 ### Task 14: Spike S1 — encrypted state round-trip through Git (THROWAWAY)
@@ -3900,6 +3909,8 @@ Expected: `bootstrap check: no drift`, exit code 0.
 - Consumes: the org (Task 0).
 - Produces: job-summary numbers `state_bytes` and `apply_seconds`, plus three
   verdicts (round-trip, tamper rejected, plaintext refused), for ADR-0013.
+
+- [ ] **Step 0: Prerequisite** — Task 13 has created both Apps; Task 15 Step 8 also needs the reader's credentials.
 
 - [ ] **Step 1: Create the spike repo locally**
 
@@ -4332,6 +4343,72 @@ Then (outward-facing: ask first):
 `gh api --method DELETE /orgs/jellalshadows-idp/members/adrian-da-silva`
 Expected: `gh api orgs/jellalshadows-idp/members --jq '.[].login'` no
 longer lists `adrian-da-silva`.
+
+- [ ] **Step 8: Reader probe — what the reader App can actually see** (added by ruling R12)
+
+Give the spike repo the reader credentials, the same way Step 3 did for the
+writer (outward-facing: ask first):
+
+```bash
+R=~/.idp/apps/jellalshadows-idp-reader
+gh variable set SPIKE_READER_CLIENT_ID --repo jellalshadows-idp/idp-spike --body "$(rg -o --no-filename '"client_id":\s*"([^"]+)"' -r '$1' "$R.json")"
+gh secret set SPIKE_READER_PRIVATE_KEY --repo jellalshadows-idp/idp-spike < "$R.pem"
+```
+
+Add `.github/workflows/spike-reader-probe.yaml`:
+
+```yaml
+name: spike-reader-probe
+
+on: workflow_dispatch
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app
+        with:
+          client-id: ${{ vars.SPIKE_READER_CLIENT_ID }}
+          private-key: ${{ secrets.SPIKE_READER_PRIVATE_KEY }}
+          owner: jellalshadows-idp
+      - name: probe what the reader token can read
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          R: jellalshadows-idp/idp-claims-e2e
+        run: |
+          probe() {
+            code=$( (gh api -i "$1" 2>/dev/null || true) | head -n1 | awk '{print $2}')
+            echo "| \`$1\` | ${code:-error} |" >> "$GITHUB_STEP_SUMMARY"
+          }
+          { echo "| endpoint | status |"; echo "|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
+          probe "repos/$R"
+          probe "repos/$R/rulesets"
+          probe "repos/$R/environments/idp-approval"
+          probe "repos/$R/environments/idp-approval/deployment-branch-policies"
+          probe "repos/$R/environments/idp-approval/secrets"
+          probe "repos/$R/environments/idp-write/variables/IDP_WRITER_CLIENT_ID"
+          probe "repos/$R/actions/variables/IDP_READER_CLIENT_ID"
+          probe "repos/$R/actions/secrets/IDP_STATE_PASSPHRASE"
+          probe "orgs/jellalshadows-idp/actions/permissions/workflow"
+          probe "orgs/jellalshadows-idp/installations"
+          for id in $(gh api "repos/$R/rulesets" --jq '.[].id'); do
+            gh api "repos/$R/rulesets/$id" --jq '"- ruleset " + .name + ": bypass_actors present = " + (has("bypass_actors") | tostring)' >> "$GITHUB_STEP_SUMMARY"
+          done
+```
+
+Commit, push, then run: `gh workflow run spike-reader-probe.yaml --repo jellalshadows-idp/idp-spike`. Watch it as in Task 14 Step 5.
+
+Decision rules, recorded in ADR-0013:
+- **Any 403/404 in the table** means the reader manifest lacks a permission. Fix
+  `bootstrap/apps/reader.json` through a PR, update the App's permissions in its
+  settings, and accept the change on the installation **before Task 17**.
+- **`bypass_actors present = false`** confirms final-review finding I3: a reader
+  token cannot verify ruleset bypass lists. Phase 1 must decide in an ADR how the
+  drift check verifies them before `drift.yaml` exists.
 
 ---
 
