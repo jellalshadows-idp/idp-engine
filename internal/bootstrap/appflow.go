@@ -127,8 +127,8 @@ func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, err
 		}
 		creds, err := f.convert(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
-			// The detail goes to the terminal only: the browser must not see API errors.
-			fmt.Fprintf(log, "App creation failed: %v\n", err)
+			// The detail reaches the terminal through Run's returned error; the
+			// browser must not see API errors, and this goroutine must not write the log.
 			http.Error(w, "App creation failed; see the terminal for details.", http.StatusBadGateway)
 		} else {
 			fmt.Fprintf(w, "App %s created. You can close this tab.\n", creds.Slug)

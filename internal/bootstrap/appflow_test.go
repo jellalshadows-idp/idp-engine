@@ -314,8 +314,9 @@ func TestAppFlowFailedConversionDoesNotEchoUpstreamError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "secret-upstream-detail") {
 		t.Errorf("Run err = %v, want the detailed error", err)
 	}
-	if !strings.Contains(log.String(), "secret-upstream-detail") {
-		t.Errorf("log = %q, want the detailed error", log.String())
+	// The CLI prints the returned error; the handler goroutine must not touch the log.
+	if strings.Contains(log.String(), "secret-upstream-detail") {
+		t.Errorf("log = %q, want no write from the callback handler", log.String())
 	}
 }
 
