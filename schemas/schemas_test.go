@@ -61,6 +61,8 @@ func TestSchemas(t *testing.T) {
 		{"Group", "bad role", `{"apiVersion":"idp/v1","kind":"Group","name":"platform","members":[{"user":"alice","role":"owner"}]}`, false},
 		{"Group", "no members", `{"apiVersion":"idp/v1","kind":"Group","name":"platform","members":[]}`, false},
 		{"Group", "unknown field", `{"apiVersion":"idp/v1","kind":"Group","name":"platform","members":[{"user":"a","role":"member"}],"team":"x"}`, false},
+		{"Group", "multi-line description", `{"apiVersion":"idp/v1","kind":"Group","name":"platform","description":"one\ntwo","members":[{"user":"alice","role":"member"}]}`, false},
+		{"Component", "multi-line description", `{"apiVersion":"idp/v1","kind":"Component","name":"api","owner":"group:platform","description":"one\ntwo"}`, false},
 		{"Component", "valid", `{"apiVersion":"idp/v1","kind":"Component","name":"api","owner":"group:platform","environments":["dev","pro"],"github":{"topics":["java"]}}`, true},
 		{"Component", "owner without prefix", `{"apiVersion":"idp/v1","kind":"Component","name":"api","owner":"platform"}`, false},
 		{"Component", "aws not supported yet", `{"apiVersion":"idp/v1","kind":"Component","name":"api","owner":"group:platform","aws":{"registry":true}}`, false},
