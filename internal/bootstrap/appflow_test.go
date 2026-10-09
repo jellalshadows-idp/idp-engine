@@ -320,6 +320,31 @@ func TestAppFlowFailedConversionDoesNotEchoUpstreamError(t *testing.T) {
 	}
 }
 
+func TestAppFlowRejectsEscapingSlug(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"id": 77, "client_id": "Iv23abc", "slug": "../escaped", "pem": "key"}`)
+	}))
+	defer gh.Close()
+	parent := t.TempDir()
+	outDir := filepath.Join(parent, "out")
+	base, done, _, cancel := startFlowLog(t, gh.URL, outDir, nil)
+	defer cancel()
+
+	state := stateFrom(t, httpGet(t, base+"/", http.StatusOK))
+	httpGet(t, base+"/callback?code=the-code&state="+state, http.StatusBadGateway)
+
+	err := <-done
+	if err == nil || !strings.Contains(err.Error(), "invalid app slug") {
+		t.Fatalf("Run err = %v, want an invalid app slug error", err)
+	}
+	for _, dir := range []string{parent, outDir} {
+		matches, _ := filepath.Glob(filepath.Join(dir, "escaped*"))
+		if len(matches) != 0 {
+			t.Errorf("files written outside the plain-name rule: %v", matches)
+		}
+	}
+}
+
 func TestAppFlowNilLogDoesNotPanic(t *testing.T) {
 	base, done, _, cancel := startFlowLog(t, "http://127.0.0.1:1", t.TempDir(), nil)
 	httpGet(t, base+"/", http.StatusOK)

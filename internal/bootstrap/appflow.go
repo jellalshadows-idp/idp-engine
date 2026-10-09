@@ -173,6 +173,9 @@ func (f *AppFlow) convert(ctx context.Context, code string) (AppCredentials, err
 	if err := f.API.Post(ctx, "/app-manifests/"+url.PathEscape(code)+"/conversions", nil, &resp); err != nil {
 		return AppCredentials{}, err
 	}
+	if err := validSlug(resp.Slug); err != nil {
+		return AppCredentials{}, fmt.Errorf("GitHub returned an unusable app: %w", err)
+	}
 	return AppCredentials{ID: resp.ID, ClientID: resp.ClientID, Slug: resp.Slug, PrivateKey: resp.PEM}, nil
 }
 

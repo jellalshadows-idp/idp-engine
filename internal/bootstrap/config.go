@@ -83,6 +83,16 @@ func joinProblems(problems []string) error {
 	return errors.New(strings.Join(problems, "; "))
 }
 
+// validSlug rejects slugs that are not plain file names, so the file paths built
+// from them (<slug>.json, <slug>.pem) never leave their directory. Both the
+// read and the write side use it.
+func validSlug(slug string) error {
+	if slug == "" || slug != filepath.Base(slug) || strings.ContainsAny(slug, `/\`) || slug == "." || slug == ".." {
+		return fmt.Errorf("invalid app slug %q (it must be a plain file name)", slug)
+	}
+	return nil
+}
+
 // LoadAppCredentials reads the <slug>.json written by `idp bootstrap app` and,
 // when withKey is set, the <slug>.pem next to it.
 func LoadAppCredentials(jsonPath string, withKey bool) (AppCredentials, error) {
@@ -95,8 +105,8 @@ func LoadAppCredentials(jsonPath string, withKey bool) (AppCredentials, error) {
 		return AppCredentials{}, fmt.Errorf("%s: %w", jsonPath, err)
 	}
 	if withKey {
-		if c.Slug == "" || c.Slug != filepath.Base(c.Slug) || strings.ContainsAny(c.Slug, `/\`) || c.Slug == "." || c.Slug == ".." {
-			return AppCredentials{}, fmt.Errorf("%s: invalid app slug %q (it must be a plain file name)", jsonPath, c.Slug)
+		if err := validSlug(c.Slug); err != nil {
+			return AppCredentials{}, fmt.Errorf("%s: %w", jsonPath, err)
 		}
 		pem, err := os.ReadFile(filepath.Join(filepath.Dir(jsonPath), c.Slug+".pem"))
 		if err != nil {
