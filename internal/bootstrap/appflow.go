@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
+	"time"
 
 	"github.com/jellalshadows-idp/idp-engine/bootstrap/apps"
 	"github.com/jellalshadows-idp/idp-engine/internal/ghapi"
@@ -96,6 +98,7 @@ func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, err
 	action := fmt.Sprintf("%s/organizations/%s/settings/apps/new?state=%s", f.GitHubWeb, url.PathEscape(f.Org), url.QueryEscape(state))
 
 	result := make(chan flowResult, 1)
+	var handled atomic.Bool // the code is single-use: only the first valid callback converts it
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_ = formTmpl.Execute(w, map[string]string{"Action": action, "Manifest": string(manifestJSON)})
@@ -105,20 +108,27 @@ func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, err
 			http.Error(w, "state mismatch", http.StatusBadRequest)
 			return
 		}
+		// A refresh or double submit must not spend the code a second time.
+		if !handled.CompareAndSwap(false, true) {
+			http.Error(w, "callback already handled", http.StatusConflict)
+			return
+		}
 		creds, err := f.convert(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 		} else {
 			fmt.Fprintf(w, "App %s created. You can close this tab.\n", creds.Slug)
 		}
-		select {
-		case result <- flowResult{creds: creds, err: err}:
-		default: // a duplicate callback (browser refresh) is ignored
-		}
+		result <- flowResult{creds: creds, err: err} // buffered, and only this handler sends
 	})
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
-	defer srv.Close()
+	// Graceful, so the callback response is flushed before the listener closes.
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
+	}()
 	fmt.Fprintf(f.Log, "Open http://%s/ in your browser to create %s-%s\n", ln.Addr(), f.Org, f.Role)
 
 	select {
@@ -128,7 +138,11 @@ func (f *AppFlow) Run(ctx context.Context, ln net.Listener) (AppCredentials, err
 		if res.err != nil {
 			return AppCredentials{}, res.err
 		}
-		return res.creds, f.save(res.creds)
+		if err := f.save(res.creds); err != nil {
+			return res.creds, fmt.Errorf("app %s (id %d) was created but its credentials could not be saved: %w; generate a new private key at %s/organizations/%s/settings/apps/%s",
+				res.creds.Slug, res.creds.ID, err, f.GitHubWeb, url.PathEscape(f.Org), res.creds.Slug)
+		}
+		return res.creds, nil
 	}
 }
 
@@ -153,14 +167,23 @@ func (f *AppFlow) save(c AppCredentials) error {
 	if err := os.MkdirAll(f.OutDir, 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(f.OutDir, c.Slug+".pem"), []byte(c.PrivateKey), 0o600); err != nil {
+	if err := writeOwnerOnly(filepath.Join(f.OutDir, c.Slug+".pem"), []byte(c.PrivateKey)); err != nil {
 		return err
 	}
 	meta, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(f.OutDir, c.Slug+".json"), append(meta, '\n'), 0o600)
+	return writeOwnerOnly(filepath.Join(f.OutDir, c.Slug+".json"), append(meta, '\n'))
+}
+
+// writeOwnerOnly forces 0600 even when the file already exists: WriteFile
+// applies its mode only on creation, so a pre-existing looser file would keep it.
+func writeOwnerOnly(path string, data []byte) error {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 func randomState() (string, error) {

@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -136,5 +138,80 @@ func TestAppFlowRejectsWrongState(t *testing.T) {
 	cancel()
 	if err := <-done; err == nil {
 		t.Fatal("want the context error after cancel, got nil")
+	}
+}
+
+func TestAppFlowConvertsOnlyOnce(t *testing.T) {
+	var conversions atomic.Int32
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conversions.Add(1)
+		time.Sleep(300 * time.Millisecond)
+		io.WriteString(w, `{"id": 77, "client_id": "Iv23abc", "slug": "acme-writer", "pem": "-----BEGIN RSA PRIVATE KEY-----\nx\n-----END RSA PRIVATE KEY-----\n"}`)
+	}))
+	defer gh.Close()
+	base, done, creds, cancel := startFlow(t, gh.URL, t.TempDir())
+	defer cancel()
+
+	state := regexp.MustCompile(`state=([A-Za-z0-9_-]+)`).FindStringSubmatch(httpGet(t, base+"/", http.StatusOK))[1]
+
+	var wg sync.WaitGroup
+	statuses := make([]int, 2)
+	for i := range statuses {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resp, err := http.Get(base + "/callback?code=the-code&state=" + state)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			resp.Body.Close()
+			statuses[i] = resp.StatusCode
+		}(i)
+	}
+	wg.Wait()
+
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n := conversions.Load(); n != 1 {
+		t.Errorf("conversion calls = %d, want exactly 1", n)
+	}
+	got := map[int]bool{statuses[0]: true, statuses[1]: true}
+	if !got[http.StatusOK] || !got[http.StatusConflict] {
+		t.Errorf("callback statuses = %v, want one 200 and one 409", statuses)
+	}
+	if creds.Slug != "acme-writer" {
+		t.Errorf("creds = %+v", *creds)
+	}
+}
+
+func TestAppFlowSaveTightensExistingPemMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes are not enforced on Windows")
+	}
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"id": 77, "client_id": "Iv23abc", "slug": "acme-writer", "pem": "-----BEGIN RSA PRIVATE KEY-----\nx\n-----END RSA PRIVATE KEY-----\n"}`)
+	}))
+	defer gh.Close()
+	out := t.TempDir()
+	pem := filepath.Join(out, "acme-writer.pem")
+	if err := os.WriteFile(pem, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base, done, _, cancel := startFlow(t, gh.URL, out)
+	defer cancel()
+
+	state := regexp.MustCompile(`state=([A-Za-z0-9_-]+)`).FindStringSubmatch(httpGet(t, base+"/", http.StatusOK))[1]
+	httpGet(t, base+"/callback?code=the-code&state="+state, http.StatusOK)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(pem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("pem mode = %v, want 0600 even when the file pre-existed", info.Mode().Perm())
 	}
 }
