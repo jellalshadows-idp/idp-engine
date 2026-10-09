@@ -227,8 +227,11 @@ apiVersion: idp/v1
 kind: Platform
 github:
   org: <org>
+  writerAppId: 5255579            # the writer App's id: bypass actor of every Component ruleset
   archiveOnDestroy: true          # false in idp-claims-e2e
   requiredApprovals: 1
+naming:                           # optional (ADR-0014)
+  reservedPrefixes: [e2e-, spike-] # idp-claims; idp-claims-e2e sets `requiredPrefix: e2e-` instead
 environments:                     # names match ^[a-z][a-z0-9]{0,9}$
   dev:     { aws: { accountId: "000000000001", region: eu-west-1 } }
   staging: { aws: { accountId: "000000000002", region: eu-west-1 } }
@@ -238,6 +241,8 @@ modules:
 ```
 The config is shaped like real AWS: account IDs and regions, never emulator ports.
 How CI maps these values to floci is defined in §5.6.
+
+`github.writerAppId` is required, because rendering is pure (§5.1): the bypass actor of every Component ruleset (§4.4) cannot be read from the environment, so it lives in the config. `naming` turns ADR-0014's prefix isolation into validation: a claim name may not start with any `reservedPrefixes` entry and must start with `requiredPrefix` when one is set. *(Amendment A1, 2026-10-09, Phase 1a planning.)*
 
 ### 4.7 Validation
 Validation runs in two layers, and **all errors are reported together** as GitHub
@@ -285,7 +290,7 @@ settings. Module sources point to `idp-engine` **at the renderer's own version**
 { "module": { "component_api": {
   "source": "git::https://github.com/<org>/idp-engine.git//modules/github/component?ref=v0.3.0",
   "name": "api",
-  "owner_team": "platform",
+  "owner_team_id": "${module.group_platform.team_id}",
   "environments": { "pro": { "protected": true, "variables": {
     "AWS_ROLE_ARN":   "arn:aws:iam::000000000003:role/api-pro-ci",
     "ECR_REPOSITORY": "000000000003.dkr.ecr.eu-west-1.amazonaws.com/api",
@@ -293,6 +298,8 @@ settings. Module sources point to `idp-engine` **at the renderer's own version**
   }}}
 }}}
 ```
+A Component receives its owner team as a reference to the Group module's output, not as a slug. A `data "github_team"` lookup by slug would fail on the first plan, when the team and the repository are created in the same apply. The reference also orders the apply: team first, then repository access and environment reviewers. *(Amendment A2, 2026-10-09, Phase 1a planning.)*
+
 All resource logic lives in the modules and is tested with `tofu test` (§8.3). When
 Renovate bumps the engine, the re-render changes every `ref`, so the upgrade shows up
 as a plan in a PR.
@@ -737,6 +744,8 @@ use what that phase measured. Each phase ships an engine minor release.
 | 3 → `0.3.0` | Workspace: allowlist, policies, orphans, `idp-modules/s3-bucket` | E2E covers the two-step delete and the `apply`-policy rejection |
 | 4 → `0.4.0` | Features: `idp-features` + the 3 features, managed and userManaged | Golden tests, plus E2E with one managed and one userManaged file |
 | 5 → `1.0.0` | Polish: complete docs, Firestartr comparison, tested runbooks | An external person bootstraps a new org using only the README |
+
+Phase 1 is delivered as three plans, each shipping working software: **1a** claims → render (validation, the GitHub stack, the `github/group` and `github/component` modules); **1b** pipelines (`diff`, `plan-summary`, `gate`, the reusable workflows, the `wet` commit); **1c** E2E harness and the `v0.1.0` release. *(2026-10-09.)*
 
 ## 11. Risks (verified in Phase 0 or by E2E)
 
