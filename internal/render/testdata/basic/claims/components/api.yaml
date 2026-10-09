@@ -1,0 +1,8 @@
+apiVersion: idp/v1
+kind: Component
+name: api
+description: Orders API
+owner: group:platform
+environments: [dev, pro]
+github:
+  topics: [java, orders]
