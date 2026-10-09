@@ -154,6 +154,15 @@ func (f *fakeGitHub) route(method, path string, body map[string]any) (int, any) 
 		return http.StatusNoContent, nil
 	case method == http.MethodGet && strings.HasSuffix(path, "/public-key"):
 		return http.StatusOK, map[string]any{"key_id": "key-1", "key": base64.StdEncoding.EncodeToString(testPub[:])}
+	case method == http.MethodGet && strings.HasSuffix(path, "/secrets"):
+		list := []any{}
+		for p := range f.objects {
+			name, ok := strings.CutPrefix(p, path+"/")
+			if ok && name != "public-key" && !strings.Contains(name, "/") {
+				list = append(list, map[string]any{"name": name})
+			}
+		}
+		return http.StatusOK, map[string]any{"total_count": len(list), "secrets": list}
 	case method == http.MethodPost && strings.HasSuffix(path, "/variables"):
 		f.objects[path+"/"+body["name"].(string)] = map[string]any{"name": body["name"], "value": body["value"]}
 		return http.StatusCreated, map[string]any{}

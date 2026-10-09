@@ -36,7 +36,7 @@ func (b *Bootstrapper) Check(ctx context.Context) ([]Finding, error) {
 		return f, nil
 	}
 	for _, step := range []func(context.Context, *findings) error{
-		b.checkWetBranch, b.checkRulesets, b.checkEnvironments, b.checkSecrets, b.checkVariables,
+		b.checkWetBranch, b.checkRulesets, b.checkEnvironments, b.checkSecrets, b.checkForbiddenSecrets, b.checkVariables,
 	} {
 		if err := step(ctx, &f); err != nil {
 			return nil, err
@@ -145,6 +145,29 @@ func (b *Bootstrapper) checkSecrets(ctx context.Context, f *findings) error {
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// checkForbiddenSecrets verifies the "must not exist" rules (spec §6.2, §7.3):
+// the writer key lives only in idp-write, and idp-approval holds no secrets.
+func (b *Bootstrapper) checkForbiddenSecrets(ctx context.Context, f *findings) error {
+	err := b.API.Get(ctx, b.repoPath()+"/actions/secrets/"+SecretWriterKey, nil)
+	switch {
+	case err == nil:
+		f.add("secret "+SecretWriterKey, "present at repo level; it must live only in idp-write")
+	case !errors.Is(err, ghapi.ErrNotFound):
+		return err
+	}
+	var list struct {
+		TotalCount int `json:"total_count"`
+	}
+	err = b.API.Get(ctx, b.repoPath()+"/environments/"+EnvApproval+"/secrets", &list)
+	if err != nil && !errors.Is(err, ghapi.ErrNotFound) {
+		return err
+	}
+	if list.TotalCount > 0 {
+		f.add("environment "+EnvApproval, "holds %d secret(s); it must hold none", list.TotalCount)
 	}
 	return nil
 }

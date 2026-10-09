@@ -48,6 +48,12 @@ func TestCheckReportsDrift(t *testing.T) {
 		{name: "secret deleted", install: true, mutate: func(f *fakeGitHub) {
 			delete(f.objects, "/repos/acme/idp-claims/actions/secrets/IDP_STATE_PASSPHRASE")
 		}, want: "secret IDP_STATE_PASSPHRASE: missing"},
+		{name: "writer key leaked to repo level", install: true, mutate: func(f *fakeGitHub) {
+			f.objects["/repos/acme/idp-claims/actions/secrets/IDP_WRITER_PRIVATE_KEY"] = map[string]any{"name": "IDP_WRITER_PRIVATE_KEY"}
+		}, want: "secret IDP_WRITER_PRIVATE_KEY: present at repo level; it must live only in idp-write"},
+		{name: "secret in idp-approval", install: true, mutate: func(f *fakeGitHub) {
+			f.objects["/repos/acme/idp-claims/environments/idp-approval/secrets/X"] = map[string]any{"name": "X"}
+		}, want: "environment idp-approval: holds 1 secret(s); it must hold none"},
 		{name: "private repo", install: true, mutate: func(f *fakeGitHub) {
 			f.objects["/repos/acme/idp-claims"].(map[string]any)["visibility"] = "private"
 		}, want: `repo acme/idp-claims: visibility is "private", want public`},
