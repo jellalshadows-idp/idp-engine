@@ -81,6 +81,8 @@ go run ./cmd/idp bootstrap check `
 
 Expected: `bootstrap check: no drift` and exit code 0.
 
+Run `check` with an org owner token (or any token with write access to the claims repo). GitHub only returns a ruleset's `bypass_actors` to callers with write access, so with a read-only token `check` reports `$.bypass_actors (not returned to this token; ...)` as drift instead of passing silently (final-review finding I3; the drift-workflow token strategy is decided in Phase 1).
+
 ## After bootstrapping
 
 Once every claims repo you intend to bootstrap is done and `check` is clean, delete the local `.pem` files and the passphrase files. The keys and the passphrase now live in GitHub secrets and your password manager.
