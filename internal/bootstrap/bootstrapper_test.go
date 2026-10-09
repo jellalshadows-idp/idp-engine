@@ -125,7 +125,7 @@ func TestApplyRepairsRulesetDrift(t *testing.T) {
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	want := "PUT /repos/acme/idp-claims/rulesets/" + strconv.FormatInt(int64(main["id"].(int64)), 10)
+	want := "PUT /repos/acme/idp-claims/rulesets/" + strconv.FormatInt(main["id"].(int64), 10)
 	if !slices.Equal(fake.Writes, []string{want}) {
 		t.Errorf("writes = %v, want only %q", fake.Writes, want)
 	}
@@ -186,7 +186,7 @@ func dropRule(m map[string]any, typ string) {
 	m["rules"] = kept
 }
 
-func TestRulesetDriftDetectsWeakening(t *testing.T) {
+func TestRulesetDriftWeakeningAndTolerance(t *testing.T) {
 	cases := []struct {
 		name   string
 		weaken func(live map[string]any)
@@ -286,8 +286,13 @@ func TestApplyTwiceIsIdempotent(t *testing.T) {
 	if len(fake.Writes) != 0 {
 		t.Errorf("second apply wrote %v, want nothing", fake.Writes)
 	}
-	if !strings.Contains(log.String(), "kept existing secret IDP_STATE_PASSPHRASE") {
-		t.Errorf("log = %q, want it to say existing secrets were kept (they cannot be compared)", log.String())
+	for _, want := range []string{
+		"kept existing secret IDP_STATE_PASSPHRASE",
+		"kept existing secret idp-write/IDP_WRITER_PRIVATE_KEY",
+	} {
+		if !strings.Contains(log.String(), want) {
+			t.Errorf("log = %q, want it to contain %q (existing secrets cannot be compared)", log.String(), want)
+		}
 	}
 }
 

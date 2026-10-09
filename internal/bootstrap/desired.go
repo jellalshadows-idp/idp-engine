@@ -49,8 +49,8 @@ type Rule struct {
 
 // MainRuleset protects the claims repo's default branch: PR, idp-gate,
 // up to date, no force push, no deletion, and no bypass at all (spec §7.4).
-// Approval of applies lives in the idp-approval environment, so PRs need
-// zero review approvals here.
+// PRs need zero review approvals here because applies are approved through
+// the idp-approval environment instead.
 func MainRuleset() Ruleset {
 	return Ruleset{
 		Name:         "idp-main",
@@ -95,6 +95,11 @@ func WetRuleset(writerAppID int64) Ruleset {
 	}
 }
 
+// DefaultBranch is the claims repo's default branch. The repo is created with
+// auto_init, whose default branch is main unless the org overrides it; the
+// environments' deployment branch policy uses it.
+const DefaultBranch = "main"
+
 // Environment is the desired shape of one deployment environment.
 type Environment struct {
 	Name        string
@@ -106,8 +111,8 @@ type Environment struct {
 // (writer key, no reviewers), both restricted to main (spec §6.2, §7.3).
 func Environments(cfg Config) []Environment {
 	return []Environment{
-		{Name: EnvApproval, ReviewerIDs: []int64{cfg.ApproverID}, Branch: "main"},
-		{Name: EnvWrite, ReviewerIDs: []int64{}, Branch: "main"},
+		{Name: EnvApproval, ReviewerIDs: []int64{cfg.ApproverID}, Branch: DefaultBranch},
+		{Name: EnvWrite, ReviewerIDs: []int64{}, Branch: DefaultBranch},
 	}
 }
 
