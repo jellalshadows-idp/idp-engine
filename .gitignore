@@ -1,0 +1,5 @@
+# OpenTofu working files (tofu init / tofu test in module directories)
+.terraform/
+modules/**/.terraform.lock.hcl
+# Local output of `idp render`
+/rendered/
