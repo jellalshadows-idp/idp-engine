@@ -58,6 +58,8 @@ func (b *Bootstrapper) checkOrg(ctx context.Context, f *findings) error {
 			AppSlug string `json:"app_slug"`
 		} `json:"installations"`
 	}
+	// per_page=100 is a single page by design: a Free org has few App installations,
+	// so pagination is intentionally not implemented.
 	if err := b.API.Get(ctx, "/orgs/"+b.Cfg.Org+"/installations?per_page=100", &inst); err != nil {
 		return orgAdminHint(err)
 	}
