@@ -44,6 +44,9 @@ var (
 	reSecret      = regexp.MustCompile(`^/repos/[^/]+/[^/]+/(environments/[^/]+/|actions/)secrets/[^/]+$`)
 	reVariable    = regexp.MustCompile(`^/repos/[^/]+/[^/]+/(environments/[^/]+/|actions/)variables/[^/]+$`)
 
+	reIssueComment   = regexp.MustCompile(`^(/repos/[^/]+/[^/]+)/issues/comments/(\d+)$`)
+	reIssue          = regexp.MustCompile(`^(/repos/[^/]+/[^/]+/issues)/(\d+)$`)
+	reLabels         = regexp.MustCompile(`^/repos/[^/]+/[^/]+/labels$`)
 	reIssueComments  = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/\d+/comments$`)
 	reIssues         = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues$`)
 	rePullsForCommit = regexp.MustCompile(`^/repos/[^/]+/[^/]+/commits/[^/]+/pulls$`)
@@ -280,6 +283,53 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 		method == http.MethodPatch && reVariable.MatchString(path):
 		f.Objects[path] = body
 		return http.StatusNoContent, nil
+	case method == http.MethodPost && reIssueComments.MatchString(path):
+		f.nextID++
+		comment := map[string]any{"id": f.nextID, "body": body["body"], "user": f.Actor}
+		f.Lists[path] = append(f.Lists[path], comment)
+		return http.StatusCreated, comment
+	case method == http.MethodPatch && reIssueComment.MatchString(path):
+		m := reIssueComment.FindStringSubmatch(path)
+		for listPath, items := range f.Lists {
+			if !strings.HasPrefix(listPath, m[1]+"/issues/") || !strings.HasSuffix(listPath, "/comments") {
+				continue
+			}
+			for _, it := range items {
+				c, _ := it.(map[string]any)
+				if strconv.FormatInt(int64(toFloat(c["id"])), 10) == m[2] {
+					c["body"] = body["body"]
+					return http.StatusOK, c
+				}
+			}
+		}
+		return notFound()
+	case method == http.MethodPost && reIssues.MatchString(path):
+		labels := []any{}
+		for _, l := range asList(body["labels"]) {
+			labels = append(labels, map[string]any{"name": l})
+		}
+		issue := map[string]any{"number": len(f.Lists[path]) + 1, "title": body["title"], "body": body["body"], "state": "open", "labels": labels}
+		f.Lists[path] = append(f.Lists[path], issue)
+		return http.StatusCreated, issue
+	case method == http.MethodPatch && reIssue.MatchString(path):
+		m := reIssue.FindStringSubmatch(path)
+		for _, it := range f.Lists[m[1]] {
+			is, _ := it.(map[string]any)
+			if strconv.Itoa(int(toFloat(is["number"]))) == m[2] {
+				for k, v := range body {
+					is[k] = v
+				}
+				return http.StatusOK, is
+			}
+		}
+		return notFound()
+	case method == http.MethodPost && reLabels.MatchString(path):
+		name, ok := f.stringField(method, path, body, "name")
+		if !ok {
+			return http.StatusBadRequest, map[string]any{}
+		}
+		f.Objects[path+"/"+name] = body
+		return http.StatusCreated, body
 	case method == http.MethodGet:
 		obj, ok := f.Objects[path]
 		if !ok {

@@ -17,7 +17,9 @@ Commands:
   diff            List the stacks whose render differs from the wet branch
   plan-summary    Summarize OpenTofu plans as a PR comment and a fingerprint
   gate            Decide whether a reconcile applies automatically or waits for approval
-  bootstrap       Create or verify the protections an org needs before the IDP runs
+  comment         Create or update the sticky plan comment on a pull request
+  issue           Open or close a labelled issue (drift, failed wet pushes)
+  bootstrap      Create or verify the protections an org needs before the IDP runs
   help            Show this help
 
 Exit codes: 0 ok, 1 the command failed, 2 usage error,
@@ -47,6 +49,10 @@ func Run(args []string, stdout, stderr io.Writer, env Env) int {
 		return runPlanSummary(args[1:], stdout, stderr, env)
 	case "gate":
 		return runGate(args[1:], stdout, stderr, env)
+	case "comment":
+		return runComment(args[1:], stdout, stderr, env)
+	case "issue":
+		return runIssue(args[1:], stdout, stderr, env)
 	case "bootstrap":
 		return runBootstrap(args[1:], stdout, stderr, env)
 	default:
