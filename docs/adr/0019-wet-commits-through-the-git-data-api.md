@@ -24,6 +24,12 @@ Only the writer App may update `wet` (ruleset `idp-wet`).
 4. Create one tree on top of the old one, one commit, and update the ref **without force**.
 5. Nothing changed → no commit.
 
+Safeguards:
+
+- `--root` must exist and be a directory.
+- A synced path that is a single file on the branch is never deleted; if it is missing locally that is an error.
+- `.terraform` paths are rejected.
+
 ## Consequences
 
 ### Positive

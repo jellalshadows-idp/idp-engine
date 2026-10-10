@@ -4,7 +4,7 @@ The engine of an internal developer platform (IDP) that reconciles on **GitHub A
 
 > **Status:** Phase 1a is complete: `idp validate` and `idp render` turn a claims repo into a validated GitHub stack, backed by the tested `github/group` and `github/component` modules; see the [phase 1a log](docs/phases/phase-1a.md). Phase 1b (pipelines) is next, so nothing is reconciled automatically yet.
 
-**What exists today:** `idp-claims` and `idp-claims-e2e` are bootstrapped and protected. Phase 1 (pipelines) is next.
+**What exists today:** `idp-claims` and `idp-claims-e2e` are bootstrapped and protected. Phase 1b (pipeline commands) is complete on its branch; Phase 1c (reusable workflows) is next.
 
 - Design: [docs/superpowers/specs/2026-10-08-idp-on-actions-design.md](docs/superpowers/specs/2026-10-08-idp-on-actions-design.md)
 - Decisions: [docs/adr/](docs/adr/)

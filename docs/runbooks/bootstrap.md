@@ -80,9 +80,10 @@ go run ./cmd/idp bootstrap check `
 ```
 
 Expected: `bootstrap check: no drift` and exit code 0.
+
 Drift is reported line by line and exits **3**. A check that could not run (network, token, missing repo access) exits **1** ([ADR-0016](../adr/0016-exit-codes.md)).
 
-Run `check` with an org owner token (or any token with write access to the claims repo). GitHub only returns a ruleset's `bypass_actors` to callers with write access, so with a read-only token `check` reports `$.bypass_actors (not returned to this token; ...)` as drift instead of passing silently (final-review finding I3; the drift-workflow token strategy is decided in Phase 1).
+Run `check` with an org owner token (or any token with write access to the claims repo). GitHub only returns a ruleset's `bypass_actors` to callers with write access, so with a read-only token `check` reports `$.bypass_actors (not returned to this token; ...)` as drift instead of passing silently (see [ADR-0017](../adr/0017-drift-check-token.md) for the token the drift workflow uses).
 
 ## Check from a workflow
 

@@ -14,7 +14,7 @@ The daily drift workflow (spec §6.4) runs `idp bootstrap check` unattended. Two
 ## Decision
 
 - **Token.** Drift runs `check` with the **reader** token and `--allow-hidden-bypass`. A ruleset whose `bypass_actors` the token cannot see is reported as a *notice* ("not verifiable with this token"), not as drift. Everything else is verified as before.
-- **Identities.** `idp bootstrap apply` records them in a repository variable, `IDP_BOOTSTRAP`, as compact JSON: `{"approverId":42,"reader":{"id":1,"clientId":"Iv-…","slug":"…-reader"},"writer":{"id":2,"clientId":"Iv-…","slug":"…-writer"}}`. Nothing in it is secret. `check` verifies the variable like any other.
+- **Identities.** `idp bootstrap apply` records them in a repository variable, `IDP_BOOTSTRAP`, as compact JSON: `{"approverId":42,"reader":{"id":1,"clientId":"Iv-…","slug":"…-reader"},"writer":{"id":2,"clientId":"Iv-…","slug":"…-writer"}}`. Nothing in it is secret. `check` verifies the variable like any other, except that with `--params-env` the variable is compared against itself, so it is the owner-run `check` (file mode) that verifies it.
 - **Reading the identities.** `idp bootstrap check --params-env IDP_BOOTSTRAP` reads the identities from that environment variable instead of from `--approver/--reader/--writer`.
 - **Owner check.** Bypass lists stay verified by the owner-run `check`, which uses an owner token (runbook), and by every `apply`.
 
