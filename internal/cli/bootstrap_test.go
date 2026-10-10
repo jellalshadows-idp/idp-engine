@@ -210,3 +210,53 @@ func TestIsLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckFromParamsEnvWithHiddenBypass(t *testing.T) {
+	f := newE2E(t)
+	if code, _, stderr := f.run(f.env(nil), "apply", "--passphrase-file", f.pass); code != 0 {
+		t.Fatalf("apply exit %d (stderr %q)", code, stderr)
+	}
+	f.fake.Objects["/orgs/acme/installations"] = map[string]any{"total_count": 2, "installations": []any{
+		map[string]any{"app_slug": "acme-reader"}, map[string]any{"app_slug": "acme-writer"},
+	}}
+	for _, name := range []string{"idp-main", "idp-wet"} {
+		delete(f.fake.RulesetByName(name), "bypass_actors")
+	}
+	params := f.fake.Objects["/repos/acme/idp-claims/actions/variables/IDP_BOOTSTRAP"].(map[string]any)["value"].(string)
+	env := f.env(map[string]string{"IDP_BOOTSTRAP": params})
+	base := []string{"bootstrap", "check", "--org", "acme", "--claims-repo", "idp-claims", "--params-env", "IDP_BOOTSTRAP"}
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(base, &stdout, &stderr, env); code != 3 {
+		t.Errorf("strict check exit %d, want 3 (stdout %q, stderr %q)", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(append(base, "--allow-hidden-bypass"), &stdout, &stderr, env); code != 0 {
+		t.Fatalf("lenient check exit %d, want 0 (stdout %q, stderr %q)", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"notice: ruleset idp-main: bypass actors not verifiable", "bootstrap check: no drift (2 notice(s))"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+}
+
+func TestCheckParamsEnvUsageErrors(t *testing.T) {
+	f := newE2E(t)
+	for name, args := range map[string][]string{
+		"params-env with files":  append([]string{"bootstrap", "check", "--params-env", "IDP_BOOTSTRAP"}, f.args...),
+		"params-env on apply":    {"bootstrap", "apply", "--org", "acme", "--claims-repo", "idp-claims", "--params-env", "IDP_BOOTSTRAP", "--passphrase-file", f.pass},
+		"hidden bypass on apply": append([]string{"bootstrap", "apply", "--allow-hidden-bypass", "--passphrase-file", f.pass}, f.args...),
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(args, &stdout, &stderr, f.env(nil)); code != 2 {
+			t.Errorf("%s: exit %d, want 2 (stderr %q)", name, code, stderr.String())
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"bootstrap", "check", "--org", "acme", "--claims-repo", "idp-claims", "--params-env", "IDP_BOOTSTRAP"}, &stdout, &stderr, f.env(nil))
+	if code != 1 || !strings.Contains(stderr.String(), "IDP_BOOTSTRAP is empty") {
+		t.Errorf("empty params env: exit %d, stderr %q", code, stderr.String())
+	}
+}

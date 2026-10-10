@@ -201,3 +201,27 @@ func TestValidatePassphrase(t *testing.T) {
 		}
 	}
 }
+
+func TestParamsRoundTrip(t *testing.T) {
+	p := validConfig().Params()
+	want := `{"approverId":42,"reader":{"id":1,"clientId":"Iv-reader","slug":"acme-reader"},"writer":{"id":2,"clientId":"Iv-writer","slug":"acme-writer"}}`
+	if p.String() != want {
+		t.Errorf("String = %s, want %s", p.String(), want)
+	}
+	back, err := ParseParams(p.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := back.Config("acme", "idp-claims")
+	if err := cfg.ValidateCheck(); err != nil {
+		t.Errorf("config from params does not validate for check: %v", err)
+	}
+	if cfg.Writer.ID != 2 || cfg.Reader.Slug != "acme-reader" || cfg.ApproverID != 42 || cfg.Writer.PrivateKey != "" {
+		t.Errorf("config = %+v", cfg)
+	}
+	for _, bad := range []string{"", "{", `{"approverId":1,"extra":true}`} {
+		if _, err := ParseParams(bad); err == nil {
+			t.Errorf("ParseParams(%q) succeeded, want an error", bad)
+		}
+	}
+}

@@ -15,6 +15,10 @@ type Bootstrapper struct {
 	API *ghapi.Client
 	Cfg Config
 	Log io.Writer // one line per change
+
+	// AllowHiddenBypass reports ruleset bypass actors the token cannot see as
+	// notices instead of drift, for read-only tokens (drift workflow, ADR-0017).
+	AllowHiddenBypass bool
 }
 
 // Apply makes the org match the desired state. It is safe to run any number of
@@ -298,6 +302,7 @@ func (b *Bootstrapper) variableSpecs() []variableSpec {
 	return []variableSpec{
 		{scope: "", name: VarReaderClient, value: b.Cfg.Reader.ClientID},
 		{scope: EnvWrite, name: VarWriterClient, value: b.Cfg.Writer.ClientID},
+		{scope: "", name: VarParams, value: b.Cfg.Params().String()},
 	}
 }
 

@@ -84,6 +84,17 @@ Drift is reported line by line and exits **3**. A check that could not run (netw
 
 Run `check` with an org owner token (or any token with write access to the claims repo). GitHub only returns a ruleset's `bypass_actors` to callers with write access, so with a read-only token `check` reports `$.bypass_actors (not returned to this token; ...)` as drift instead of passing silently (final-review finding I3; the drift-workflow token strategy is decided in Phase 1).
 
+## Check from a workflow
+
+`apply` records the bootstrap identity in the repository variable `IDP_BOOTSTRAP`: the App ids, client ids and slugs, and the approver's user id. None of it is secret. A workflow can then run `check` without the local App files:
+
+```bash
+IDP_BOOTSTRAP='<the variable value>' GH_TOKEN=<reader token> go run ./cmd/idp bootstrap check \
+  --org <org> --claims-repo <claims-repo> --params-env IDP_BOOTSTRAP --allow-hidden-bypass
+```
+
+`--allow-hidden-bypass` exists for read-only tokens: GitHub hides ruleset bypass actors from them, so those lists are printed as `notice:` lines instead of drift ([ADR-0017](../adr/0017-drift-check-token.md)). An owner-token `check`, as in step 4, still verifies them.
+
 ## After bootstrapping
 
 Once every claims repo you intend to bootstrap is done and `check` is clean, delete the local `.pem` files and the passphrase files. The keys and the passphrase now live in GitHub secrets and your password manager.

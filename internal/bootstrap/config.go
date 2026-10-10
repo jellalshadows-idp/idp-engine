@@ -151,6 +151,57 @@ func ReadPassphrase(path string) (string, error) {
 	return p, nil
 }
 
+// AppIdentity is the public part of an App's credentials.
+type AppIdentity struct {
+	ID       int64  `json:"id"`
+	ClientID string `json:"clientId"`
+	Slug     string `json:"slug"`
+}
+
+// Params is the non-secret identity of a bootstrap. apply records it in the
+// claims repo as variable IDP_BOOTSTRAP, so the drift workflow can run check
+// without the local App files (ADR-0017).
+type Params struct {
+	ApproverID int64       `json:"approverId"`
+	Reader     AppIdentity `json:"reader"`
+	Writer     AppIdentity `json:"writer"`
+}
+
+// Params returns the identity part of c.
+func (c Config) Params() Params {
+	return Params{
+		ApproverID: c.ApproverID,
+		Reader:     AppIdentity{ID: c.Reader.ID, ClientID: c.Reader.ClientID, Slug: c.Reader.Slug},
+		Writer:     AppIdentity{ID: c.Writer.ID, ClientID: c.Writer.ClientID, Slug: c.Writer.Slug},
+	}
+}
+
+// String is the variable value: compact JSON with a fixed field order.
+func (p Params) String() string {
+	b, _ := json.Marshal(p) // a struct of ints and strings always marshals
+	return string(b)
+}
+
+// ParseParams reads an IDP_BOOTSTRAP value; unknown fields are rejected.
+func ParseParams(s string) (Params, error) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.DisallowUnknownFields()
+	var p Params
+	if err := dec.Decode(&p); err != nil {
+		return Params{}, fmt.Errorf("parse %s: %w", VarParams, err)
+	}
+	return p, nil
+}
+
+// Config returns the check configuration these params describe (no keys).
+func (p Params) Config(org, repo string) Config {
+	return Config{
+		Org: org, ClaimsRepo: repo, ApproverID: p.ApproverID,
+		Reader: AppCredentials{ID: p.Reader.ID, ClientID: p.Reader.ClientID, Slug: p.Reader.Slug},
+		Writer: AppCredentials{ID: p.Writer.ID, ClientID: p.Writer.ClientID, Slug: p.Writer.Slug},
+	}
+}
+
 // UserID resolves a login to its numeric id; environment reviewers need ids.
 func UserID(ctx context.Context, api *ghapi.Client, login string) (int64, error) {
 	var u struct {
