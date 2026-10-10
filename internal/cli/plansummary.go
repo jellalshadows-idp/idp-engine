@@ -32,6 +32,7 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 	fs.SetOutput(stderr)
 	var plans planFlags
 	fs.Var(&plans, "plan", "STACK=FILE: the tofu show -json output of one stack (repeatable)")
+	stacksJSON := fs.String("stacks", "", "JSON array of the affected stacks, as written by idp diff (required; [] for none)")
 	headSHA := fs.String("head-sha", "", "commit the plans are for (40 hex characters)")
 	runURL := fs.String("run-url", "", "link to the workflow run, shown in the comment")
 	commentOut := fs.String("comment-out", "", "write the PR comment Markdown here")
@@ -43,9 +44,22 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintf(stderr, "idp plan-summary: unexpected argument %q\n", fs.Arg(0))
 		return exitUsage
 	}
-	if *commentOut == "" || *fpOut == "" || *headSHA == "" {
-		fmt.Fprintln(stderr, "idp plan-summary: --head-sha, --comment-out and --fingerprint-out are required")
+	if *commentOut == "" || *fpOut == "" || *headSHA == "" || *stacksJSON == "" {
+		fmt.Fprintln(stderr, "idp plan-summary: --stacks, --head-sha, --comment-out and --fingerprint-out are required")
 		return exitUsage
+	}
+	var affected []string
+	if err := json.Unmarshal([]byte(*stacksJSON), &affected); err != nil || affected == nil {
+		fmt.Fprintf(stderr, "idp plan-summary: --stacks must be a JSON array of stack names, got %q\n", *stacksJSON)
+		return exitUsage
+	}
+	listed := map[string]bool{}
+	for _, s := range affected {
+		if s == "" || listed[s] {
+			fmt.Fprintf(stderr, "idp plan-summary: --stacks has an empty or duplicate stack name %q\n", s)
+			return exitUsage
+		}
+		listed[s] = true
 	}
 	if !plan.ValidSHA(*headSHA) {
 		fmt.Fprintf(stderr, "idp plan-summary: --head-sha %q is not a full commit SHA\n", *headSHA)
@@ -59,6 +73,16 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 			return exitUsage
 		}
 		seen[stack] = true
+		if !listed[stack] {
+			fmt.Fprintf(stderr, "idp plan-summary: --plan %q is not in --stacks\n", stack)
+			return exitUsage
+		}
+	}
+	for _, s := range affected {
+		if !seen[s] {
+			fmt.Fprintf(stderr, "idp plan-summary: stack %q is affected but has no --plan\n", s)
+			return exitUsage
+		}
 	}
 	parsed := []*plan.Plan{}
 	for _, entry := range plans {

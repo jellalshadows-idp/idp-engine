@@ -15,7 +15,7 @@ Other environment variables:
 
 - `IDP_GITHUB_API` overrides the GitHub API base URL (used by tests).
 - `GITHUB_ACTIONS=true` turns on error annotations; `GITHUB_WORKSPACE` is the directory annotation paths are made relative to.
-- When `GITHUB_OUTPUT`, `GITHUB_ENV` or `GITHUB_STEP_SUMMARY` is empty or unset (outside Actions), writing to it is skipped silently.
+- When `GITHUB_OUTPUT` or `GITHUB_STEP_SUMMARY` is empty or unset (outside Actions), writing to it is skipped silently. `GITHUB_ENV` is the exception: `encryption-env` requires it and exits 2 without it.
 
 Commands are listed in the order of `idp help`. Flags are written as `--name VALUE`; flags in `[brackets]` are optional.
 
@@ -90,9 +90,10 @@ Exit codes: 0 done; 1 the trees could not be read or `--new` is not a render; 2 
 Summarizes OpenTofu plans as a pull request comment and a fingerprint.
 
 ```text
-idp plan-summary --head-sha SHA --comment-out FILE --fingerprint-out FILE [--run-url URL] [--plan STACK=FILE]...
+idp plan-summary --stacks JSON --head-sha SHA --comment-out FILE --fingerprint-out FILE [--run-url URL] [--plan STACK=FILE]...
 ```
 
+- `--stacks`: required. The `affected` JSON array written by `idp diff` (for example `["github"]`, or `[]` when nothing is affected). The set of `--plan` stacks must equal this set exactly. A missing plan must fail here, never read as "no changes": the gate and the reconcile would otherwise decide on a partial view and apply a plan nobody saw.
 - `--head-sha`: the commit the plans are for, 40 hex characters.
 - `--comment-out`: where to write the comment Markdown.
 - `--fingerprint-out`: where to write the fingerprint JSON.
@@ -108,7 +109,7 @@ Writes:
 - One `STACK: +create ~update -delete ±replace` line per stack, and a `plan-summary: N change(s), destructive: BOOL` line.
 - Step outputs `changes` (the number of changes) and `destructive` (`true` or `false`: any delete or replace).
 
-Exit codes: 0 done; 1 a plan could not be read or parsed, or a file could not be written; 2 usage error (a missing flag, a `--head-sha` that is not a full SHA, a stack given twice).
+Exit codes: 0 done; 1 a plan could not be read or parsed, or a file could not be written; 2 usage error (a missing flag, a `--head-sha` that is not a full SHA, a stack given twice, `--stacks` that is not a JSON array of unique names, an affected stack with no `--plan`, a `--plan` for a stack that is not in `--stacks`).
 
 ## gate
 
@@ -134,7 +135,7 @@ The rules, in order ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)):
 4. A change missing from the same stack of the trusted fingerprint: `approval`.
 5. Otherwise: `auto`.
 
-A fingerprint is trusted only when it is in the newest comment that contains `<!-- idp-plan -->`, that comment was authored by `github-actions[bot]` (type `Bot`), it is on the pull request merged as `--sha`, and the marker's SHA equals that pull request's head SHA.
+A fingerprint is trusted only when it is in the newest comment written by `github-actions[bot]` (type `Bot`) that contains `<!-- idp-plan -->`, on the pull request whose merge commit is `--sha`, and only when the marker's SHA equals that pull request's head SHA. Comments by anyone else are ignored, so a stranger cannot even force an approval prompt.
 
 The gate reports its answer through the output. It exits 0 for both decisions.
 
