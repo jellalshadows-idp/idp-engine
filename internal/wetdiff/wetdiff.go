@@ -83,12 +83,16 @@ func Diff(newRoot, wetRoot string, all bool) (Result, error) {
 // .terraform directories are skipped; files outside any stack (the render
 // marker) are ignored. A missing root returns an error wrapping fs.ErrNotExist.
 func readStacks(root string) (map[string]stackFiles, error) {
-	if _, err := os.Stat(root); err != nil {
+	info, err := os.Stat(root)
+	if err != nil {
 		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s: not a directory", root)
 	}
 	var dirs []string
 	files := map[string][]byte{}
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

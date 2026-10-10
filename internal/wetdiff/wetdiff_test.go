@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -120,6 +121,23 @@ func TestDiffNoStacksGivesEmptyLists(t *testing.T) {
 	}
 	if got.Stacks == nil || got.Affected == nil || len(got.Stacks) != 0 || len(got.Affected) != 0 {
 		t.Errorf("Diff = %#v, want empty, non-nil lists", got)
+	}
+}
+
+func TestDiffRejectsFilesAsRoots(t *testing.T) {
+	dir := t.TempDir()
+	validNew := filepath.Join(dir, "new")
+	write(t, validNew, map[string]string{"github/main.tf.json": "{}"})
+	fileRoot := filepath.Join(dir, "file")
+	if err := os.WriteFile(fileRoot, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Diff(fileRoot, t.TempDir(), false); err == nil {
+		t.Error("want an error for a regular file as newRoot")
+	}
+	_, err := Diff(validNew, fileRoot, false)
+	if err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("wetRoot as file: err = %v, want 'not a directory'", err)
 	}
 }
 

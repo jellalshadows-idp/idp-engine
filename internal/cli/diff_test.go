@@ -11,6 +11,7 @@ import (
 func TestDiffCommand(t *testing.T) {
 	dir := t.TempDir()
 	writeFileAll(t, filepath.Join(dir, "new", "github", "main.tf.json"), "{}")
+	writeFileAll(t, filepath.Join(dir, "new", ".idp-rendered"), "marker")
 	out := filepath.Join(dir, "github-output")
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"diff", "--new", filepath.Join(dir, "new"), "--wet", filepath.Join(dir, "wet")}, &stdout, &stderr, envOf(map[string]string{"GITHUB_OUTPUT": out}))
@@ -26,6 +27,19 @@ func TestDiffCommand(t *testing.T) {
 	}
 	if string(got) != "affected=[\"github\"]\n" {
 		t.Errorf("GITHUB_OUTPUT = %q", got)
+	}
+}
+
+func TestDiffRequiresARenderMarker(t *testing.T) {
+	dir := t.TempDir()
+	writeFileAll(t, filepath.Join(dir, "new", "github", "main.tf.json"), "{}")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"diff", "--new", filepath.Join(dir, "new"), "--wet", filepath.Join(dir, "wet")}, &stdout, &stderr, noEnv)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "is not an idp render") {
+		t.Errorf("stderr = %q", stderr.String())
 	}
 }
 
