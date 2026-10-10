@@ -62,7 +62,7 @@ The workflows plan is written after this one ships. Its jobs then call commands 
 - No `go build`. Use `go test ./...`, `go vet ./...` and `gofmt -l .` (which must print nothing); `-race` runs only in CI.
 - Shell rule: never use `cat`, `grep`, `find`, `sed` or `ls`, and never write files with shell heredocs. Use the Read/Write/Edit tools, `rg` and `gh`.
 - Docs are in English.
-- Owner rule: docs describe the platform on its own terms. They never name another product as inspiration or comparison, so `rg -i "firestartr|prefapp"` must stay empty.
+- Owner rule: docs describe the platform on its own terms. They never name another product as inspiration or comparison. The controller gives each dispatch the check that enforces this.
 
 ## Review Focus
 
@@ -449,7 +449,7 @@ Phase 1 is delivered as four plans, each shipping working software: **1a** claim
 
 - [ ] **Step 9: Check the docs and commit**
 
-Run: `rg -n -i "firestartr|prefapp" docs` (expected: no output).
+Run the owner-rule check the controller gave you over `docs` (expected: no output).
 
 ```bash
 git add docs
@@ -5177,7 +5177,7 @@ Under the `- Claims reference:` line, add: `- CLI reference: [docs/cli.md](docs/
 
 - [ ] **Step 3: Check and commit**
 
-Run: `rg -n -i "firestartr|prefapp" docs README.md` (expected: no output).
+Run the owner-rule check the controller gave you over `docs` and `README.md` (expected: no output).
 
 ```bash
 git add docs/cli.md README.md
