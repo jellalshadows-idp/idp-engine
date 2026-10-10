@@ -50,6 +50,7 @@ var (
 	reIssueComments  = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/\d+/comments$`)
 	reIssues         = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues$`)
 	rePullsForCommit = regexp.MustCompile(`^/repos/[^/]+/[^/]+/commits/[^/]+/pulls$`)
+	reRefUpdate      = regexp.MustCompile(`^(/repos/[^/]+/[^/]+)/git/refs/(heads/.+)$`)
 )
 
 // Request is one recorded write.
@@ -86,6 +87,8 @@ type Server struct {
 	Requests []Request
 	// Actor is the user the fake attributes the comments it creates to.
 	Actor map[string]any
+	// RejectRefUpdates lists ref paths whose PATCH answers 422 (not a fast forward).
+	RejectRefUpdates map[string]bool
 
 	t      testing.TB
 	mu     sync.Mutex
@@ -97,14 +100,15 @@ type Server struct {
 func New(t testing.TB, org string) *Server {
 	t.Helper()
 	f := &Server{
-		t:         t,
-		Objects:   map[string]any{},
-		Rulesets:  map[int64]map[string]any{},
-		Forbidden: map[string]bool{},
-		Queries:   map[string]string{},
-		Lists:     map[string][]any{},
-		Actor:     map[string]any{"login": "github-actions[bot]", "type": "Bot"},
-		nextID:    100,
+		t:                t,
+		Objects:          map[string]any{},
+		Rulesets:         map[int64]map[string]any{},
+		Forbidden:        map[string]bool{},
+		Queries:          map[string]string{},
+		Lists:            map[string][]any{},
+		Actor:            map[string]any{"login": "github-actions[bot]", "type": "Bot"},
+		RejectRefUpdates: map[string]bool{},
+		nextID:           100,
 	}
 	f.Objects["/orgs/"+org+"/actions/permissions/workflow"] = map[string]any{
 		"default_workflow_permissions": "write", "can_approve_pull_request_reviews": false,
@@ -330,6 +334,18 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 		}
 		f.Objects[path+"/"+name] = body
 		return http.StatusCreated, body
+	case method == http.MethodPost && strings.HasSuffix(path, "/git/blobs"):
+		f.nextID++
+		sha := "blob-" + strconv.FormatInt(f.nextID, 10)
+		f.Objects[path+"/"+sha] = body
+		return http.StatusCreated, map[string]any{"sha": sha}
+	case method == http.MethodPatch && reRefUpdate.MatchString(path):
+		if f.RejectRefUpdates[path] {
+			return http.StatusUnprocessableEntity, map[string]any{"message": "Update is not a fast forward"}
+		}
+		m := reRefUpdate.FindStringSubmatch(path)
+		f.Objects[m[1]+"/git/ref/"+m[2]] = map[string]any{"ref": "refs/" + m[2], "object": map[string]any{"sha": body["sha"]}}
+		return http.StatusOK, f.Objects[m[1]+"/git/ref/"+m[2]]
 	case method == http.MethodGet:
 		obj, ok := f.Objects[path]
 		if !ok {
