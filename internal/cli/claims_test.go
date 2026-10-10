@@ -54,8 +54,8 @@ func TestValidateReportsProblemsAndAnnotations(t *testing.T) {
 	bad := strings.Replace(cliComponent, "[dev]", "[staging]", 1)
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"validate", "--dir", claimsRepo(t, bad)}, &stdout, &stderr, envOf(map[string]string{"GITHUB_ACTIONS": "true"}))
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
+	if code != 3 {
+		t.Fatalf("exit %d, want 3", code)
 	}
 	if !strings.Contains(stderr.String(), `claims/components/api.yaml:5: environment "staging" is not defined in config/platform.yaml`) || !strings.Contains(stderr.String(), "validate: 1 problem(s)") {
 		t.Errorf("stderr = %q", stderr.String())
@@ -139,11 +139,52 @@ func TestRenderStopsOnDiagnostics(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "rendered")
 	bad := strings.Replace(cliComponent, "[dev]", "[staging]", 1)
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"render", "--dir", claimsRepo(t, bad), "--out", out, "--module-ref", "v1"}, &stdout, &stderr, noEnv); code != 1 {
-		t.Fatalf("exit %d, want 1", code)
+	if code := Run([]string{"render", "--dir", claimsRepo(t, bad), "--out", out, "--module-ref", "v1"}, &stdout, &stderr, noEnv); code != 3 {
+		t.Fatalf("exit %d, want 3", code)
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Error("render wrote output despite diagnostics")
+	}
+}
+
+func TestValidateAnnotationsAreRelativeToTheWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, "claims-repo")
+	bad := strings.Replace(cliComponent, "[dev]", "[staging]", 1)
+	for rel, content := range map[string]string{
+		"config/platform.yaml":        cliPlatform,
+		"claims/groups/platform.yaml": cliGroup,
+		"claims/components/api.yaml":  bad,
+	} {
+		writeFileAll(t, filepath.Join(dir, filepath.FromSlash(rel)), content)
+	}
+	var stdout, stderr bytes.Buffer
+	env := envOf(map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_WORKSPACE": workspace})
+	if code := Run([]string{"validate", "--dir", dir}, &stdout, &stderr, env); code != 3 {
+		t.Fatalf("exit %d, want 3", code)
+	}
+	if !strings.Contains(stdout.String(), "::error file=claims-repo/claims/components/api.yaml,line=5::") {
+		t.Errorf("stdout = %q, want an annotation relative to GITHUB_WORKSPACE", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "claims/components/api.yaml:5:") {
+		t.Errorf("stderr = %q, want the path relative to --dir", stderr.String())
+	}
+}
+
+func TestAnnotationFile(t *testing.T) {
+	root := t.TempDir()
+	tests := []struct {
+		name, workspace, dir, want string
+	}{
+		{"no workspace", "", filepath.Join(root, "x"), "claims/a.yaml"},
+		{"dir is the workspace", root, root, "claims/a.yaml"},
+		{"dir below the workspace", root, filepath.Join(root, "sub", "repo"), "sub/repo/claims/a.yaml"},
+		{"dir outside the workspace", filepath.Join(root, "ws"), filepath.Join(root, "other"), "claims/a.yaml"},
+	}
+	for _, tt := range tests {
+		if got := annotationFile(tt.workspace, tt.dir, "claims/a.yaml"); got != tt.want {
+			t.Errorf("%s: annotationFile = %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }
 

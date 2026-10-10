@@ -89,7 +89,7 @@ The `aws` and `features` fields arrive in Phases 2 and 4. Until then they fail v
 
 ## Validation
 
-`idp validate --dir <claims repo>` reports every problem at once as `file:line: message` (`file: message` when a problem has no line, such as a missing file). Inside GitHub Actions (`GITHUB_ACTIONS=true`) it also prints GitHub annotations, so errors show inline on the PR. It exits 0 when valid, 1 with problems, and 2 on a usage error.
+`idp validate --dir <claims repo>` reports every problem at once as `file:line: message` (`file: message` when a problem has no line, such as a missing file). Inside GitHub Actions (`GITHUB_ACTIONS=true`) it also prints GitHub annotations, so errors show inline on the PR. It exits 0 when the claims are valid, 3 when it found problems, 1 when it could not run (for example an unreadable directory), and 2 on a usage error ([ADR-0016](adr/0016-exit-codes.md)).
 
 ## Rendering
 

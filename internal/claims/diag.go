@@ -6,7 +6,8 @@ package claims
 import (
 	"fmt"
 	"sort"
-	"strings"
+
+	"github.com/jellalshadows-idp/idp-engine/internal/actions"
 )
 
 // Diagnostic is one problem found in a claims repo.
@@ -23,23 +24,11 @@ func (d Diagnostic) String() string {
 	return fmt.Sprintf("%s: %s", d.File, d.Message)
 }
 
-// Annotation formats d as a GitHub Actions error annotation, escaped as the
-// workflow-commands docs require, so the problem shows inline on the PR.
+// Annotation formats d as a GitHub Actions error annotation, so the problem
+// shows inline on the PR.
 func (d Diagnostic) Annotation() string {
-	props := "file=" + escapeProperty(d.File)
-	if d.Line > 0 {
-		props += fmt.Sprintf(",line=%d", d.Line)
-	}
-	return "::error " + props + "::" + escapeData(d.Message)
+	return actions.ErrorAnnotation(d.File, d.Line, "", d.Message)
 }
-
-var (
-	dataEscaper     = strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A")
-	propertyEscaper = strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A", ":", "%3A", ",", "%2C")
-)
-
-func escapeData(s string) string     { return dataEscaper.Replace(s) }
-func escapeProperty(s string) string { return propertyEscaper.Replace(s) }
 
 // sortDiagnostics orders diagnostics by file, line and message, so output is stable.
 func sortDiagnostics(ds []Diagnostic) {

@@ -168,12 +168,12 @@ func TestApplyThenCheckEndToEnd(t *testing.T) {
 	}
 }
 
-func TestCheckExitsOneOnFindings(t *testing.T) {
+func TestCheckExitsThreeOnFindings(t *testing.T) {
 	f := newE2E(t)
 
 	code, stdout, stderr := f.run(f.env(nil), "check")
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1 (stderr %q)", code, stderr)
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3 (stderr %q)", code, stderr)
 	}
 	for _, want := range []string{"repo acme/idp-claims: missing", "finding(s)"} {
 		if !strings.Contains(stdout, want) {

@@ -27,7 +27,7 @@ apply and check read a token from GH_TOKEN or GITHUB_TOKEN (e.g. GH_TOKEN=$(gh a
 func runBootstrap(args []string, stdout, stderr io.Writer, env Env) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, bootstrapUsage)
-		return 2
+		return exitUsage
 	}
 	switch args[0] {
 	case "app":
@@ -38,7 +38,7 @@ func runBootstrap(args []string, stdout, stderr io.Writer, env Env) int {
 		return runBootstrapRepo("check", args[1:], stdout, stderr, env)
 	default:
 		fmt.Fprintf(stderr, "idp bootstrap: unknown subcommand %q\n\n%s", args[0], bootstrapUsage)
-		return 2
+		return exitUsage
 	}
 }
 
@@ -58,7 +58,7 @@ func token(env Env) string {
 
 func fail(stderr io.Writer, err error) int {
 	fmt.Fprintln(stderr, "idp:", err)
-	return 1
+	return exitError
 }
 
 func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env Env) int {
@@ -71,7 +71,7 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 	writerFile := fs.String("writer", "", "writer app <slug>.json")
 	passFile := fs.String("passphrase-file", "", "file with the OpenTofu state passphrase (apply only)")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return exitUsage
 	}
 	required := []struct{ flag, value string }{
 		{"--org", *org}, {"--claims-repo", *repo}, {"--approver", *approver},
@@ -88,12 +88,12 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 	}
 	if len(missing) > 0 {
 		fmt.Fprintf(stderr, "idp bootstrap %s: missing %s\n", mode, strings.Join(missing, ", "))
-		return 2
+		return exitUsage
 	}
 	tok := token(env)
 	if tok == "" {
 		fmt.Fprintln(stderr, "idp bootstrap: set GH_TOKEN or GITHUB_TOKEN (e.g. GH_TOKEN=$(gh auth token))")
-		return 2
+		return exitUsage
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -127,7 +127,7 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 			return fail(stderr, err)
 		}
 		fmt.Fprintln(stdout, "bootstrap apply: done")
-		return 0
+		return exitOK
 	}
 
 	if err := cfg.ValidateCheck(); err != nil {
@@ -143,10 +143,10 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 	}
 	if len(found) > 0 {
 		fmt.Fprintf(stdout, "bootstrap check: %d finding(s)\n", len(found))
-		return 1
+		return exitFindings
 	}
 	fmt.Fprintln(stdout, "bootstrap check: no drift")
-	return 0
+	return exitOK
 }
 
 // isLoopback reports whether addr is host:port with host localhost or a loopback
@@ -172,23 +172,23 @@ func runBootstrapApp(args []string, stdout, stderr io.Writer, env Env) int {
 	outDir := fs.String("out-dir", "", "where to write <slug>.json and <slug>.pem (default ~/.idp/apps)")
 	listen := fs.String("listen", "127.0.0.1:0", "local address for the callback server")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return exitUsage
 	}
 	if *org == "" {
 		fmt.Fprintln(stderr, "idp bootstrap app: --org is required")
-		return 2
+		return exitUsage
 	}
 	if !bootstrap.ValidOrgName(*org) {
 		fmt.Fprintln(stderr, "idp bootstrap app: --org must be a valid GitHub organization name")
-		return 2
+		return exitUsage
 	}
 	if *role != string(bootstrap.RoleReader) && *role != string(bootstrap.RoleWriter) {
 		fmt.Fprintln(stderr, "idp bootstrap app: --role must be reader or writer")
-		return 2
+		return exitUsage
 	}
 	if !isLoopback(*listen) {
 		fmt.Fprintln(stderr, "idp bootstrap app: --listen must be a loopback address (e.g. 127.0.0.1:0)")
-		return 2
+		return exitUsage
 	}
 	dir := *outDir
 	if dir == "" {
@@ -214,5 +214,5 @@ func runBootstrapApp(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	fmt.Fprintf(stdout, "Created %s (id %d). Credentials in %s\n", creds.Slug, creds.ID, dir)
 	fmt.Fprintf(stdout, "Now install it on %s with access to All repositories: https://github.com/apps/%s/installations/new\n", *org, creds.Slug)
-	return 0
+	return exitOK
 }
