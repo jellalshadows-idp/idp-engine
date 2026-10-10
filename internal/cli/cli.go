@@ -15,7 +15,8 @@ Commands:
   validate        Validate a claims repo (schema + semantic checks)
   render          Render a claims repo into OpenTofu stacks
   diff            List the stacks whose render differs from the wet branch
-  bootstrap       Create or verify the protections an org needs before the IDP runs
+  plan-summary    Summarize OpenTofu plans as a PR comment and a fingerprint
+  bootstrap      Create or verify the protections an org needs before the IDP runs
   help            Show this help
 
 Exit codes: 0 ok, 1 the command failed, 2 usage error,
@@ -41,6 +42,8 @@ func Run(args []string, stdout, stderr io.Writer, env Env) int {
 		return runRender(args[1:], stdout, stderr, env)
 	case "diff":
 		return runDiff(args[1:], stdout, stderr, env)
+	case "plan-summary":
+		return runPlanSummary(args[1:], stdout, stderr, env)
 	case "bootstrap":
 		return runBootstrap(args[1:], stdout, stderr, env)
 	default:
