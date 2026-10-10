@@ -56,6 +56,7 @@ func TestFindBotCommentNewestTrustedOnly(t *testing.T) {
 		map[string]any{"id": 2, "body": "<!-- idp-plan --> newer", "user": user(ActionsBot, "Bot")},
 		map[string]any{"id": 3, "body": "<!-- idp-plan --> forged", "user": user("mallory", "User")},
 		map[string]any{"id": 4, "body": "unrelated bot note", "user": user(ActionsBot, "Bot")},
+		map[string]any{"id": 5, "body": "<!-- idp-plan --> same login, wrong type", "user": user(ActionsBot, "User")},
 	}
 	c, err := repo.FindBotComment(context.Background(), 7, "<!-- idp-plan -->")
 	if err != nil {
