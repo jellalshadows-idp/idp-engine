@@ -113,10 +113,17 @@ Each unit has one purpose and a narrow interface.
 
 | `internal/ghapi` | Minimal GitHub REST client with typed errors | GitHub API |
 | `internal/bootstrap` | Org bootstrap: create Apps from manifests, apply and check the protections (§9.2) | `internal/ghapi` |
+| `internal/ghops` | Pull request behind a commit, the bot's sticky plan comment, labelled issues | `internal/ghapi` |
+| `internal/wetpush` | One commit to `wet` through the Git Data API (ADR-0019) | `internal/ghapi` |
+| `internal/actions` | GitHub Actions step outputs, job env, job summary and annotations | — |
 
 CLI subcommands: `idp validate`, `idp fetch`, `idp adopt`, `idp render`,
-`idp diff`, `idp plan-summary`, `idp gate`, `idp feature test`, and
-`idp bootstrap app|apply|check`.
+`idp diff`, `idp plan-summary`, `idp gate`, `idp comment`, `idp issue`,
+`idp wet-push`, `idp encryption-env`, `idp feature test`, and
+`idp bootstrap app|apply|check`. They share one exit-code convention
+(ADR-0016): 0 ok, 1 failed, 2 usage error, 3 found problems. Platform config
+loading lives in `internal/claims` (Phase 1a ruling R-3.3) rather than a
+separate `internal/config`. *(Amendment A4, 2026-10-10.)*
 
 ## 4. Claims model
 
@@ -423,6 +430,9 @@ Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
    - A summary per stack (`+N ~M -D`), with destructive actions flagged.
    - A hidden **fingerprint**: the sorted set of `(address, action)` pairs per
      stack, excluding `no-op` and `read`, stored as `<!-- idp-fingerprint:v1 … -->`.
+   - Marker format: `<!-- idp-fingerprint:v1 sha=<head SHA> data=<base64(gzip(JSON))> -->`.
+     The comment also carries `<!-- idp-plan -->`, and the job edits that one comment
+     instead of adding new ones (ADR-0018). *(Amendment A3, 2026-10-10.)*
 7. **`idp-gate`** is the only required status check, because matrix job names vary.
 
 **PRs from forks** only run validate and render. Plan jobs require
@@ -449,6 +459,10 @@ button. Concurrency: group `idp-wet`, `cancel-in-progress: false`, `queue: max`.
         stack missing from the PR comment is not a subset.
 
       In any other case, including when no PR is found, it decides **`approval`**.
+      With no changes at all the gate decides **`auto`**: there is nothing to apply.
+      The gate trusts only the newest `<!-- idp-plan -->` comment written by
+      `github-actions[bot]` on the merged PR, and only when its marker `sha` equals
+      the PR's head SHA (ADR-0018). *(Amendment A3, 2026-10-10.)*
       Example: A and B merge back to back. B's PR plan showed A+B. After A applies,
       B's plan shows only B, which is a subset, so it runs automatically.
 2. **approve** runs only when `gate == approval`. It references environment
@@ -472,6 +486,8 @@ button. Concurrency: group `idp-wet`, `cancel-in-progress: false`, `queue: max`.
    2. It runs `state rm` for `userManaged` files created in this apply, and updates
       the manifest.
    3. It makes **one commit to `wet`**, with `if: always()`:
+      - The commit is made with `idp wet-push` through the Git Data API, so it is
+        signed by GitHub and attributed to the writer App (ADR-0019).
       - the GitHub tfstate, **always**, even if the apply failed, because real
         resources may have changed;
       - `rendered/` for the stacks that applied successfully;
@@ -503,7 +519,10 @@ Any delete or replace goes through `idp-approval`.
 ### 6.4 Drift (daily cron)
 - It runs on `cron: '23 5 * * *'`, avoiding the top of the hour, and in concurrency
   group `idp-wet`, so it never reads state in the middle of an apply.
-- It plans the GitHub stack with `idp-reader` and runs `idp bootstrap check` (§9.2).
+- It plans the GitHub stack with `idp-reader` and runs
+  `idp bootstrap check --params-env IDP_BOOTSTRAP --allow-hidden-bypass` (§9.2)
+  with the same reader token. Ruleset bypass lists, which a read-only token
+  cannot see, are reported as notices, not drift (ADR-0017). *(Amendment A5, 2026-10-10.)*
 - If it finds drift, it creates or updates **one** issue labeled `drift` with the
   plan. If there is no drift, it closes that issue. Issues are handled with
   `GITHUB_TOKEN` and `issues: write`.
@@ -527,6 +546,9 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
   The key material (a PBKDF2 passphrase of at least 16 characters, with AES-GCM)
   comes from `TF_ENCRYPTION`, filled from a secret. If the variable is missing,
   OpenTofu refuses to write plaintext.
+- Workflows get `TF_ENCRYPTION` from `idp encryption-env`, which validates
+  `IDP_STATE_PASSPHRASE` first and fails with a message naming it. The key
+  provider and method are named `idp`; the name is frozen (ADR-0020).
 - AES-GCM is authenticated encryption, so tampered state fails to decrypt instead
   of being read.
 - **Honest note:** today the GitHub state is almost all public information. The
@@ -695,7 +717,9 @@ desired-vs-actual JSON comparison that `check` needs is natural in Go.
   required reviews in Component repos. It is turned on only when the feature
   lands, and its ADR records the risk.
 - **`idp bootstrap check`** reports drift in these protections. Drift runs it
-  (§6.4).
+  (§6.4). `apply` also records the bootstrap identity (App ids, slugs, client
+  ids, approver) in the variable `IDP_BOOTSTRAP`, so `check --params-env
+  IDP_BOOTSTRAP` can run in a workflow without the local App files (ADR-0017).
 - Why not an OpenTofu stack? It would need its own state somewhere: turtles all the
   way down.
 
@@ -733,7 +757,7 @@ use what that phase measured. Each phase ships an engine minor release.
 | 4 → `0.4.0` | Features: `idp-features` + the 3 features, managed and userManaged | Golden tests, plus E2E with one managed and one userManaged file |
 | 5 → `1.0.0` | Polish: complete docs, tested runbooks | An external person bootstraps a new org using only the README |
 
-Phase 1 is delivered as three plans, each shipping working software: **1a** claims → render (validation, the GitHub stack, the `github/group` and `github/component` modules); **1b** pipelines (`diff`, `plan-summary`, `gate`, the reusable workflows, the `wet` commit); **1c** E2E harness and the `v0.1.0` release. *(2026-10-09.)*
+Phase 1 is delivered as four plans, each shipping working software: **1a** claims → render (validation, the GitHub stack, the `github/group` and `github/component` modules); **1b** the pipeline subcommands (`diff`, `plan-summary`, `gate`, `comment`, `issue`, `wet-push`, `encryption-env`, drift-ready `bootstrap check`); **1c** the reusable workflows and a live smoke run in `idp-claims-e2e`; **1d** the E2E harness and the `v0.1.0` release. *(2026-10-09, re-split 2026-10-10.)*
 
 ## 11. Risks (verified in Phase 0 or by E2E)
 

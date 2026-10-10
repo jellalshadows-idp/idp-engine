@@ -11,6 +11,7 @@ const (
 	SecretWriterKey  = "IDP_WRITER_PRIVATE_KEY"
 	VarReaderClient  = "IDP_READER_CLIENT_ID"
 	VarWriterClient  = "IDP_WRITER_CLIENT_ID"
+	VarParams        = "IDP_BOOTSTRAP"
 )
 
 // Ruleset is the part of GitHub's ruleset API that bootstrap owns.

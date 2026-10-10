@@ -76,17 +76,23 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 // Do performs one request. A 404 returns an error wrapping ErrNotFound;
 // any other status >= 300 returns *APIError.
 func (c *Client) Do(ctx context.Context, method, path string, in, out any) error {
+	_, err := c.do(ctx, method, path, in, out)
+	return err
+}
+
+// do is Do, and also returns the response headers.
+func (c *Client) do(ctx context.Context, method, path string, in, out any) (http.Header, error) {
 	var body io.Reader
 	if in != nil {
 		buf, err := json.Marshal(in)
 		if err != nil {
-			return fmt.Errorf("encode %s %s: %w", method, path, err)
+			return nil, fmt.Errorf("encode %s %s: %w", method, path, err)
 		}
 		body = bytes.NewReader(buf)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", apiVersion)
@@ -98,12 +104,12 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", method, path, err)
+		return nil, fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
-		return fmt.Errorf("read %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("read %s %s: %w", method, path, err)
 	}
 	oversized := int64(len(raw)) > maxBodyBytes
 	if oversized {
@@ -112,21 +118,21 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 	// A 404 stays ErrNotFound even when its body is oversized: callers branch on it.
 	if resp.StatusCode == http.StatusNotFound {
 		if msg := strings.TrimSpace(string(raw)); msg != "" {
-			return fmt.Errorf("github %s %s: %w: %s", method, path, ErrNotFound, msg)
+			return nil, fmt.Errorf("github %s %s: %w: %s", method, path, ErrNotFound, msg)
 		}
-		return fmt.Errorf("github %s %s: %w", method, path, ErrNotFound)
+		return nil, fmt.Errorf("github %s %s: %w", method, path, ErrNotFound)
 	}
 	if oversized {
-		return fmt.Errorf("read %s %s: response body exceeds %d bytes", method, path, maxBodyBytes)
+		return nil, fmt.Errorf("read %s %s: response body exceeds %d bytes", method, path, maxBodyBytes)
 	}
 	if resp.StatusCode >= 300 {
-		return &APIError{Method: method, Path: path, Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
+		return nil, &APIError{Method: method, Path: path, Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
 	}
 	if out == nil || len(raw) == 0 {
-		return nil
+		return resp.Header, nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("decode %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("decode %s %s: %w", method, path, err)
 	}
-	return nil
+	return resp.Header, nil
 }

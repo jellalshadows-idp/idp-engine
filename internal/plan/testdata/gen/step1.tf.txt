@@ -1,0 +1,8 @@
+module "group_platform" {
+  source = "./mod"
+  roles  = { alice = "maintainer", bob = "member", carol = "member" }
+}
+
+resource "terraform_data" "replaced" {
+  triggers_replace = "v1"
+}

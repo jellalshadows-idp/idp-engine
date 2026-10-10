@@ -18,7 +18,7 @@ import (
 const bootstrapUsage = `Usage:
   idp bootstrap app   --org ORG --role reader|writer [--out-dir DIR] [--listen ADDR]
   idp bootstrap apply --org ORG --claims-repo REPO --approver LOGIN --reader FILE --writer FILE --passphrase-file FILE
-  idp bootstrap check --org ORG --claims-repo REPO --approver LOGIN --reader FILE --writer FILE
+  idp bootstrap check --org ORG --claims-repo REPO (--approver LOGIN --reader FILE --writer FILE | --params-env NAME) [--allow-hidden-bypass]
 
 FILE for --reader/--writer is the <slug>.json written by "idp bootstrap app".
 apply and check read a token from GH_TOKEN or GITHUB_TOKEN (e.g. GH_TOKEN=$(gh auth token)).
@@ -27,7 +27,7 @@ apply and check read a token from GH_TOKEN or GITHUB_TOKEN (e.g. GH_TOKEN=$(gh a
 func runBootstrap(args []string, stdout, stderr io.Writer, env Env) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, bootstrapUsage)
-		return 2
+		return exitUsage
 	}
 	switch args[0] {
 	case "app":
@@ -38,7 +38,7 @@ func runBootstrap(args []string, stdout, stderr io.Writer, env Env) int {
 		return runBootstrapRepo("check", args[1:], stdout, stderr, env)
 	default:
 		fmt.Fprintf(stderr, "idp bootstrap: unknown subcommand %q\n\n%s", args[0], bootstrapUsage)
-		return 2
+		return exitUsage
 	}
 }
 
@@ -58,7 +58,7 @@ func token(env Env) string {
 
 func fail(stderr io.Writer, err error) int {
 	fmt.Fprintln(stderr, "idp:", err)
-	return 1
+	return exitError
 }
 
 func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env Env) int {
@@ -70,12 +70,25 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 	readerFile := fs.String("reader", "", "reader app <slug>.json")
 	writerFile := fs.String("writer", "", "writer app <slug>.json")
 	passFile := fs.String("passphrase-file", "", "file with the OpenTofu state passphrase (apply only)")
+	paramsEnv := fs.String("params-env", "", "check only: read the bootstrap identity from this environment variable (IDP_BOOTSTRAP in workflows) instead of --approver/--reader/--writer")
+	allowHidden := fs.Bool("allow-hidden-bypass", false, "check only: report ruleset bypass actors this token cannot see as notices, not drift")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return exitUsage
 	}
-	required := []struct{ flag, value string }{
-		{"--org", *org}, {"--claims-repo", *repo}, {"--approver", *approver},
-		{"--reader", *readerFile}, {"--writer", *writerFile},
+	if mode != "check" && (*paramsEnv != "" || *allowHidden) {
+		fmt.Fprintf(stderr, "idp bootstrap %s: --params-env and --allow-hidden-bypass are check-only flags\n", mode)
+		return exitUsage
+	}
+	if *paramsEnv != "" && (*approver != "" || *readerFile != "" || *writerFile != "") {
+		fmt.Fprintln(stderr, "idp bootstrap check: use either --params-env or --approver/--reader/--writer")
+		return exitUsage
+	}
+	required := []struct{ flag, value string }{{"--org", *org}, {"--claims-repo", *repo}}
+	if *paramsEnv == "" {
+		required = append(required,
+			struct{ flag, value string }{"--approver", *approver},
+			struct{ flag, value string }{"--reader", *readerFile},
+			struct{ flag, value string }{"--writer", *writerFile})
 	}
 	if mode == "apply" {
 		required = append(required, struct{ flag, value string }{"--passphrase-file", *passFile})
@@ -88,12 +101,12 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 	}
 	if len(missing) > 0 {
 		fmt.Fprintf(stderr, "idp bootstrap %s: missing %s\n", mode, strings.Join(missing, ", "))
-		return 2
+		return exitUsage
 	}
 	tok := token(env)
 	if tok == "" {
 		fmt.Fprintln(stderr, "idp bootstrap: set GH_TOKEN or GITHUB_TOKEN (e.g. GH_TOKEN=$(gh auth token))")
-		return 2
+		return exitUsage
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -102,20 +115,32 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 	withKeys := mode == "apply"
 	cfg := bootstrap.Config{Org: *org, ClaimsRepo: *repo}
 	var err error
-	if cfg.Reader, err = bootstrap.LoadAppCredentials(*readerFile, withKeys); err != nil {
-		return fail(stderr, err)
-	}
-	if cfg.Writer, err = bootstrap.LoadAppCredentials(*writerFile, withKeys); err != nil {
-		return fail(stderr, err)
-	}
-	if mode == "apply" {
-		if cfg.Passphrase, err = bootstrap.ReadPassphrase(*passFile); err != nil {
+	if *paramsEnv != "" {
+		raw := env(*paramsEnv)
+		if raw == "" {
+			return fail(stderr, fmt.Errorf("environment variable %s is empty", *paramsEnv))
+		}
+		params, err := bootstrap.ParseParams(raw)
+		if err != nil {
 			return fail(stderr, err)
 		}
-	}
-	// Local inputs are validated above; only now is it worth a network call.
-	if cfg.ApproverID, err = bootstrap.UserID(ctx, api, *approver); err != nil {
-		return fail(stderr, err)
+		cfg = params.Config(*org, *repo)
+	} else {
+		if cfg.Reader, err = bootstrap.LoadAppCredentials(*readerFile, withKeys); err != nil {
+			return fail(stderr, err)
+		}
+		if cfg.Writer, err = bootstrap.LoadAppCredentials(*writerFile, withKeys); err != nil {
+			return fail(stderr, err)
+		}
+		if mode == "apply" {
+			if cfg.Passphrase, err = bootstrap.ReadPassphrase(*passFile); err != nil {
+				return fail(stderr, err)
+			}
+		}
+		// Local inputs are validated above; only now is it worth a network call.
+		if cfg.ApproverID, err = bootstrap.UserID(ctx, api, *approver); err != nil {
+			return fail(stderr, err)
+		}
 	}
 
 	if mode == "apply" {
@@ -127,26 +152,34 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 			return fail(stderr, err)
 		}
 		fmt.Fprintln(stdout, "bootstrap apply: done")
-		return 0
+		return exitOK
 	}
 
 	if err := cfg.ValidateCheck(); err != nil {
 		return fail(stderr, err)
 	}
-	b := &bootstrap.Bootstrapper{API: api, Cfg: cfg, Log: stdout}
+	b := &bootstrap.Bootstrapper{API: api, Cfg: cfg, Log: stdout, AllowHiddenBypass: *allowHidden}
 	found, err := b.Check(ctx)
 	if err != nil {
 		return fail(stderr, err)
 	}
+	notices := 0
 	for _, f := range found {
 		fmt.Fprintln(stdout, f)
+		if f.Notice {
+			notices++
+		}
 	}
-	if len(found) > 0 {
-		fmt.Fprintf(stdout, "bootstrap check: %d finding(s)\n", len(found))
-		return 1
+	if drift := len(found) - notices; drift > 0 {
+		fmt.Fprintf(stdout, "bootstrap check: %d finding(s)\n", drift)
+		return exitFindings
 	}
-	fmt.Fprintln(stdout, "bootstrap check: no drift")
-	return 0
+	if notices > 0 {
+		fmt.Fprintf(stdout, "bootstrap check: no drift (%d notice(s))\n", notices)
+	} else {
+		fmt.Fprintln(stdout, "bootstrap check: no drift")
+	}
+	return exitOK
 }
 
 // isLoopback reports whether addr is host:port with host localhost or a loopback
@@ -172,23 +205,23 @@ func runBootstrapApp(args []string, stdout, stderr io.Writer, env Env) int {
 	outDir := fs.String("out-dir", "", "where to write <slug>.json and <slug>.pem (default ~/.idp/apps)")
 	listen := fs.String("listen", "127.0.0.1:0", "local address for the callback server")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return exitUsage
 	}
 	if *org == "" {
 		fmt.Fprintln(stderr, "idp bootstrap app: --org is required")
-		return 2
+		return exitUsage
 	}
 	if !bootstrap.ValidOrgName(*org) {
 		fmt.Fprintln(stderr, "idp bootstrap app: --org must be a valid GitHub organization name")
-		return 2
+		return exitUsage
 	}
 	if *role != string(bootstrap.RoleReader) && *role != string(bootstrap.RoleWriter) {
 		fmt.Fprintln(stderr, "idp bootstrap app: --role must be reader or writer")
-		return 2
+		return exitUsage
 	}
 	if !isLoopback(*listen) {
 		fmt.Fprintln(stderr, "idp bootstrap app: --listen must be a loopback address (e.g. 127.0.0.1:0)")
-		return 2
+		return exitUsage
 	}
 	dir := *outDir
 	if dir == "" {
@@ -214,5 +247,5 @@ func runBootstrapApp(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	fmt.Fprintf(stdout, "Created %s (id %d). Credentials in %s\n", creds.Slug, creds.ID, dir)
 	fmt.Fprintf(stdout, "Now install it on %s with access to All repositories: https://github.com/apps/%s/installations/new\n", *org, creds.Slug)
-	return 0
+	return exitOK
 }

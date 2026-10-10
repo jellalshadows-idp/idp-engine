@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/ghapi"
 )
@@ -12,14 +13,26 @@ import (
 type Finding struct {
 	Resource string
 	Problem  string
+	// Notice marks information that is not drift (for example a field this token cannot verify).
+	Notice bool
 }
 
-func (f Finding) String() string { return f.Resource + ": " + f.Problem }
+func (f Finding) String() string {
+	s := f.Resource + ": " + f.Problem
+	if f.Notice {
+		return "notice: " + s
+	}
+	return s
+}
 
 type findings []Finding
 
 func (f *findings) add(resource, format string, args ...any) {
 	*f = append(*f, Finding{Resource: resource, Problem: fmt.Sprintf(format, args...)})
+}
+
+func (f *findings) notice(resource, problem string) {
+	*f = append(*f, Finding{Resource: resource, Problem: problem, Notice: true})
 }
 
 // Check reports drift without changing anything (spec §9.2, run by drift §6.4).
@@ -116,6 +129,10 @@ func (b *Bootstrapper) checkRulesets(ctx context.Context, f *findings) error {
 		drift, err := b.rulesetDrift(ctx, id, want)
 		if err != nil {
 			return err
+		}
+		if b.AllowHiddenBypass && slices.Contains(drift, bypassHiddenDrift) {
+			drift = slices.DeleteFunc(drift, func(p string) bool { return p == bypassHiddenDrift })
+			f.notice("ruleset "+want.Name, "bypass actors not verifiable with this token (read-only); run check with an owner token to verify them")
 		}
 		if len(drift) > 0 {
 			f.add("ruleset "+want.Name, "drift at %v", drift)

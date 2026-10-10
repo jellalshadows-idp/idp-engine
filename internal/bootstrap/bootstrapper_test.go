@@ -263,6 +263,7 @@ func TestApplyFromScratchWritesInOrder(t *testing.T) {
 		"PUT /repos/acme/idp-claims/environments/idp-write/secrets/IDP_WRITER_PRIVATE_KEY",
 		"POST /repos/acme/idp-claims/actions/variables",
 		"POST /repos/acme/idp-claims/environments/idp-write/variables",
+		"POST /repos/acme/idp-claims/actions/variables",
 	}
 	if !slices.Equal(fake.Writes, want) {
 		t.Errorf("writes =\n%s\nwant\n%s", strings.Join(fake.Writes, "\n"), strings.Join(want, "\n"))
@@ -338,7 +339,11 @@ func TestApplyUpdatesChangedVariable(t *testing.T) {
 	if err := b.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"PATCH /repos/acme/idp-claims/actions/variables/IDP_READER_CLIENT_ID"}
+	// the rotated client id is also part of the recorded IDP_BOOTSTRAP identity
+	want := []string{
+		"PATCH /repos/acme/idp-claims/actions/variables/IDP_READER_CLIENT_ID",
+		"PATCH /repos/acme/idp-claims/actions/variables/IDP_BOOTSTRAP",
+	}
 	if !slices.Equal(fake.Writes, want) {
 		t.Errorf("writes = %v, want %v", fake.Writes, want)
 	}

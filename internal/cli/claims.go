@@ -19,18 +19,18 @@ func runValidate(args []string, stdout, stderr io.Writer, env Env) int {
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", ".", "claims repo root")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return exitUsage
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "idp validate: unexpected argument %q\n", fs.Arg(0))
-		return 2
+		return exitUsage
 	}
-	m, ok := loadClaims(*dir, stdout, stderr, env)
-	if !ok {
-		return 1
+	m, code := loadClaims(*dir, stdout, stderr, env)
+	if code != exitOK {
+		return code
 	}
 	fmt.Fprintf(stdout, "validate: ok (%d group(s), %d component(s))\n", len(m.Groups), len(m.Components))
-	return 0
+	return exitOK
 }
 
 func runRender(args []string, stdout, stderr io.Writer, env Env) int {
@@ -41,31 +41,31 @@ func runRender(args []string, stdout, stderr io.Writer, env Env) int {
 	ref := fs.String("module-ref", "", "idp-engine git ref that module sources pin (default: this build's version)")
 	modulesDir := fs.String("modules-dir", "", "use local module sources from this directory (validation only)")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return exitUsage
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "idp render: unexpected argument %q\n", fs.Arg(0))
-		return 2
+		return exitUsage
 	}
 	opts := render.Options{ModuleRef: *ref}
 	if *modulesDir != "" {
 		rel, err := relativeModulesDir(*out, *modulesDir)
 		if err != nil {
 			fmt.Fprintln(stderr, "idp render:", err)
-			return 2
+			return exitUsage
 		}
 		opts.ModulesDir = rel
 	}
 	if opts.ModuleRef == "" && opts.ModulesDir == "" {
 		if version.Version == "dev" {
 			fmt.Fprintln(stderr, "idp render: this is a development build; pass --module-ref or --modules-dir")
-			return 2
+			return exitUsage
 		}
 		opts.ModuleRef = version.Version
 	}
-	m, ok := loadClaims(*dir, stdout, stderr, env)
-	if !ok {
-		return 1
+	m, code := loadClaims(*dir, stdout, stderr, env)
+	if code != exitOK {
+		return code
 	}
 	files, err := render.Render(m, opts)
 	if err != nil {
@@ -82,29 +82,54 @@ func runRender(args []string, stdout, stderr io.Writer, env Env) int {
 	for _, p := range paths {
 		fmt.Fprintf(stdout, "render: wrote %s\n", path.Join(filepath.ToSlash(*out), p))
 	}
-	return 0
+	return exitOK
 }
 
 // loadClaims loads and validates a claims repo and prints every diagnostic: always
-// to stderr, and also to stdout as a GitHub annotation inside GitHub Actions.
-func loadClaims(dir string, stdout, stderr io.Writer, env Env) (*claims.Model, bool) {
+// to stderr, and also to stdout as a GitHub annotation inside GitHub Actions. The
+// int is exitOK, exitError (the tool failed) or exitFindings (invalid claims).
+func loadClaims(dir string, stdout, stderr io.Writer, env Env) (*claims.Model, int) {
 	m, diags, err := claims.Load(dir)
 	if err != nil {
 		fmt.Fprintln(stderr, "idp:", err)
-		return nil, false
+		return nil, exitError
 	}
 	inActions := env("GITHUB_ACTIONS") == "true"
 	for _, d := range diags {
 		if inActions {
-			fmt.Fprintln(stdout, d.Annotation())
+			a := d
+			a.File = annotationFile(env("GITHUB_WORKSPACE"), dir, d.File)
+			fmt.Fprintln(stdout, a.Annotation())
 		}
 		fmt.Fprintln(stderr, d)
 	}
 	if len(diags) > 0 {
 		fmt.Fprintf(stderr, "validate: %d problem(s)\n", len(diags))
-		return nil, false
+		return nil, exitFindings
 	}
-	return m, true
+	return m, exitOK
+}
+
+// annotationFile makes file (relative to the claims repo root dir) relative to
+// the workspace, which is where GitHub resolves annotation paths. Outside a
+// workspace, or for a dir outside it, file is returned unchanged.
+func annotationFile(workspace, dir, file string) string {
+	if workspace == "" {
+		return file
+	}
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return file
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return file
+	}
+	rel, err := filepath.Rel(absWorkspace, absDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return file
+	}
+	return path.Join(filepath.ToSlash(rel), file)
 }
 
 // relativeModulesDir expresses modulesDir relative to <out>/github, the directory

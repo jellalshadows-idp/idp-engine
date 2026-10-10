@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -165,5 +166,52 @@ func TestEnvironmentDriftMissingEnvironment(t *testing.T) {
 	}
 	if want := []string{"missing"}; !slices.Equal(got, want) {
 		t.Errorf("drift = %v, want %v", got, want)
+	}
+}
+
+func TestCheckAllowHiddenBypassTurnsItIntoNotices(t *testing.T) {
+	fake, api := newFake(t)
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+	ctx := context.Background()
+	if err := b.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.Objects["/orgs/acme/installations"] = map[string]any{"total_count": 2, "installations": []any{
+		map[string]any{"app_slug": "acme-reader"}, map[string]any{"app_slug": "acme-writer"},
+	}}
+	for _, name := range []string{"idp-main", "idp-wet"} {
+		delete(fake.RulesetByName(name), "bypass_actors")
+	}
+
+	strict, err := b.Check(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strict) != 2 || strict[0].Notice {
+		t.Fatalf("strict findings = %v, want 2 drift findings", strict)
+	}
+
+	b.AllowHiddenBypass = true
+	lenient, err := b.Check(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lenient) != 2 || !lenient[0].Notice || !lenient[1].Notice {
+		t.Fatalf("lenient findings = %v, want 2 notices", lenient)
+	}
+	if !strings.HasPrefix(lenient[0].String(), "notice: ruleset idp-main: bypass actors not verifiable") {
+		t.Errorf("notice = %q", lenient[0].String())
+	}
+}
+
+func TestApplyRecordsTheBootstrapParams(t *testing.T) {
+	fake, api := newFake(t)
+	b := &Bootstrapper{API: api, Cfg: validConfig(), Log: io.Discard}
+	if err := b.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := fake.Objects["/repos/acme/idp-claims/actions/variables/IDP_BOOTSTRAP"].(map[string]any)
+	if v["value"] != validConfig().Params().String() {
+		t.Errorf("IDP_BOOTSTRAP = %v", v["value"])
 	}
 }

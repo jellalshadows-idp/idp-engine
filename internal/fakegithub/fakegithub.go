@@ -1,6 +1,6 @@
 // Package fakegithub is test-only infrastructure: an in-memory GitHub REST
 // server that answers in the shapes the real API uses and records every write.
-// It implements exactly the endpoints idp bootstrap calls.
+// It implements the endpoints the idp commands call.
 package fakegithub
 
 import (
@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +43,22 @@ var (
 	reOrgWorkflow = regexp.MustCompile(`^/orgs/[^/]+/actions/permissions/workflow$`)
 	reSecret      = regexp.MustCompile(`^/repos/[^/]+/[^/]+/(environments/[^/]+/|actions/)secrets/[^/]+$`)
 	reVariable    = regexp.MustCompile(`^/repos/[^/]+/[^/]+/(environments/[^/]+/|actions/)variables/[^/]+$`)
+
+	reIssueComment   = regexp.MustCompile(`^(/repos/[^/]+/[^/]+)/issues/comments/(\d+)$`)
+	reIssue          = regexp.MustCompile(`^(/repos/[^/]+/[^/]+/issues)/(\d+)$`)
+	reLabels         = regexp.MustCompile(`^/repos/[^/]+/[^/]+/labels$`)
+	reIssueComments  = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/\d+/comments$`)
+	reIssues         = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues$`)
+	rePullsForCommit = regexp.MustCompile(`^/repos/[^/]+/[^/]+/commits/[^/]+/pulls$`)
+	reRefUpdate      = regexp.MustCompile(`^(/repos/[^/]+/[^/]+)/git/refs/(heads/.+)$`)
 )
+
+// Request is one recorded write.
+type Request struct {
+	Method string
+	Path   string
+	Body   map[string]any
+}
 
 // Server is an in-memory GitHub. Every non-GET request is recorded in Writes so
 // tests can assert idempotency. Tests may read and mutate the exported fields
@@ -62,6 +78,17 @@ type Server struct {
 	LastAuthorization string
 	// Queries maps a request path to the raw query string of its latest request.
 	Queries map[string]string
+	// Lists maps a GET path to every item of a paginated list endpoint. The fake
+	// serves pages with per_page and page, and a Link rel="next" header.
+	Lists map[string][]any
+	// MaxPerPage, when positive, caps per_page so tests can force several pages.
+	MaxPerPage int
+	// Requests holds every non-GET request with its decoded JSON body, in order.
+	Requests []Request
+	// Actor is the user the fake attributes the comments it creates to.
+	Actor map[string]any
+	// RejectRefUpdates lists ref paths whose PATCH answers 422 (not a fast forward).
+	RejectRefUpdates map[string]bool
 
 	t      testing.TB
 	mu     sync.Mutex
@@ -73,12 +100,15 @@ type Server struct {
 func New(t testing.TB, org string) *Server {
 	t.Helper()
 	f := &Server{
-		t:         t,
-		Objects:   map[string]any{},
-		Rulesets:  map[int64]map[string]any{},
-		Forbidden: map[string]bool{},
-		Queries:   map[string]string{},
-		nextID:    100,
+		t:                t,
+		Objects:          map[string]any{},
+		Rulesets:         map[int64]map[string]any{},
+		Forbidden:        map[string]bool{},
+		Queries:          map[string]string{},
+		Lists:            map[string][]any{},
+		Actor:            map[string]any{"login": "github-actions[bot]", "type": "Bot"},
+		RejectRefUpdates: map[string]bool{},
+		nextID:           100,
 	}
 	f.Objects["/orgs/"+org+"/actions/permissions/workflow"] = map[string]any{
 		"default_workflow_permissions": "write", "can_approve_pull_request_reviews": false,
@@ -105,6 +135,13 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodGet {
 		f.Writes = append(f.Writes, r.Method+" "+r.URL.Path)
+		f.Requests = append(f.Requests, Request{Method: r.Method, Path: r.URL.Path, Body: body})
+	}
+	if r.Method == http.MethodGet {
+		if items, ok := f.Lists[r.URL.Path]; ok || isListPath(r.URL.Path) {
+			f.servePage(w, r, items)
+			return
+		}
 	}
 	status, resp := f.route(r.Method, r.URL.Path, body)
 	if resp == nil {
@@ -114,6 +151,39 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// isListPath reports whether path is a list endpoint the idp commands read.
+func isListPath(path string) bool {
+	return reIssueComments.MatchString(path) || reIssues.MatchString(path) || rePullsForCommit.MatchString(path)
+}
+
+// servePage answers one page of a list endpoint the way GitHub does.
+func (f *Server) servePage(w http.ResponseWriter, r *http.Request, items []any) {
+	q := r.URL.Query()
+	per, _ := strconv.Atoi(q.Get("per_page"))
+	if per <= 0 {
+		per = 30
+	}
+	if per > 100 {
+		per = 100
+	}
+	if f.MaxPerPage > 0 && per > f.MaxPerPage {
+		per = f.MaxPerPage
+	}
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page <= 0 {
+		page = 1
+	}
+	start := min((page-1)*per, len(items))
+	end := min(start+per, len(items))
+	if end < len(items) {
+		q.Set("page", strconv.Itoa(page+1))
+		w.Header().Set("Link", fmt.Sprintf(`<%s%s?%s>; rel="next"`, f.URL, r.URL.Path, q.Encode()))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(append([]any{}, items[start:end]...))
 }
 
 func notFound() (int, any) { return http.StatusNotFound, map[string]any{"message": "Not Found"} }
@@ -217,6 +287,65 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 		method == http.MethodPatch && reVariable.MatchString(path):
 		f.Objects[path] = body
 		return http.StatusNoContent, nil
+	case method == http.MethodPost && reIssueComments.MatchString(path):
+		f.nextID++
+		comment := map[string]any{"id": f.nextID, "body": body["body"], "user": f.Actor}
+		f.Lists[path] = append(f.Lists[path], comment)
+		return http.StatusCreated, comment
+	case method == http.MethodPatch && reIssueComment.MatchString(path):
+		m := reIssueComment.FindStringSubmatch(path)
+		for listPath, items := range f.Lists {
+			if !strings.HasPrefix(listPath, m[1]+"/issues/") || !strings.HasSuffix(listPath, "/comments") {
+				continue
+			}
+			for _, it := range items {
+				c, _ := it.(map[string]any)
+				if strconv.FormatInt(int64(toFloat(c["id"])), 10) == m[2] {
+					c["body"] = body["body"]
+					return http.StatusOK, c
+				}
+			}
+		}
+		return notFound()
+	case method == http.MethodPost && reIssues.MatchString(path):
+		labels := []any{}
+		for _, l := range asList(body["labels"]) {
+			labels = append(labels, map[string]any{"name": l})
+		}
+		issue := map[string]any{"number": len(f.Lists[path]) + 1, "title": body["title"], "body": body["body"], "state": "open", "labels": labels}
+		f.Lists[path] = append(f.Lists[path], issue)
+		return http.StatusCreated, issue
+	case method == http.MethodPatch && reIssue.MatchString(path):
+		m := reIssue.FindStringSubmatch(path)
+		for _, it := range f.Lists[m[1]] {
+			is, _ := it.(map[string]any)
+			if strconv.Itoa(int(toFloat(is["number"]))) == m[2] {
+				for k, v := range body {
+					is[k] = v
+				}
+				return http.StatusOK, is
+			}
+		}
+		return notFound()
+	case method == http.MethodPost && reLabels.MatchString(path):
+		name, ok := f.stringField(method, path, body, "name")
+		if !ok {
+			return http.StatusBadRequest, map[string]any{}
+		}
+		f.Objects[path+"/"+name] = body
+		return http.StatusCreated, body
+	case method == http.MethodPost && strings.HasSuffix(path, "/git/blobs"):
+		f.nextID++
+		sha := "blob-" + strconv.FormatInt(f.nextID, 10)
+		f.Objects[path+"/"+sha] = body
+		return http.StatusCreated, map[string]any{"sha": sha}
+	case method == http.MethodPatch && reRefUpdate.MatchString(path):
+		if f.RejectRefUpdates[path] {
+			return http.StatusUnprocessableEntity, map[string]any{"message": "Update is not a fast forward"}
+		}
+		m := reRefUpdate.FindStringSubmatch(path)
+		f.Objects[m[1]+"/git/ref/"+m[2]] = map[string]any{"ref": "refs/" + m[2], "object": map[string]any{"sha": body["sha"]}}
+		return http.StatusOK, f.Objects[m[1]+"/git/ref/"+m[2]]
 	case method == http.MethodGet:
 		obj, ok := f.Objects[path]
 		if !ok {

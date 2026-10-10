@@ -117,21 +117,89 @@ func LoadAppCredentials(jsonPath string, withKey bool) (AppCredentials, error) {
 	return c, nil
 }
 
+var (
+	errPassphraseEncoding = errors.New("not valid UTF-8 or contains control characters (several lines?)")
+	errPassphraseShort    = errors.New("shorter than 16 characters")
+)
+
+// ValidatePassphrase enforces the rules every state passphrase meets: valid
+// UTF-8 on a single line, and OpenTofu's PBKDF2 minimum of 16 characters.
+func ValidatePassphrase(p string) error {
+	if !utf8.ValidString(p) || strings.ContainsFunc(p, unicode.IsControl) {
+		return errPassphraseEncoding
+	}
+	if utf8.RuneCountInString(p) < 16 {
+		return errPassphraseShort
+	}
+	return nil
+}
+
 // ReadPassphrase loads the state passphrase, trimming the line ending editors
-// add (LF or CRLF), and enforces OpenTofu's PBKDF2 minimum of 16 characters.
+// add (LF or CRLF), and validates it with ValidatePassphrase.
 func ReadPassphrase(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 	p := strings.TrimRight(strings.TrimPrefix(string(raw), "\xef\xbb\xbf"), "\r\n")
-	if !utf8.ValidString(p) || strings.ContainsFunc(p, unicode.IsControl) {
+	switch err := ValidatePassphrase(p); {
+	case errors.Is(err, errPassphraseEncoding):
 		return "", fmt.Errorf("passphrase in %s is not valid UTF-8 or contains control characters (UTF-16 file? several lines?); save the file as UTF-8 without BOM, on a single line", path)
-	}
-	if utf8.RuneCountInString(p) < 16 {
+	case err != nil:
 		return "", fmt.Errorf("passphrase in %s is shorter than 16 characters", path)
 	}
 	return p, nil
+}
+
+// AppIdentity is the public part of an App's credentials.
+type AppIdentity struct {
+	ID       int64  `json:"id"`
+	ClientID string `json:"clientId"`
+	Slug     string `json:"slug"`
+}
+
+// Params is the non-secret identity of a bootstrap. apply records it in the
+// claims repo as variable IDP_BOOTSTRAP, so the drift workflow can run check
+// without the local App files (ADR-0017).
+type Params struct {
+	ApproverID int64       `json:"approverId"`
+	Reader     AppIdentity `json:"reader"`
+	Writer     AppIdentity `json:"writer"`
+}
+
+// Params returns the identity part of c.
+func (c Config) Params() Params {
+	return Params{
+		ApproverID: c.ApproverID,
+		Reader:     AppIdentity{ID: c.Reader.ID, ClientID: c.Reader.ClientID, Slug: c.Reader.Slug},
+		Writer:     AppIdentity{ID: c.Writer.ID, ClientID: c.Writer.ClientID, Slug: c.Writer.Slug},
+	}
+}
+
+// String is the variable value: compact JSON with a fixed field order.
+func (p Params) String() string {
+	b, _ := json.Marshal(p) // a struct of ints and strings always marshals
+	return string(b)
+}
+
+// ParseParams reads an IDP_BOOTSTRAP value; unknown fields are rejected.
+func ParseParams(s string) (Params, error) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.DisallowUnknownFields()
+	var p Params
+	if err := dec.Decode(&p); err != nil {
+		return Params{}, fmt.Errorf("parse %s: %w", VarParams, err)
+	}
+	return p, nil
+}
+
+// Config returns the check configuration these params describe (no keys).
+func (p Params) Config(org, repo string) Config {
+	return Config{
+		Org: org, ClaimsRepo: repo, ApproverID: p.ApproverID,
+		Reader: AppCredentials{ID: p.Reader.ID, ClientID: p.Reader.ClientID, Slug: p.Reader.Slug},
+		Writer: AppCredentials{ID: p.Writer.ID, ClientID: p.Writer.ClientID, Slug: p.Writer.Slug},
+	}
 }
 
 // UserID resolves a login to its numeric id; environment reviewers need ids.
