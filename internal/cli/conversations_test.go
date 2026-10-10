@@ -52,6 +52,15 @@ func TestIssueOpenAndClose(t *testing.T) {
 	}
 }
 
+func TestCommentRejectsAnEmptyMarker(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"comment", "--repo", "acme/idp-claims", "--pr", "7", "--body-file", "f", "--marker", ""},
+		&stdout, &stderr, envOf(map[string]string{"GH_TOKEN": "t"}))
+	if code != 2 || !strings.Contains(stderr.String(), "idp comment: --marker must not be empty") {
+		t.Errorf("exit %d, stderr %q", code, stderr.String())
+	}
+}
+
 func TestConversationUsageErrors(t *testing.T) {
 	for _, args := range [][]string{
 		{"comment", "--repo", "acme/idp-claims", "--pr", "x", "--body-file", "f"},

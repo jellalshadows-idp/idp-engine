@@ -46,6 +46,10 @@ func runComment(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintln(stderr, "idp comment: --repo, --pr and --body-file are required")
 		return exitUsage
 	}
+	if *marker == "" {
+		fmt.Fprintln(stderr, "idp comment: --marker must not be empty")
+		return exitUsage
+	}
 	repo, msg := githubRepo(*repoFlag, env)
 	if msg != "" {
 		fmt.Fprintln(stderr, "idp comment:", msg)
