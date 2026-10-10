@@ -27,6 +27,12 @@ func TestErrorAnnotation(t *testing.T) {
 	}
 }
 
+func TestMask(t *testing.T) {
+	if got, want := Mask("a%b\nc"), "::add-mask::a%25b%0Ac"; got != want {
+		t.Errorf("Mask = %q, want %q", got, want)
+	}
+}
+
 func TestSetOutputSingleLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "out")
 	if err := SetOutput(path, "decision", "auto"); err != nil {

@@ -12,6 +12,10 @@ const KeyProviderName = "idp"
 
 var hclEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "${", "$${", "%{", "%%{")
 
+// EscapeHCLString escapes s for use inside an HCL quoted string, so the string
+// is read back literally. EncryptionConfig uses it for the passphrase.
+func EscapeHCLString(s string) string { return hclEscaper.Replace(s) }
+
 // EncryptionConfig returns the TF_ENCRYPTION value for passphrase: the key
 // material behind the enforced encryption the render emits (spec §7.2). The
 // passphrase is escaped for an HCL quoted string, so it is used literally.
@@ -28,5 +32,5 @@ state {
 plan {
   method = method.aes_gcm.%[1]s
 }
-`, KeyProviderName, hclEscaper.Replace(passphrase))
+`, KeyProviderName, EscapeHCLString(passphrase))
 }

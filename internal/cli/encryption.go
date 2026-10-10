@@ -38,6 +38,14 @@ func runEncryptionEnv(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintln(stderr, "idp:", msg)
 		return exitError
 	}
+	if env("GITHUB_ACTIONS") == "true" {
+		// GITHUB_ENV values show up in later steps' log headers, and the runner
+		// masks only the exact secret, so register the escaped form too.
+		fmt.Fprintln(stdout, actions.Mask(pass))
+		if escaped := render.EscapeHCLString(pass); escaped != pass {
+			fmt.Fprintln(stdout, actions.Mask(escaped))
+		}
+	}
 	if err := actions.SetEnv(envFile, "TF_ENCRYPTION", render.EncryptionConfig(pass)); err != nil {
 		return fail(stderr, err)
 	}

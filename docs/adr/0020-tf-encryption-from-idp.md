@@ -26,7 +26,7 @@ The name `idp` is **frozen**. OpenTofu records the key provider in the encrypted
 
 ### Negative / costs
 
-- The passphrase passes through `GITHUB_ENV`. It is a registered secret, so GitHub masks it in logs. The workflows only use `pull_request`, `push`, `workflow_dispatch` and `schedule` triggers, never `pull_request_target` or `workflow_run`.
+- The passphrase passes through `GITHUB_ENV`. The raw passphrase is a registered secret and GitHub masks it. When HCL escaping changes it, `idp encryption-env` also registers the escaped form with `::add-mask::` before exporting, because `GITHUB_ENV` values appear in later steps' log headers and GitHub masks only the exact secret string. The workflows only use `pull_request`, `push`, `workflow_dispatch` and `schedule` triggers, never `pull_request_target` or `workflow_run`.
 
 ## Alternatives considered
 
