@@ -160,10 +160,26 @@ func TestSyncRejectsTruncatedTrees(t *testing.T) {
 
 func TestSyncValidatesPaths(t *testing.T) {
 	_, p := setup(t, nil)
-	for _, bad := range [][]string{nil, {""}, {"../x"}, {"/abs"}, {"a/../b"}, {"a\\b"}} {
+	for _, bad := range [][]string{nil, {""}, {"../x"}, {"/abs"}, {"a/../b"}, {"a\\b"}, {"rendered/github/.terraform"}, {".terraform"}} {
 		if _, err := p.Sync(context.Background(), t.TempDir(), bad, "m"); err == nil {
 			t.Errorf("paths %q: want an error", bad)
 		}
+	}
+}
+
+func TestSyncRejectsAMissingRoot(t *testing.T) {
+	fake, p := setup(t, map[string]string{"tfstate/github.tfstate": "state"})
+	_, err := p.Sync(context.Background(), filepath.Join(t.TempDir(), "nope"), []string{"tfstate/github.tfstate"}, "m")
+	if err == nil || len(fake.Writes) != 0 {
+		t.Errorf("err = %v, writes = %v, want an error and no writes", err, fake.Writes)
+	}
+}
+
+func TestSyncRefusesToDeleteAFilePath(t *testing.T) {
+	fake, p := setup(t, map[string]string{"tfstate/github.tfstate": "state"})
+	_, err := p.Sync(context.Background(), t.TempDir(), []string{"tfstate/github.tfstate"}, "m")
+	if err == nil || !strings.Contains(err.Error(), "refusing to delete tfstate/github.tfstate") || len(fake.Writes) != 0 {
+		t.Errorf("err = %v, writes = %v, want a refusal and no writes", err, fake.Writes)
 	}
 }
 

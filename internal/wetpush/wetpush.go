@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -44,10 +45,17 @@ type treeEntry struct {
 // Sync makes the branch's files under each path equal to the files under
 // root/path, in one commit on top of the current head, and updates the
 // branch without force. A path is a file or a directory; .terraform
-// directories are never synced. Nothing changed means no commit.
+// directories are never synced. Nothing changed means no commit. A path that
+// is a single file on the branch is never deleted: a missing local copy is an
+// error, because deleting the state is never part of a reconcile.
 func (p Pusher) Sync(ctx context.Context, root string, paths []string, message string) (Result, error) {
 	if err := validatePaths(paths); err != nil {
 		return Result{}, err
+	}
+	if info, err := os.Stat(root); err != nil {
+		return Result{}, fmt.Errorf("root %s: %w", root, err)
+	} else if !info.IsDir() {
+		return Result{}, fmt.Errorf("root %s: not a directory", root)
 	}
 	base := "/repos/" + p.Owner + "/" + p.Repo
 	var ref struct {
@@ -90,6 +98,13 @@ func (p Pusher) Sync(ctx context.Context, root string, paths []string, message s
 	local, err := readLocal(root, paths)
 	if err != nil {
 		return Result{}, err
+	}
+	for _, p := range paths {
+		if _, onBranch := remote[p]; onBranch {
+			if _, ok := local[p]; !ok {
+				return Result{}, fmt.Errorf("refusing to delete %s: it is missing under %s (a reconcile never deletes a whole file path; check --root)", p, root)
+			}
+		}
 	}
 	var entries []treeEntry
 	res := Result{}
@@ -140,6 +155,9 @@ func validatePaths(paths []string) error {
 	for _, p := range paths {
 		if p == "" || strings.Contains(p, `\`) || path.IsAbs(p) || path.Clean(p) != p || p == "." || strings.HasPrefix(p, "../") || p == ".." {
 			return fmt.Errorf("path %q: want a clean relative slash path", p)
+		}
+		if slices.Contains(strings.Split(p, "/"), ".terraform") {
+			return fmt.Errorf("path %q: .terraform directories are never synced", p)
 		}
 	}
 	return nil
