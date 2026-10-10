@@ -36,3 +36,12 @@ func TestRun(t *testing.T) {
 		})
 	}
 }
+
+func TestUsageColumnsAlign(t *testing.T) {
+	section := strings.SplitN(strings.SplitN(usage, "Commands:\n", 2)[1], "\n\n", 2)[0]
+	for _, line := range strings.Split(section, "\n") {
+		if len(line) < 19 || line[:2] != "  " || line[18] == ' ' || line[17] != ' ' {
+			t.Errorf("usage line %q: the description must start at column 19 (2-space indent, 16-character command column)", line)
+		}
+	}
+}

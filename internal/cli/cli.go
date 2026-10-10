@@ -19,7 +19,7 @@ Commands:
   gate            Decide whether a reconcile applies automatically or waits for approval
   comment         Create or update the sticky plan comment on a pull request
   issue           Open or close a labelled issue (drift, failed wet pushes)
-  bootstrap      Create or verify the protections an org needs before the IDP runs
+  bootstrap       Create or verify the protections an org needs before the IDP runs
   help            Show this help
 
 Exit codes: 0 ok, 1 the command failed, 2 usage error,
