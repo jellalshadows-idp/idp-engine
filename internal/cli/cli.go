@@ -16,6 +16,7 @@ Commands:
   render          Render a claims repo into OpenTofu stacks
   diff            List the stacks whose render differs from the wet branch
   plan-summary    Summarize OpenTofu plans as a PR comment and a fingerprint
+  gate            Decide whether a reconcile applies automatically or waits for approval
   bootstrap       Create or verify the protections an org needs before the IDP runs
   help            Show this help
 
@@ -44,6 +45,8 @@ func Run(args []string, stdout, stderr io.Writer, env Env) int {
 		return runDiff(args[1:], stdout, stderr, env)
 	case "plan-summary":
 		return runPlanSummary(args[1:], stdout, stderr, env)
+	case "gate":
+		return runGate(args[1:], stdout, stderr, env)
 	case "bootstrap":
 		return runBootstrap(args[1:], stdout, stderr, env)
 	default:
