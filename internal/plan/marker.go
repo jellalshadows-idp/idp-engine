@@ -48,12 +48,14 @@ func EncodeMarker(headSHA string, f Fingerprint) (string, error) {
 
 // DecodeMarker extracts the fingerprint marker from a comment body. ok is
 // false when there is no marker; err reports a marker that is present but
-// unreadable.
+// unreadable. The last marker wins: the comment ends with the real one, and
+// nothing rendered before it can shadow it.
 func DecodeMarker(body string) (headSHA string, f Fingerprint, ok bool, err error) {
-	m := markerRE.FindStringSubmatch(body)
-	if m == nil {
+	all := markerRE.FindAllStringSubmatch(body, -1)
+	if len(all) == 0 {
 		return "", nil, false, nil
 	}
+	m := all[len(all)-1]
 	data, err := base64.StdEncoding.DecodeString(m[2])
 	if err != nil {
 		return "", nil, true, fmt.Errorf("fingerprint marker: %w", err)

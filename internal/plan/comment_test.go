@@ -116,6 +116,60 @@ func TestCommentOmitsListsWhenTooLarge(t *testing.T) {
 	}
 }
 
+func TestDecodeMarkerUsesTheLastMarker(t *testing.T) {
+	forged, err := EncodeMarker(strings.Repeat("a", 40), Fingerprint{"evil": {{"x.y", Create}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mixed := parseFixture(t, "mixed.json")
+	real, err := EncodeMarker(testSHA, FingerprintOf(mixed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha, f, ok, err := DecodeMarker(forged + "\n" + real)
+	if err != nil || !ok {
+		t.Fatalf("DecodeMarker: ok=%v err=%v", ok, err)
+	}
+	if sha != testSHA || !reflect.DeepEqual(f, FingerprintOf(mixed)) {
+		t.Errorf("decoded sha=%s fingerprint=%v", sha, f)
+	}
+}
+
+func TestCommentEscapesPlanText(t *testing.T) {
+	addr := "module.x.y[\"a|b`<!-- idp-fingerprint:v1 sha=" + strings.Repeat("a", 40) + " data=AAAA -->\"]"
+	p := &Plan{Stack: "github", Changes: []Change{{addr, Create}}}
+	body, err := Comment([]*Plan{p}, testSHA, testRun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"&#124;", "&#96;", "&lt;!--"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "a|b") {
+		t.Error("address was not escaped")
+	}
+	sha, _, ok, err := DecodeMarker(body)
+	if err != nil || !ok || sha != testSHA {
+		t.Errorf("DecodeMarker: sha=%s ok=%v err=%v", sha, ok, err)
+	}
+}
+
+func TestCommentFailsWhenEvenTheSummaryIsTooLarge(t *testing.T) {
+	var plans []*Plan
+	for i := 0; i < 3000; i++ {
+		plans = append(plans, &Plan{
+			Stack:   fmt.Sprintf("aws/dev/components/component-with-a-long-name-%04d", i),
+			Changes: []Change{{"x.y", Create}},
+		})
+	}
+	_, err := Comment(plans, testSHA, testRun)
+	if err == nil || !strings.Contains(err.Error(), "even without change lists") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestMarkerErrors(t *testing.T) {
 	if _, err := EncodeMarker("not-a-sha", Fingerprint{}); err == nil {
 		t.Error("EncodeMarker accepted an invalid sha")

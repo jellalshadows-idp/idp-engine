@@ -27,9 +27,19 @@ func Comment(plans []*Plan, headSHA, runURL string) (string, error) {
 	body := renderComment(sorted, headSHA, runURL, true)
 	if len(body)+len(marker) > maxCommentBytes {
 		body = renderComment(sorted, headSHA, runURL, false)
+		if len(body)+len(marker) > maxCommentBytes {
+			return "", fmt.Errorf("plan comment is %d bytes even without change lists, over the %d-byte limit: too many stacks or changes for one PR comment", len(body)+len(marker), maxCommentBytes)
+		}
 	}
 	return body + marker + "\n", nil
 }
+
+// codeEscaper makes text safe inside <code> in a Markdown table cell: no HTML,
+// no cell break, no code-span break, one line. Plan text can therefore never
+// form a marker or break the comment's structure.
+var codeEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "|", "&#124;", "`", "&#96;", "\r", " ", "\n", " ")
+
+func code(s string) string { return "<code>" + codeEscaper.Replace(s) + "</code>" }
 
 func renderComment(plans []*Plan, headSHA, runURL string, details bool) string {
 	var b strings.Builder
@@ -46,7 +56,7 @@ func renderComment(plans []*Plan, headSHA, runURL string, details bool) string {
 		b.WriteString("| Stack | Create | Update | Replace | Delete |\n|---|---:|---:|---:|---:|\n")
 		for _, p := range plans {
 			c := p.Counts()
-			fmt.Fprintf(&b, "| `%s` | %d | %d | %s | %s |\n", p.Stack, c.Create, c.Update, flagged(c.Replace), flagged(c.Delete))
+			fmt.Fprintf(&b, "| %s | %d | %d | %s | %s |\n", code(p.Stack), c.Create, c.Update, flagged(c.Replace), flagged(c.Delete))
 		}
 		b.WriteString("\n")
 		if details {
@@ -73,7 +83,7 @@ func writeDetails(b *strings.Builder, p *Plan) {
 		return
 	}
 	c := p.Counts()
-	fmt.Fprintf(b, "<details><summary><code>%s</code>: +%d ~%d -%d ±%d</summary>\n\n", p.Stack, c.Create, c.Update, c.Delete, c.Replace)
+	fmt.Fprintf(b, "<details><summary>%s: +%d ~%d -%d ±%d</summary>\n\n", code(p.Stack), c.Create, c.Update, c.Delete, c.Replace)
 	b.WriteString("| Action | Address |\n|---|---|\n")
 	for i, ch := range p.Changes {
 		if i == maxRowsPerStack {
@@ -84,7 +94,7 @@ func writeDetails(b *strings.Builder, p *Plan) {
 		if ch.Action.Destructive() {
 			action = "⚠️ " + action
 		}
-		fmt.Fprintf(b, "| %s | `%s` |\n", action, ch.Address)
+		fmt.Fprintf(b, "| %s | %s |\n", action, code(ch.Address))
 	}
 	b.WriteString("\n</details>\n\n")
 }

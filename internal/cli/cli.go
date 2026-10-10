@@ -16,7 +16,7 @@ Commands:
   render          Render a claims repo into OpenTofu stacks
   diff            List the stacks whose render differs from the wet branch
   plan-summary    Summarize OpenTofu plans as a PR comment and a fingerprint
-  bootstrap      Create or verify the protections an org needs before the IDP runs
+  bootstrap       Create or verify the protections an org needs before the IDP runs
   help            Show this help
 
 Exit codes: 0 ok, 1 the command failed, 2 usage error,
