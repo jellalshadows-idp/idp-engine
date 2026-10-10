@@ -20,6 +20,7 @@ Commands:
   comment         Create or update the sticky plan comment on a pull request
   issue           Open or close a labelled issue (drift, failed wet pushes)
   wet-push        Commit files to the wet branch in one commit
+  encryption-env  Export TF_ENCRYPTION for OpenTofu from IDP_STATE_PASSPHRASE
   bootstrap       Create or verify the protections an org needs before the IDP runs
   help            Show this help
 
@@ -56,6 +57,8 @@ func Run(args []string, stdout, stderr io.Writer, env Env) int {
 		return runIssue(args[1:], stdout, stderr, env)
 	case "wet-push":
 		return runWetPush(args[1:], stdout, stderr, env)
+	case "encryption-env":
+		return runEncryptionEnv(args[1:], stdout, stderr, env)
 	case "bootstrap":
 		return runBootstrap(args[1:], stdout, stderr, env)
 	default:

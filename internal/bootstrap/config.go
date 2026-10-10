@@ -117,18 +117,35 @@ func LoadAppCredentials(jsonPath string, withKey bool) (AppCredentials, error) {
 	return c, nil
 }
 
+var (
+	errPassphraseEncoding = errors.New("not valid UTF-8 or contains control characters (several lines?)")
+	errPassphraseShort    = errors.New("shorter than 16 characters")
+)
+
+// ValidatePassphrase enforces the rules every state passphrase meets: valid
+// UTF-8 on a single line, and OpenTofu's PBKDF2 minimum of 16 characters.
+func ValidatePassphrase(p string) error {
+	if !utf8.ValidString(p) || strings.ContainsFunc(p, unicode.IsControl) {
+		return errPassphraseEncoding
+	}
+	if utf8.RuneCountInString(p) < 16 {
+		return errPassphraseShort
+	}
+	return nil
+}
+
 // ReadPassphrase loads the state passphrase, trimming the line ending editors
-// add (LF or CRLF), and enforces OpenTofu's PBKDF2 minimum of 16 characters.
+// add (LF or CRLF), and validates it with ValidatePassphrase.
 func ReadPassphrase(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 	p := strings.TrimRight(strings.TrimPrefix(string(raw), "\xef\xbb\xbf"), "\r\n")
-	if !utf8.ValidString(p) || strings.ContainsFunc(p, unicode.IsControl) {
+	switch err := ValidatePassphrase(p); {
+	case errors.Is(err, errPassphraseEncoding):
 		return "", fmt.Errorf("passphrase in %s is not valid UTF-8 or contains control characters (UTF-16 file? several lines?); save the file as UTF-8 without BOM, on a single line", path)
-	}
-	if utf8.RuneCountInString(p) < 16 {
+	case err != nil:
 		return "", fmt.Errorf("passphrase in %s is shorter than 16 characters", path)
 	}
 	return p, nil

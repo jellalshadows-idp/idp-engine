@@ -186,3 +186,18 @@ func TestLoadAppCredentialsMalformedJSON(t *testing.T) {
 		t.Fatalf("err = %v, want a decode error naming %s", err, path)
 	}
 }
+
+func TestValidatePassphrase(t *testing.T) {
+	for p, ok := range map[string]bool{
+		"correct-horse-battery-staple":  true,
+		"exactly-16-chars":              true,
+		"fifteen-chars!!":               false,
+		"":                              false,
+		"line one is long\nline two":    false,
+		"\xff\xfe-not-valid-utf8-bytes": false,
+	} {
+		if err := ValidatePassphrase(p); (err == nil) != ok {
+			t.Errorf("ValidatePassphrase(%q) = %v, want ok=%v", p, err, ok)
+		}
+	}
+}
