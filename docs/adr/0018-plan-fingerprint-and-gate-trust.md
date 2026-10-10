@@ -16,10 +16,9 @@ The guiding rule of spec §6 is "nothing is ever applied that nobody saw". Recon
   - Any other action makes parsing **fail**. An unknown action is never treated as harmless.
 - **Comment marker.** The plan comment carries `<!-- idp-plan -->` and one hidden marker: `<!-- idp-fingerprint:v1 sha=<head SHA> data=<base64(gzip(JSON))> -->`. Gzip keeps a plan of hundreds of resources within GitHub's comment size limit.
 - **Which comment the gate trusts.** The gate (`idp gate`) trusts a fingerprint only when all of these hold:
-  1. It is in the **newest** comment that contains `<!-- idp-plan -->`.
-  2. That comment's author is `github-actions[bot]` and has type `Bot`, which is the identity of the plan job's `GITHUB_TOKEN`.
-  3. The comment is on the merged pull request whose `merge_commit_sha` is the pushed commit.
-  4. The marker's `sha` equals that pull request's **head SHA**, so the comment describes the code that was merged.
+  1. It is in the **newest** comment **written by `github-actions[bot]` (type `Bot`)** that contains `<!-- idp-plan -->`. That is the identity of the plan job's `GITHUB_TOKEN`. Comments by anyone else are ignored, so a stranger cannot even force an approval prompt.
+  2. The comment is on the merged pull request whose `merge_commit_sha` is the pushed commit.
+  3. The marker's `sha` equals that pull request's **head SHA**, so the comment describes the code that was merged.
 - **Decision order:**
   1. No changes → `auto`.
   2. Any `delete` or `replace` → `approval`.
@@ -31,11 +30,16 @@ The guiding rule of spec §6 is "nothing is ever applied that nobody saw". Recon
 
 ### Positive
 
-- A comment by anyone else, or a bot comment left over from an earlier commit, can never widen what applies automatically. The worst case is an approval prompt, which fails safe.
+- Comments by anyone else and stale bot comments (whose `sha` is not the merged head) are ignored. When no trusted fingerprint is left, the worst case is an approval prompt, which fails safe.
 
 ### Negative / costs
 
 - A pull request whose last plan run failed or was cancelled ends in an approval prompt after merge. This is intended.
+- **Accepted risk**, alongside the passphrase risk of spec §7.3: the author check proves who wrote the comment, not that nobody edited it. (1) People with write access can edit the bot's comment, and the author stays `github-actions[bot]`. (2) Any workflow's `GITHUB_TOKEN` writes as `github-actions[bot]`, including a workflow added on a same-repo pull request branch. Both routes are open only to members who can already push branches (spec §7.1), and destructive changes always require approval regardless.
+
+## Follow-up
+
+- Phase 1c decides whether to reject comments edited by anyone other than the Actions bot (GraphQL `editor` / `lastEditedAt`).
 
 ## Alternatives considered
 
