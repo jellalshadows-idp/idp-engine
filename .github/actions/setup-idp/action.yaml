@@ -1,0 +1,38 @@
+name: setup-idp
+description: Install Go and OpenTofu, and build the idp CLI from an idp-engine checkout (ADR-0021).
+
+inputs:
+  engine-dir:
+    description: The idp-engine checkout, relative to the workspace.
+    required: true
+  version:
+    description: The commit of that checkout, 40 hex characters. The build embeds it, and rendered module sources pin it.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ inputs.engine-dir }}/go.mod
+        cache: false
+    - id: tofu
+      uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+      with:
+        tofu_version: 1.12.6
+        tofu_wrapper: false
+    - id: build
+      name: build idp
+      shell: bash
+      working-directory: ${{ inputs.engine-dir }}
+      env:
+        IDP_VERSION: ${{ inputs.version }}
+      run: | # zizmor: ignore[github-env] appends a fixed directory under RUNNER_TEMP to GITHUB_PATH; no input reaches the value
+        if ! [[ "$IDP_VERSION" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error::setup-idp: the version input must be a full 40-character commit SHA"
+          exit 1
+        fi
+        mkdir -p "$RUNNER_TEMP/idp-bin"
+        go build -trimpath -ldflags "-X github.com/jellalshadows-idp/idp-engine/internal/version.Version=${IDP_VERSION}" -o "$RUNNER_TEMP/idp-bin/idp" ./cmd/idp
+        echo "$RUNNER_TEMP/idp-bin" >> "$GITHUB_PATH"
