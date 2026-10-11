@@ -290,6 +290,59 @@ func usesRefs(n *yaml.Node) []usesRef {
 	return out
 }
 
+// mapValue returns the value node of key in a mapping node, or nil.
+func mapValue(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// jobNode returns the mapping node of jobs.<id>, or nil when there is none.
+func jobNode(w *workflow, id string) *yaml.Node {
+	root := w.root
+	if root != nil && root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		root = root.Content[0]
+	}
+	return mapValue(mapValue(root, "jobs"), id)
+}
+
+// stepNode returns the i-th step mapping of a job node, or nil.
+func stepNode(job *yaml.Node, i int) *yaml.Node {
+	steps := mapValue(job, "steps")
+	if steps == nil || steps.Kind != yaml.SequenceNode || i >= len(steps.Content) {
+		return nil
+	}
+	return steps.Content[i]
+}
+
+// scalars returns every scalar value under n; mapping keys are excluded.
+func scalars(n *yaml.Node) []string {
+	if n == nil {
+		return nil
+	}
+	switch n.Kind {
+	case yaml.ScalarNode:
+		return []string{n.Value}
+	case yaml.MappingNode:
+		var out []string
+		for i := 1; i < len(n.Content); i += 2 {
+			out = append(out, scalars(n.Content[i])...)
+		}
+		return out
+	}
+	var out []string
+	for _, c := range n.Content {
+		out = append(out, scalars(c)...)
+	}
+	return out
+}
+
 // trigger returns the node of one on: event and whether it is present. A bare
 // "workflow_dispatch:" is present with a null node.
 func (w *workflow) trigger(name string) (*yaml.Node, bool) {
@@ -418,12 +471,37 @@ func mentions(s step, sub string) bool {
 	return false
 }
 
-// invokes reports whether a run script calls "idp <sub>" at the start of a
-// line. Messages that merely mention idp start with echo and do not count.
+// commandFields splits one script line into fields, or returns nil for lines
+// that cannot run a command: blank lines, comments, and echo or printf lines,
+// which only print a message that may mention idp or tofu.
+func commandFields(line string) []string {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return nil
+	}
+	f := strings.Fields(line)
+	if f[0] == "echo" || f[0] == "printf" {
+		return nil
+	}
+	return f
+}
+
+// invokes reports whether a run script calls idp with the subcommand sub
+// anywhere on a line (after then, after ;, with extra spaces). An empty sub
+// matches any idp call.
 func invokes(run, sub string) bool {
 	for _, l := range strings.Split(run, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(l), "idp "+sub) {
-			return true
+		f := commandFields(l)
+		for i, w := range f {
+			if w != "idp" {
+				continue
+			}
+			if sub == "" {
+				return true
+			}
+			if i+1 < len(f) && strings.TrimRight(f[i+1], ";|&") == sub {
+				return true
+			}
 		}
 	}
 	return false

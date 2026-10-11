@@ -3,6 +3,7 @@ package workflowspec
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -40,18 +41,60 @@ func checkUses(value, comment string) error {
 // and an apply only ever applies a saved plan.
 func checkTofu(run string) []error {
 	var errs []error
-	for _, l := range strings.Split(run, "\n") {
-		l = strings.TrimSpace(l)
-		switch {
-		case strings.Contains(l, "tofu init") && !strings.Contains(l, "-lockfile=readonly"):
-			errs = append(errs, fmt.Errorf("%q: tofu init must use -lockfile=readonly", l))
-		case strings.Contains(l, "tofu plan") && !strings.Contains(l, `-out="$RUNNER_TEMP/idp/`):
-			errs = append(errs, fmt.Errorf("%q: tofu plan must write its plan under $RUNNER_TEMP/idp/", l))
-		case strings.Contains(l, "tofu apply") && (strings.Contains(l, "-auto-approve") || !strings.Contains(l, ".tfplan")):
-			errs = append(errs, fmt.Errorf("%q: tofu apply must apply a saved plan", l))
+	for _, l := range logicalLines(run) {
+		f := commandFields(l)
+		i := slices.Index(f, "tofu")
+		if i < 0 {
+			continue
+		}
+		sub := ""
+		for _, w := range f[i+1:] {
+			if !strings.HasPrefix(w, "-") {
+				sub = w
+				break
+			}
+		}
+		switch sub {
+		case "init":
+			if !slices.Contains(f, "-lockfile=readonly") {
+				errs = append(errs, fmt.Errorf("%q: tofu init must use -lockfile=readonly", l))
+			}
+		case "plan":
+			if !slices.ContainsFunc(f, func(w string) bool {
+				return strings.HasPrefix(w, `-out="$RUNNER_TEMP/idp/`) || strings.HasPrefix(w, `-out=$RUNNER_TEMP/idp/`)
+			}) {
+				errs = append(errs, fmt.Errorf("%q: tofu plan must write its plan under $RUNNER_TEMP/idp/", l))
+			}
+		case "apply":
+			if slices.Contains(f, "-auto-approve") || !slices.ContainsFunc(f, func(w string) bool {
+				return strings.Contains(w, "$RUNNER_TEMP/idp/") && (strings.HasSuffix(w, `.tfplan`) || strings.HasSuffix(w, `.tfplan"`))
+			}) {
+				errs = append(errs, fmt.Errorf("%q: tofu apply must apply a saved plan from $RUNNER_TEMP/idp/", l))
+			}
 		}
 	}
 	return errs
+}
+
+// logicalLines joins backslash-continued lines of a script into single lines.
+func logicalLines(run string) []string {
+	var out []string
+	var cur strings.Builder
+	for _, l := range strings.Split(run, "\n") {
+		trimmed := strings.TrimRight(l, " \t\r")
+		if before, ok := strings.CutSuffix(trimmed, `\`); ok {
+			cur.WriteString(before)
+			cur.WriteString(" ")
+			continue
+		}
+		cur.WriteString(trimmed)
+		out = append(out, cur.String())
+		cur.Reset()
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 func TestCheckUses(t *testing.T) {
@@ -96,6 +139,13 @@ func TestCheckTofu(t *testing.T) {
 		{"apply without a plan", "tofu apply -input=false -auto-approve", 1},
 		{"show is not checked", `tofu show -json "$RUNNER_TEMP/idp/plans/github.tfplan" > out.json`, 0},
 		{"two bad lines", "tofu init\ntofu apply -auto-approve", 2},
+		{"continued plan", "tofu plan -input=false \\\n  -out=\"$RUNNER_TEMP/idp/plans/github.tfplan\"", 0},
+		{"continued init", "tofu init -input=false \\\n  -lockfile=readonly", 0},
+		{"comment line", "# tofu init", 0},
+		{"echo line", `echo "run tofu plan later"`, 0},
+		{"chdir before the subcommand", "tofu -chdir=stack plan -input=false", 1},
+		{"two spaces", "tofu  init", 1},
+		{"apply a plan from elsewhere", "tofu apply -input=false other/github.tfplan", 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
