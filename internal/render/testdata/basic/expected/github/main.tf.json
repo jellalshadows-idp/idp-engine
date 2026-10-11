@@ -2,7 +2,7 @@
   "module": {
     "component_api": {
       "archive_on_destroy": true,
-      "description": "Orders API",
+      "description": "Orders API $${not.evaluated} %%{ literal }",
       "environments": {
         "dev": {
           "protected": false

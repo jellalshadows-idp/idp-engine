@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"math/rand/v2"
 	"os"
@@ -125,6 +126,51 @@ func TestRenderKeepsTextLiteral(t *testing.T) {
 	}
 	if !strings.Contains(string(files["github/main.tf.json"]), `"description": "Pagos & cobros <beta> — ñ"`) {
 		t.Errorf("description was not rendered literally:\n%s", files["github/main.tf.json"])
+	}
+}
+
+func TestLiteral(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"empty", "", ""},
+		{"plain", "plain", "plain"},
+		{"interpolation", "${x}", "$${x}"},
+		{"directive", "%{ if true }a%{ endif }", "%%{ if true }a%%{ endif }"},
+		{"already escaped", "$${already}", "$$${already}"},
+		{"no brace", "cost: $5, 100%", "cost: $5, 100%"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := literal(tt.in); got != tt.want {
+				t.Errorf("literal(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderEscapesTemplateSequencesInClaimText(t *testing.T) {
+	m := loadFixture(t, "basic")
+	m.Groups[0].Description = `${base64encode(file("/proc/self/environ"))}`
+	m.Components[0].Description = `%{ for x in [1] }x%{ endfor }`
+	files, err := Render(m, Options{ModuleRef: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Module map[string]map[string]any `json:"module"`
+	}
+	if err := json.Unmarshal(files["github/main.tf.json"], &doc); err != nil {
+		t.Fatal(err)
+	}
+	g := doc.Module["group_"+m.Groups[0].Name]
+	if want := `$${base64encode(file("/proc/self/environ"))}`; g["description"] != want {
+		t.Errorf("group description = %q, want %q", g["description"], want)
+	}
+	c := doc.Module["component_"+m.Components[0].Name]
+	if want := `%%{ for x in [1] }x%%{ endfor }`; c["description"] != want {
+		t.Errorf("component description = %q, want %q", c["description"], want)
+	}
+	if want := "${module.group_" + m.Components[0].OwnerGroup() + ".team_id}"; c["owner_team_id"] != want {
+		t.Errorf("owner_team_id = %q, want the live reference %q", c["owner_team_id"], want)
 	}
 }
 

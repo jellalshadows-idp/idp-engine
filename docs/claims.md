@@ -97,7 +97,8 @@ The `aws` and `features` fields arrive in Phases 2 and 4. Until then they fail v
 
 - `rendered/github/main.tf.json`: the provider, the local backend at `../../tfstate/github.tfstate`, enforced state and plan encryption, and one module call per claim, pinned to the engine's release tag;
 - `rendered/github/.terraform.lock.hcl`: the pinned provider checksums;
-- `rendered/.idp-rendered`: a marker. `--out` must not exist, be empty, or hold a previous render, so a mistyped path can never wipe unrelated data.
+- `rendered/.idp-rendered`: a marker. `--out` must not exist, be empty, or hold a previous render, so a mistyped path can never wipe unrelated data;
+- claim text is data: the render escapes `${` and `%{` in every value that comes from a claim (`$${` and `%%{`), so OpenTofu never evaluates a template in it.
 
 `--out` is relative to the current directory, not to `--dir`. The stack's local backend writes its state to `<out>/../tfstate/github.tfstate`, which is where the `wet` branch keeps it (spec §5.4).
 
