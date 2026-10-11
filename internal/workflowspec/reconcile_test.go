@@ -1,0 +1,265 @@
+package workflowspec
+
+import (
+	"encoding/json"
+	"maps"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+)
+
+const reconcilePath = ".github/workflows/reconcile.yaml"
+
+func TestReconcileInterface(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	if got := w.triggerNames(); !slices.Equal(got, []string{"workflow_call"}) {
+		t.Errorf("triggers = %v, want only workflow_call", got)
+	}
+	wantOptionalSecrets(t, reconcilePath, w.call(t), "IDP_READER_PRIVATE_KEY", "IDP_STATE_PASSPHRASE", "IDP_WRITER_PRIVATE_KEY")
+	if got := slices.Sorted(maps.Keys(w.Jobs)); !slices.Equal(got, []string{"apply-github", "approve", "plan"}) {
+		t.Errorf("jobs = %v", got)
+	}
+	wantPerms(t, "plan", mustJob(t, w, "plan").Permissions, map[string]string{"contents": "read", "issues": "read", "pull-requests": "read"})
+	wantPerms(t, "approve", mustJob(t, w, "approve").Permissions, map[string]string{})
+	wantPerms(t, "apply-github", mustJob(t, w, "apply-github").Permissions, map[string]string{"contents": "read", "issues": "write"})
+}
+
+func TestReconcileIsNeverReRun(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	for _, id := range []string{"plan", "apply-github"} {
+		j := mustJob(t, w, id)
+		if len(j.Steps) == 0 || j.Steps[0].ID != "guard" {
+			t.Errorf("%s: the first step must be the guard", id)
+			continue
+		}
+		wantRun(t, id+" guard", j.Steps[0], `if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then`)
+	}
+	_, g := mustStep(t, "plan", mustJob(t, w, "plan").Steps, "guard")
+	wantEnv(t, "plan guard", g, map[string]string{"REF": "${{ github.ref }}"})
+	wantRun(t, "plan guard", g, `if [ "$REF" != refs/heads/main ]; then`)
+}
+
+func TestReconcileDiffsAgainstTheCurrentWet(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	plan := mustJob(t, w, "plan")
+	_, d := mustStep(t, "plan", plan.Steps, "diff")
+	wantEnv(t, "plan diff", d, map[string]string{"EVENT": "${{ github.event_name }}"})
+	wantRun(t, "plan diff", d,
+		`if [ "$EVENT" = workflow_dispatch ]; then all=(--all); fi`,
+		`idp diff --new "$RUNNER_TEMP/idp/out/rendered" --wet .idp/wet/rendered "${all[@]}"`,
+	)
+	want := map[string]string{
+		"wet-sha":  "${{ steps.wet.outputs.sha }}",
+		"github":   "${{ steps.stacks.outputs.github }}",
+		"changes":  "${{ steps.summary.outputs.changes }}",
+		"decision": "${{ steps.gate.outputs.decision }}",
+	}
+	if !maps.Equal(map[string]string(plan.Outputs), want) {
+		t.Errorf("plan outputs = %v, want %v", plan.Outputs, want)
+	}
+}
+
+func TestReconcileGatesWithTheWorkflowToken(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	_, g := mustStep(t, "plan", mustJob(t, w, "plan").Steps, "gate")
+	wantEnv(t, "plan gate", g, map[string]string{"GITHUB_TOKEN": "${{ github.token }}"})
+	wantRun(t, "plan gate", g, `idp gate --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --fingerprint "$RUNNER_TEMP/idp/out/fingerprint.json"`)
+	_, s := mustStep(t, "plan", mustJob(t, w, "plan").Steps, "summary")
+	wantRun(t, "plan summary", s, `--stacks "$AFFECTED"`, `--head-sha "$GITHUB_SHA"`)
+}
+
+func TestApprovalIsOneSecretlessJob(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	a := mustJob(t, w, "approve")
+	if a.Environment != "idp-approval" {
+		t.Errorf("approve environment = %q, want idp-approval", a.Environment)
+	}
+	if want := "needs.plan.outputs.decision == 'approval'"; a.If != want {
+		t.Errorf("approve if = %q, want %q", a.If, want)
+	}
+	if !slices.Equal(a.Needs, strlist{"plan"}) {
+		t.Errorf("approve needs = %v, want [plan]", a.Needs)
+	}
+}
+
+func TestApplyRunsOnlyAfterTheGate(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	a := mustJob(t, w, "apply-github")
+	want := "always() && needs.plan.result == 'success' && needs.plan.outputs.github == 'true' && (needs.plan.outputs.decision == 'auto' || needs.approve.result == 'success')"
+	if a.If != want {
+		t.Errorf("apply-github if = %q, want %q", a.If, want)
+	}
+	if a.Environment != "idp-write" {
+		t.Errorf("apply-github environment = %q, want idp-write", a.Environment)
+	}
+	if got := slices.Sorted(slices.Values(a.Needs)); !slices.Equal(got, []string{"approve", "plan"}) {
+		t.Errorf("apply-github needs = %v", got)
+	}
+}
+
+func TestApplyRefusesWhenWetMoved(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	a := mustJob(t, w, "apply-github")
+	iCheckout, co := mustStep(t, "apply-github", a.Steps, "wet-checkout")
+	wantWith(t, "apply-github wet-checkout", co, map[string]string{"ref": "wet", "path": ".idp/wet"})
+	iBase, base := mustStep(t, "apply-github", a.Steps, "wet-base")
+	wantEnv(t, "apply-github wet-base", base, map[string]string{"PLANNED": "${{ needs.plan.outputs.wet-sha }}"})
+	wantRun(t, "apply-github wet-base", base, `if [ "$(git -C .idp/wet rev-parse HEAD)" != "$PLANNED" ]; then`)
+	iApply, _ := mustStep(t, "apply-github", a.Steps, "apply")
+	if !(iCheckout < iBase && iBase < iApply) {
+		t.Errorf("apply-github must check out wet, then compare it with the plan's, then apply (got indexes %d, %d, %d)", iCheckout, iBase, iApply)
+	}
+}
+
+// writerManifestPermissions maps bootstrap/apps/writer.json to permission-*
+// inputs. metadata is left out: every installation token carries it.
+func writerManifestPermissions(t *testing.T) map[string]string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(repoRoot, "bootstrap", "apps", "writer.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		DefaultPermissions map[string]string `json:"default_permissions"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for k, v := range m.DefaultPermissions {
+		if k != "metadata" {
+			out["permission-"+strings.ReplaceAll(k, "_", "-")] = v
+		}
+	}
+	return out
+}
+
+func TestApplyTokenHasTheWriterManifestPermissions(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	_, s := mustStep(t, "apply-github", mustJob(t, w, "apply-github").Steps, "apply-token")
+	if want := "needs.plan.outputs.changes != '0'"; s.If != want {
+		t.Errorf("apply-token if = %q, want %q", s.If, want)
+	}
+	if s.With["repositories"] != "" {
+		t.Errorf("the apply token spans the installation: the claims may declare any repository (ADR-0023)")
+	}
+	got := map[string]string{}
+	for k, v := range s.With {
+		if strings.HasPrefix(k, "permission-") {
+			got[k] = v
+		}
+	}
+	if want := writerManifestPermissions(t); !maps.Equal(got, want) {
+		t.Errorf("apply token permissions = %v, want the writer manifest's %v", got, want)
+	}
+}
+
+// checkPushToken pins the wet-commit token: the claims repo only, contents:
+// write only (ADR-0023).
+func checkPushToken(t *testing.T, where string, s step) {
+	t.Helper()
+	wantWith(t, where, s, map[string]string{
+		"client-id":           "${{ vars.IDP_WRITER_CLIENT_ID }}",
+		"private-key":         "${{ secrets.IDP_WRITER_PRIVATE_KEY }}",
+		"owner":               "${{ github.repository_owner }}",
+		"repositories":        "${{ github.event.repository.name }}",
+		"permission-contents": "write",
+	})
+	for k := range s.With {
+		if strings.HasPrefix(k, "permission-") && k != "permission-contents" {
+			t.Errorf("%s: the wet-commit token must hold only contents: write, got %s", where, k)
+		}
+	}
+}
+
+func TestWetPushTokenReachesOnlyTheClaimsRepo(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	_, s := mustStep(t, "apply-github", mustJob(t, w, "apply-github").Steps, "push-token")
+	checkPushToken(t, "apply-github push-token", s)
+}
+
+func TestApplyCommitsTheRenderOnlyAfterASuccessfulApply(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	a := mustJob(t, w, "apply-github")
+	_, apply := mustStep(t, "apply-github", a.Steps, "apply")
+	if want := "needs.plan.outputs.changes != '0'"; apply.If != want {
+		t.Errorf("apply if = %q, want %q (never always(): it must not run after a failed step)", apply.If, want)
+	}
+	wantRun(t, "apply-github apply", apply, "tofu init -input=false -lockfile=readonly", `tofu apply -input=false "$RUNNER_TEMP/idp/in/github.tfplan"`)
+	_, prep := mustStep(t, "apply-github", a.Steps, "prepare")
+	if want := "always() && steps.stage.outcome == 'success'"; prep.If != want {
+		t.Errorf("prepare if = %q, want %q", prep.If, want)
+	}
+	wantEnv(t, "apply-github prepare", prep, map[string]string{
+		"CHANGES":       "${{ needs.plan.outputs.changes }}",
+		"APPLY_OUTCOME": "${{ steps.apply.outcome }}",
+		"WET_SHA":       "${{ needs.plan.outputs.wet-sha }}",
+	})
+	wantRun(t, "apply-github prepare", prep,
+		`echo "$WET_SHA" > "$root/wet-base"`,
+		`if [ "$CHANGES" = 0 ] || [ "$APPLY_OUTCOME" = success ]; then`,
+		`cp -R "$RUNNER_TEMP/idp/in/rendered/github" "$root/rendered/github"`,
+	)
+	_, push := mustStep(t, "apply-github", a.Steps, "push")
+	wantEnv(t, "apply-github push", push, map[string]string{
+		"GH_TOKEN": "${{ steps.push-token.outputs.token }}",
+		"RENDER":   "${{ steps.prepare.outputs.render }}",
+	})
+	wantRun(t, "apply-github push", push,
+		`paths=(--path tfstate/github.tfstate)`,
+		`if [ "$RENDER" = true ]; then paths+=(--path rendered/github); fi`,
+		`idp wet-push --repo "$GITHUB_REPOSITORY" --root "$RUNNER_TEMP/idp/wet-root"`,
+	)
+}
+
+func TestWetRootIsSavedBeforeThePush(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	a := mustJob(t, w, "apply-github")
+	iKeep, keep := mustStep(t, "apply-github", a.Steps, "keep")
+	iPush, push := mustStep(t, "apply-github", a.Steps, "push")
+	_, issue := mustStep(t, "apply-github", a.Steps, "issue")
+	if iKeep > iPush {
+		t.Errorf("the wet root must be uploaded before the push")
+	}
+	if want := "always() && steps.prepare.outcome == 'success'"; keep.If != want {
+		t.Errorf("keep if = %q, want %q", keep.If, want)
+	}
+	wantWith(t, "apply-github keep", keep, map[string]string{
+		"name":                 "idp-wet-root",
+		"path":                 "${{ runner.temp }}/idp/wet-root",
+		"include-hidden-files": "true",
+		"retention-days":       "7",
+		"if-no-files-found":    "error",
+	})
+	if want := "always() && steps.push-token.outcome == 'success'"; push.If != want {
+		t.Errorf("push if = %q, want %q", push.If, want)
+	}
+	if want := "always() && steps.prepare.outcome == 'success' && steps.push.outcome != 'success'"; issue.If != want {
+		t.Errorf("issue if = %q, want %q", issue.If, want)
+	}
+	wantRun(t, "apply-github issue", issue, `idp issue open --repo "$GITHUB_REPOSITORY" --label idp-wet-push --title "Wet push failed"`)
+}
+
+func TestRenderArtifactsKeepHiddenFiles(t *testing.T) {
+	// .terraform.lock.hcl and .idp-rendered are dotfiles, which upload-artifact
+	// drops by default; without the lock file the apply's tofu init fails.
+	w := loadWorkflow(t, reconcilePath)
+	_, up := mustStep(t, "plan", mustJob(t, w, "plan").Steps, "upload")
+	if want := "steps.stacks.outputs.github == 'true'"; up.If != want {
+		t.Errorf("upload if = %q, want %q", up.If, want)
+	}
+	wantWith(t, "plan upload", up, map[string]string{
+		"name":                 "idp-reconcile",
+		"path":                 "${{ runner.temp }}/idp/out",
+		"include-hidden-files": "true",
+		"retention-days":       "1",
+		"if-no-files-found":    "error",
+	})
+	a := mustJob(t, w, "apply-github")
+	_, dl := mustStep(t, "apply-github", a.Steps, "download")
+	wantWith(t, "apply-github download", dl, map[string]string{"name": "idp-reconcile", "path": "${{ runner.temp }}/idp/in"})
+	_, stage := mustStep(t, "apply-github", a.Steps, "stage")
+	wantRun(t, "apply-github stage", stage, `cp -R "$RUNNER_TEMP/idp/in/rendered" "$RUNNER_TEMP/idp/work/rendered"`)
+}
