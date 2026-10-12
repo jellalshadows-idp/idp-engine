@@ -17,7 +17,14 @@ func TestReconcileInterface(t *testing.T) {
 	if got := w.triggerNames(); !slices.Equal(got, []string{"workflow_call"}) {
 		t.Errorf("triggers = %v, want only workflow_call", got)
 	}
-	wantOptionalSecrets(t, reconcilePath, w.call(t), "IDP_READER_PRIVATE_KEY", "IDP_STATE_PASSPHRASE", "IDP_WRITER_PRIVATE_KEY")
+	// The writer key is required: an environment secret reaches a reusable workflow
+	// only when the caller passes it by name (ADR-0023). The reader key and the
+	// passphrase stay optional, so each job names the missing one (ruling P-11).
+	wantSecrets(t, reconcilePath, w.call(t), map[string]bool{
+		"IDP_READER_PRIVATE_KEY": false,
+		"IDP_STATE_PASSPHRASE":   false,
+		"IDP_WRITER_PRIVATE_KEY": true,
+	})
 	if got := slices.Sorted(maps.Keys(w.Jobs)); !slices.Equal(got, []string{"apply-github", "approve", "plan"}) {
 		t.Errorf("jobs = %v", got)
 	}
@@ -51,7 +58,7 @@ func TestReconcileRefusesWhileAWetPushIsUnrecovered(t *testing.T) {
 	}
 	wantEnv(t, "plan unrecovered", u, map[string]string{"GH_TOKEN": "${{ github.token }}"})
 	wantRun(t, "plan unrecovered", u,
-		`open="$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=idp-wet-push&state=open&per_page=100" --jq '[.[] | select(.pull_request == null)] | length')"`,
+		`open="$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=idp-wet-push&state=open&per_page=100" --jq '[.[] | select(.pull_request == null and .title == "Wet push failed" and .user.login == "github-actions[bot]")] | length')"`,
 		`if [ "$open" != 0 ]; then`,
 	)
 }

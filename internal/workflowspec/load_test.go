@@ -323,7 +323,12 @@ func stepNode(job *yaml.Node, i int) *yaml.Node {
 
 // scalars returns every scalar value under n; mapping keys are excluded.
 func scalars(n *yaml.Node) []string {
-	if n == nil {
+	return scalarsExcept(n, nil)
+}
+
+// scalarsExcept is scalars without the value of the skip node.
+func scalarsExcept(n, skip *yaml.Node) []string {
+	if n == nil || n == skip {
 		return nil
 	}
 	switch n.Kind {
@@ -332,13 +337,13 @@ func scalars(n *yaml.Node) []string {
 	case yaml.MappingNode:
 		var out []string
 		for i := 1; i < len(n.Content); i += 2 {
-			out = append(out, scalars(n.Content[i])...)
+			out = append(out, scalarsExcept(n.Content[i], skip)...)
 		}
 		return out
 	}
 	var out []string
 	for _, c := range n.Content {
-		out = append(out, scalars(c)...)
+		out = append(out, scalarsExcept(c, skip)...)
 	}
 	return out
 }
@@ -456,19 +461,17 @@ func wantOptionalSecrets(t *testing.T, where string, c callSpec, names ...string
 	}
 }
 
-// mentions reports whether a step's run, if, with or env text contains sub.
-func mentions(s step, sub string) bool {
-	if strings.Contains(s.Run, sub) || strings.Contains(s.If, sub) {
-		return true
+// wantSecrets checks that a reusable workflow declares exactly these secrets,
+// each required (true) or optional (false).
+func wantSecrets(t *testing.T, where string, c callSpec, want map[string]bool) {
+	t.Helper()
+	got := map[string]bool{}
+	for n, s := range c.Secrets {
+		got[n] = s.Required
 	}
-	for _, m := range []strmap{s.With, s.Env} {
-		for _, v := range m {
-			if strings.Contains(v, sub) {
-				return true
-			}
-		}
+	if !maps.Equal(got, want) {
+		t.Errorf("%s: secrets (name: required) = %v, want %v", where, got, want)
 	}
-	return false
 }
 
 // commandFields splits one script line into fields, or returns nil for lines

@@ -67,9 +67,7 @@ func TestTemplatesCallTheirReusableWorkflowAtOneCommit(t *testing.T) {
 		}
 		want := map[string]string{}
 		for s := range loadWorkflow(t, ".github/workflows/"+name).call(t).Secrets {
-			if s != "IDP_WRITER_PRIVATE_KEY" { // lives only in the idp-write environment (ADR-0023)
-				want[s] = "${{ secrets." + s + " }}"
-			}
+			want[s] = "${{ secrets." + s + " }}"
 		}
 		if !maps.Equal(map[string]string(passed), want) {
 			t.Errorf("%s: secrets passed = %v, want %v", name, passed, want)

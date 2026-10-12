@@ -27,3 +27,5 @@ jobs:
       issues: write
     with:
       run-id: ${{ inputs.run-id }}
+    secrets:
+      IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}

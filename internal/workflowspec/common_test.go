@@ -3,6 +3,7 @@ package workflowspec
 import (
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -98,9 +99,19 @@ func TestBotWritesUseTheWorkflowToken(t *testing.T) {
 	}
 }
 
+// writerKeyCaller matches a call of the engine workflows whose idp-write jobs
+// read the writer key. GitHub hands an environment secret to a reusable
+// workflow only when the caller passes it by name (ADR-0023).
+var writerKeyCaller = regexp.MustCompile(`/idp-engine/\.github/workflows/(reconcile|recover)\.yaml@`)
+
+// writerKeyByName is the one value a caller may pass as IDP_WRITER_PRIVATE_KEY.
+const writerKeyByName = "${{ secrets.IDP_WRITER_PRIVATE_KEY }}"
+
 // writerKeyErrors reports every way a workflow can leak the writer key or let
 // the approval job touch a secret. It scans every scalar under a job, not only
 // the steps: job env, with, outputs and a caller job's secrets: block count too.
+// Inside a workflow only idp-write jobs may read the key; a caller job may only
+// pass it by name to the engine's reconcile or recover workflow.
 func writerKeyErrors(w *workflow) []string {
 	var errs []string
 	for k, v := range w.Env {
@@ -119,6 +130,16 @@ func writerKeyErrors(w *workflow) []string {
 		if j.Secrets.Kind == yaml.ScalarNode && j.Secrets.Value == "inherit" {
 			errs = append(errs, where+": secrets: inherit hands every secret to the called workflow; pass named secrets")
 		}
+		// byName is the one value the scan below lets through: the writer key that
+		// a caller job passes by name to the engine's reconcile or recover workflow.
+		var byName *yaml.Node
+		if passed := mapValue(mapValue(node, "secrets"), "IDP_WRITER_PRIVATE_KEY"); passed != nil {
+			if writerKeyCaller.MatchString(j.Uses) && passed.Kind == yaml.ScalarNode && passed.Value == writerKeyByName {
+				byName = passed
+			} else {
+				errs = append(errs, fmt.Sprintf("%s: passes IDP_WRITER_PRIVATE_KEY; only a caller of the engine's reconcile or recover workflow may, and only as %s (ADR-0023)", where, writerKeyByName))
+			}
+		}
 		for _, s := range scalars(node) {
 			if strings.Contains(s, "secrets[") || strings.Contains(s, "toJSON(secrets") {
 				errs = append(errs, fmt.Sprintf("%s: %q reaches secrets without naming them", where, s))
@@ -132,7 +153,7 @@ func writerKeyErrors(w *workflow) []string {
 		var units []unit
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			if node.Content[i].Value != "steps" {
-				units = append(units, unit{"job level", scalars(node.Content[i+1])})
+				units = append(units, unit{"job level", scalarsExcept(node.Content[i+1], byName)})
 			}
 		}
 		for i, s := range j.Steps {
@@ -142,8 +163,13 @@ func writerKeyErrors(w *workflow) []string {
 		}
 		for _, u := range units {
 			for _, s := range u.text {
-				if j.Environment != "idp-write" && strings.Contains(s, "IDP_WRITER_PRIVATE_KEY") {
-					errs = append(errs, fmt.Sprintf("%s: %s reads the writer key outside environment idp-write", where, u.label))
+				if strings.Contains(s, "IDP_WRITER_PRIVATE_KEY") {
+					switch {
+					case j.Uses != "":
+						errs = append(errs, fmt.Sprintf("%s: %s hands the writer key to a called workflow other than by name to the engine's reconcile or recover workflow (ADR-0023)", where, u.label))
+					case j.Environment != "idp-write":
+						errs = append(errs, fmt.Sprintf("%s: %s reads the writer key outside environment idp-write", where, u.label))
+					}
 				}
 				if j.Environment == "idp-approval" && strings.Contains(s, "secrets.") {
 					errs = append(errs, fmt.Sprintf("%s: %s reads a secret; the approval job holds none (spec §6.2)", where, u.label))

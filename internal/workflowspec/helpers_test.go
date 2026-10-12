@@ -166,6 +166,56 @@ jobs:
     secrets:
       IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
 `, true},
+		{"key passed to the pr workflow", `
+jobs:
+  pr:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/pr.yaml@0123456789abcdef0123456789abcdef01234567
+    secrets:
+      IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+`, true},
+		{"key passed to the drift workflow", `
+jobs:
+  drift:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/drift.yaml@0123456789abcdef0123456789abcdef01234567
+    secrets:
+      IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+`, true},
+		{"key passed by name to the reconcile workflow", `
+jobs:
+  reconcile:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/reconcile.yaml@0123456789abcdef0123456789abcdef01234567
+    secrets:
+      IDP_READER_PRIVATE_KEY: ${{ secrets.IDP_READER_PRIVATE_KEY }}
+      IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+`, false},
+		{"key passed by name to the recover workflow", `
+jobs:
+  recover:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/recover.yaml@0123456789abcdef0123456789abcdef01234567
+    secrets:
+      IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+`, false},
+		{"another secret passed as the key to the reconcile workflow", `
+jobs:
+  reconcile:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/reconcile.yaml@0123456789abcdef0123456789abcdef01234567
+    secrets:
+      IDP_WRITER_PRIVATE_KEY: ${{ secrets.OTHER }}
+`, true},
+		{"key passed under a second name to the reconcile workflow", `
+jobs:
+  reconcile:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/reconcile.yaml@0123456789abcdef0123456789abcdef01234567
+    secrets:
+      IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+      OTHER: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+`, true},
+		{"secrets inherit to the reconcile workflow", `
+jobs:
+  reconcile:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/reconcile.yaml@0123456789abcdef0123456789abcdef01234567
+    secrets: inherit
+`, true},
 		{"secret in workflow-level env", `
 env:
   K: ${{ secrets.ANYTHING }}
