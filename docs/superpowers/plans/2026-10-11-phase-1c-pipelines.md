@@ -2169,7 +2169,7 @@ on:
         description: The OpenTofu state passphrase (repo secret).
         required: false
       IDP_WRITER_PRIVATE_KEY:
-        description: The writer App's private key. The caller passes it by name; it resolves only in the jobs that reference the idp-write environment, which holds it (ADR-0023).
+        description: Never pass it. The apply job reads it from the idp-write environment, which takes precedence (ADR-0023).
         required: false
 
 permissions: {}
@@ -2874,7 +2874,7 @@ on:
         type: string
     secrets:
       IDP_WRITER_PRIVATE_KEY:
-        description: The writer App's private key. The caller passes it by name; it resolves only in the jobs that reference the idp-write environment, which holds it (ADR-0023).
+        description: Never pass it. The job reads it from the idp-write environment, which takes precedence (ADR-0023).
         required: false
 
 permissions: {}
