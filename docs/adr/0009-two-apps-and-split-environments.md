@@ -28,6 +28,8 @@ There are **two GitHub Apps** and **two environments**, with three secret scopes
 - Tokens are minted per job with `actions/create-github-app-token` and expire after 1 hour.
 - The `wet` ruleset lets only `idp-writer` update it (§7.4).
 
+*(Amended by ADR-0025, 2026-10-12: the reconcile plan and the drift plan refresh with the writer token in environment idp-write; PR plans and the drift bootstrap check keep the reader.)*
+
 ## Consequences
 
 ### Positive

@@ -560,8 +560,10 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 **who can write**, and limits the blast radius of a leaked credential.
 - **Fork contributors** get nothing (§6.1).
 - **Members who can push branches** can propose claims, and a plan executes module
-  code. That is why modules are allowlisted and pinned, plan-time tokens are
-  read-only, and the write key is out of reach of PR runs.
+  code. That is why modules are allowlisted and pinned, PR plan tokens are
+  read-only, and the write key is out of reach of PR runs; the reconcile and drift
+  plans run on main only and use the writer token (ADR-0025).
+  *(Amendment A7, 2026-10-12.)*
 
 ### 7.2 Encrypted state
 - The render emits `encryption { state { enforced = true } plan { enforced = true } }`.
