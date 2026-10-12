@@ -43,8 +43,11 @@ jobs:
           go-version-file: go.mod
       - name: actionlint
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: actionlint (claims repo templates)
+        # concurrency.queue is a documented GitHub key (spec §6.2) that actionlint v1.7.12 does not know yet.
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -ignore 'unexpected key "queue" for "concurrency" section' examples/claims-repo/.github/workflows/*.yaml
       - name: zizmor
-        run: pipx run zizmor==1.30.1 .github/workflows .github/actions/setup-idp/action.yaml
+        run: pipx run zizmor==1.30.1 .github/workflows .github/actions/setup-idp/action.yaml examples/claims-repo/.github/workflows/*.yaml
 
   modules:
     runs-on: ubuntu-24.04
