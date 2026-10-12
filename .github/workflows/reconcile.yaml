@@ -52,6 +52,16 @@ jobs:
             echo "::error::a reconcile run is never re-run, because its plan may be stale: dispatch the reconcile workflow instead (docs/runbooks/pipelines.md)"
             exit 1
           fi
+      - name: refuse while a wet push is unrecovered
+        id: unrecovered
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open="$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=idp-wet-push&state=open&per_page=100" --jq '[.[] | select(.pull_request == null)] | length')"
+          if [ "$open" != 0 ]; then
+            echo "::error::an idp-wet-push issue is open: an earlier reconcile applied changes it could not commit to wet, so wet is older than the real resources. Run the idp-recover workflow first (docs/runbooks/pipelines.md#a-wet-push-failed)."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -87,7 +97,9 @@ jobs:
           persist-credentials: false
       - name: record the wet commit
         id: wet
-        run: echo "sha=$(git -C .idp/wet rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          sha="$(git -C .idp/wet rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: render the claims
         id: render
         run: |

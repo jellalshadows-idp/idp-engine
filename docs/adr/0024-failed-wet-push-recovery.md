@@ -12,6 +12,7 @@ After an apply, the runner holds the only copy of the new state until `idp wet-p
 
 - Before every push, `apply-github` writes the exact tree it commits (`tfstate/github.tfstate`, plus `rendered/github` when the apply succeeded or had nothing to apply) and a `wet-base` file with the `wet` commit its plan read. It uploads that tree as the artifact `idp-wet-root`, kept 7 days, hidden files included.
 - If the push fails, the job opens one issue labelled `idp-wet-push`, titled "Wet push failed", that links the runbook, and the run fails.
+- While an `idp-wet-push` issue is open, the reconcile `plan` job refuses to run: until the recovery commits the saved tree, `wet` is older than the real resources, and a plan against it would re-plan what the lost apply already did. The `recover` workflow closes the issue, which unblocks the next reconcile.
 - The `recover` workflow (a dispatch with the run id, in environment `idp-write`) checks that the run is a failed reconcile of `main`, downloads its `idp-wet-root`, refuses when `wet` no longer points at `wet-base`, then commits the tree with the wet-commit token (ADR-0023) and closes the issue.
 - A reconcile run is never re-run: `plan` and `apply-github` refuse a second attempt, and `apply-github` refuses when `wet` moved since its plan. A failed reconcile is retried with a new dispatch.
 
@@ -26,6 +27,7 @@ After an apply, the runner holds the only copy of the new state until `idp wet-p
 
 - When `wet` moved, or after 7 days, the recovery refuses, and the state must be rebuilt with `import` blocks (spec §7.7).
 - Artifacts of a public repo are public. The state in them is encrypted, like the state in `wet` (ADR-0002).
+- A runner lost between the apply and the issue leaves no issue, so the guard cannot see it. That window is accepted; the run shows as failed or cancelled, and the runbook says to check `wet` against the run before dispatching.
 - A whole-run re-run after a transient plan failure is refused too; the runbook says to dispatch instead.
 
 ## Alternatives considered

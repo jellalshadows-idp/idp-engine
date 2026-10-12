@@ -41,6 +41,21 @@ func TestReconcileIsNeverReRun(t *testing.T) {
 	wantRun(t, "plan guard", g, `if [ "$REF" != refs/heads/main ]; then`)
 }
 
+func TestReconcileRefusesWhileAWetPushIsUnrecovered(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	plan := mustJob(t, w, "plan")
+	iGuard, _ := mustStep(t, "plan", plan.Steps, "guard")
+	iUnrec, u := mustStep(t, "plan", plan.Steps, "unrecovered")
+	if iUnrec != iGuard+1 {
+		t.Errorf("the unrecovered-push check must come right after the guard, before anything reads wet")
+	}
+	wantEnv(t, "plan unrecovered", u, map[string]string{"GH_TOKEN": "${{ github.token }}"})
+	wantRun(t, "plan unrecovered", u,
+		`open="$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=idp-wet-push&state=open&per_page=100" --jq '[.[] | select(.pull_request == null)] | length')"`,
+		`if [ "$open" != 0 ]; then`,
+	)
+}
+
 func TestReconcileDiffsAgainstTheCurrentWet(t *testing.T) {
 	w := loadWorkflow(t, reconcilePath)
 	plan := mustJob(t, w, "plan")
@@ -202,6 +217,11 @@ func TestApplyCommitsTheRenderOnlyAfterASuccessfulApply(t *testing.T) {
 		`if [ "$CHANGES" = 0 ] || [ "$APPLY_OUTCOME" = success ]; then`,
 		`cp -R "$RUNNER_TEMP/idp/in/rendered/github" "$root/rendered/github"`,
 	)
+	stateCopy := strings.Index(prep.Run, `cp "$RUNNER_TEMP/idp/work/tfstate/github.tfstate" "$root/tfstate/github.tfstate"`)
+	renderBranch := strings.Index(prep.Run, `if [ "$CHANGES" = 0 ] || [ "$APPLY_OUTCOME" = success ]; then`)
+	if stateCopy < 0 || renderBranch < 0 || stateCopy > renderBranch {
+		t.Errorf("prepare must copy the state before, and outside, the render branch: the state is committed even when the apply failed")
+	}
 	_, push := mustStep(t, "apply-github", a.Steps, "push")
 	wantEnv(t, "apply-github push", push, map[string]string{
 		"GH_TOKEN": "${{ steps.push-token.outputs.token }}",
