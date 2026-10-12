@@ -6,13 +6,13 @@
 
 ## Context
 
-After an apply, the runner holds the only copy of the new state until `idp wet-push` commits it (spec §6.2). If the push fails (an API error, an expired token, a lost runner), the next reconcile would plan against the old state in `wet` while the real resources already changed. Re-running the apply job has the same problem: it would apply its saved plan onto the state that plan read, even when `wet` moved since.
+After an apply, the runner holds the only copy of the new state until `idp wet-push` commits it (spec §6.2). If the push fails (an API error, an expired token; a lost runner opens no issue and is outside the recovery), the next reconcile would plan against the old state in `wet` while the real resources already changed. Re-running the apply job has the same problem: it would apply its saved plan onto the state that plan read, even when `wet` moved since.
 
 ## Decision
 
 - Before every push, `apply-github` writes the exact tree it commits (`tfstate/github.tfstate`, plus `rendered/github` when the apply succeeded or had nothing to apply) and a `wet-base` file with the `wet` commit its plan read. It uploads that tree as the artifact `idp-wet-root`, kept 7 days, hidden files included.
 - Once the apply step has started it runs to completion even if the run is cancelled, so OpenTofu always saves the state it reached and the job commits it.
-- If the push fails, the job opens one issue labelled `idp-wet-push`, titled "Wet push failed", that links the runbook, and the run fails.
+- If the push fails, the job opens one issue labelled `idp-wet-push`, titled "Wet push failed", that links the runbook, and the run fails (or ends cancelled).
 - While there is an open "Wet push failed" issue opened by `github-actions[bot]` (label `idp-wet-push`), the reconcile `plan` job refuses to run: until the recovery commits the saved tree, `wet` is older than the real resources, and a plan against it would re-plan what the lost apply already did. The `recover` workflow closes the issue, which unblocks the next reconcile.
 - The `recover` workflow (a dispatch with the run id, in environment `idp-write`) checks that the run is a failed or cancelled reconcile of `main` and that the open `idp-wet-push` issue names it, downloads its `idp-wet-root`, refuses when `wet` no longer points at `wet-base`, then commits the tree with the wet-commit token (ADR-0023) and closes the issue.
 - A reconcile run is never re-run: `plan` and `apply-github` refuse a second attempt, and `apply-github` refuses when `wet` moved since its plan. A failed reconcile is retried with a new dispatch.

@@ -2,9 +2,9 @@
 
 The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. Desired state lives in claims (YAML in Git), with no Kubernetes involved.
 
-> **Status:** Phase 1b is complete: every pipeline subcommand (`diff`, `plan-summary`, `gate`, `comment`, `issue`, `wet-push`, `encryption-env`) and a drift-ready `bootstrap check` ship with tests; see the [phase 1b log](docs/phases/phase-1b.md). Phase 1c (the reusable workflows and a live smoke run) is next, so nothing is reconciled automatically yet.
+> **Status:** Phase 1c is complete: the reusable `pr`, `reconcile`, `drift` and `recover` workflows reconcile a claims repo end to end, proven by a live smoke run in `idp-claims-e2e`; see the [phase 1c log](docs/phases/phase-1c.md) and [docs/pipelines.md](docs/pipelines.md). Phase 1d (the E2E harness and the first release) is next.
 
-**What exists today:** `idp-claims` and `idp-claims-e2e` are bootstrapped and protected. Phase 1b (pipeline commands) is complete; Phase 1c (reusable workflows) is next.
+**What exists today:** `idp-claims-e2e` runs the pipelines against the org; `idp-claims` is bootstrapped and protected, and gets its workflows with the first release.
 
 - Design: [docs/superpowers/specs/2026-10-08-idp-on-actions-design.md](docs/superpowers/specs/2026-10-08-idp-on-actions-design.md)
 - Decisions: [docs/adr/](docs/adr/)
