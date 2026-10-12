@@ -1,0 +1,41 @@
+name: idp-pr
+
+# Claims repo caller of the engine's PR pipeline (docs/pipelines.md). Keep the
+# pinned engine commit identical in all four idp workflows. The idp-gate job is
+# the check the main ruleset requires (ADR-0022): keep its name, and add no path
+# filters, so every pull request reports it.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: idp-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/pr.yaml@90b8f553b1c2c0cdc0a46722ac775d88aad11fa4 # unreleased
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets:
+      IDP_READER_PRIVATE_KEY: ${{ secrets.IDP_READER_PRIVATE_KEY }}
+      IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}
+
+  idp-gate:
+    name: idp-gate
+    needs: pr
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: require the idp pipeline
+        env:
+          RESULT: ${{ needs.pr.result }}
+        run: |
+          echo "idp pipeline: $RESULT"
+          test "$RESULT" = success

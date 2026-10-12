@@ -1,0 +1,28 @@
+name: idp-reconcile
+
+# Claims repo caller of the engine's reconcile pipeline (docs/pipelines.md).
+# A dispatch is the recovery button: it plans every stack against the current
+# wet. Never re-run a reconcile run; dispatch a new one (ADR-0024).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: idp-wet
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  reconcile:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/reconcile.yaml@90b8f553b1c2c0cdc0a46722ac775d88aad11fa4 # unreleased
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    secrets:
+      IDP_READER_PRIVATE_KEY: ${{ secrets.IDP_READER_PRIVATE_KEY }}
+      IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}

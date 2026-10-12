@@ -1,0 +1,27 @@
+name: idp-drift
+
+# Claims repo caller of the engine's drift check (docs/pipelines.md). GitHub
+# disables schedules in public repos after 60 days without activity; re-enable
+# with: gh workflow enable drift.yaml
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: idp-wet
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  drift:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/drift.yaml@90b8f553b1c2c0cdc0a46722ac775d88aad11fa4 # unreleased
+    permissions:
+      contents: read
+      issues: write
+    secrets:
+      IDP_READER_PRIVATE_KEY: ${{ secrets.IDP_READER_PRIVATE_KEY }}
+      IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}
