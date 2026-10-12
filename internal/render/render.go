@@ -57,12 +57,12 @@ func githubStack(m *claims.Model, opts Options) map[string]any {
 	for _, g := range m.Groups {
 		members := make([]map[string]any, 0, len(g.Members))
 		for _, mem := range g.Members {
-			members = append(members, map[string]any{"user": mem.User, "role": mem.Role})
+			members = append(members, map[string]any{"user": literal(mem.User), "role": literal(mem.Role)})
 		}
 		modules["group_"+g.Name] = map[string]any{
 			"source":      moduleSource(opts, "group"),
-			"name":        g.Name,
-			"description": g.Description,
+			"name":        literal(g.Name),
+			"description": literal(g.Description),
 			"members":     members,
 		}
 	}
@@ -71,11 +71,15 @@ func githubStack(m *claims.Model, opts Options) map[string]any {
 		for _, e := range c.Environments {
 			envs[e] = map[string]any{"protected": p.Environments[e].Protected}
 		}
+		topics := make([]string, 0, len(c.GitHub.Topics))
+		for _, t := range c.GitHub.Topics {
+			topics = append(topics, literal(t))
+		}
 		modules["component_"+c.Name] = map[string]any{
 			"source":             moduleSource(opts, "component"),
-			"name":               c.Name,
-			"description":        c.Description,
-			"topics":             append([]string{}, c.GitHub.Topics...),
+			"name":               literal(c.Name),
+			"description":        literal(c.Description),
+			"topics":             topics,
 			"owner_team_id":      fmt.Sprintf("${module.group_%s.team_id}", c.OwnerGroup()),
 			"environments":       envs,
 			"required_approvals": p.RequiredApprovals(),
@@ -102,6 +106,12 @@ func githubStack(m *claims.Model, opts Options) map[string]any {
 		doc["module"] = modules
 	}
 	return doc
+}
+
+// literal escapes s so OpenTofu renders it verbatim. OpenTofu evaluates ${ and %{
+// inside JSON strings as template syntax, and claim text is data, never code.
+func literal(s string) string {
+	return strings.NewReplacer("${", "$${", "%{", "%%{").Replace(s)
 }
 
 func moduleSource(opts Options, module string) string {

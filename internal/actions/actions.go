@@ -36,10 +36,10 @@ func ErrorAnnotation(file string, line int, title, message string) string {
 	return cmd + "::" + dataEscaper.Replace(message)
 }
 
-// SetOutput appends a step output to the GITHUB_OUTPUT file at path.
 // Mask returns the workflow command that tells the runner to redact value in all later log output.
 func Mask(value string) string { return "::add-mask::" + dataEscaper.Replace(value) }
 
+// SetOutput appends a step output to the GITHUB_OUTPUT file at path.
 func SetOutput(path, name, value string) error { return appendEntry(path, name, value) }
 
 // SetEnv appends a variable for later steps to the GITHUB_ENV file at path.

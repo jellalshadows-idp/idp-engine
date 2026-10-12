@@ -1,7 +1,7 @@
 apiVersion: idp/v1
 kind: Component
 name: api
-description: Orders API
+description: Orders API ${not.evaluated} %{ literal }
 owner: group:platform
 environments: [dev, pro]
 github:

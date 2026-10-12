@@ -1,0 +1,188 @@
+name: idp-drift
+
+# Reusable drift check (spec §6.4): plan the wet render with a writer token in
+# idp-write, which can see admin-only repository fields (ADR-0025), check the
+# bootstrap protections with the reader token (ADR-0017), and keep one drift
+# issue open while anything drifted. There is no auto-remediation. The run fails
+# only when the check cannot run (spec amendment A6).
+
+on:
+  workflow_call:
+    secrets:
+      IDP_READER_PRIVATE_KEY:
+        description: The reader App's private key (repo secret).
+        required: false
+      IDP_STATE_PASSPHRASE:
+        description: The OpenTofu state passphrase (repo secret).
+        required: false
+      IDP_WRITER_PRIVATE_KEY:
+        description: The writer App's private key. The caller passes it by name; it resolves only in the jobs that reference the idp-write environment, which holds it (ADR-0023).
+        required: true
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  drift:
+    name: drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: idp-write
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: check the repository configuration
+        id: config
+        env:
+          READER_CLIENT_ID: ${{ vars.IDP_READER_CLIENT_ID }}
+          BOOTSTRAP: ${{ vars.IDP_BOOTSTRAP }}
+          READER_KEY_SET: ${{ secrets.IDP_READER_PRIVATE_KEY != '' }}
+          PASSPHRASE_SET: ${{ secrets.IDP_STATE_PASSPHRASE != '' }}
+          WRITER_CLIENT_ID: ${{ vars.IDP_WRITER_CLIENT_ID }}
+          WRITER_KEY_SET: ${{ secrets.IDP_WRITER_PRIVATE_KEY != '' }}
+        run: |
+          missing=""
+          [ -n "$READER_CLIENT_ID" ] || missing="$missing variable IDP_READER_CLIENT_ID,"
+          [ -n "$BOOTSTRAP" ] || missing="$missing variable IDP_BOOTSTRAP,"
+          [ "$READER_KEY_SET" = true ] || missing="$missing secret IDP_READER_PRIVATE_KEY,"
+          [ "$PASSPHRASE_SET" = true ] || missing="$missing secret IDP_STATE_PASSPHRASE,"
+          [ -n "$WRITER_CLIENT_ID" ] || missing="$missing environment variable IDP_WRITER_CLIENT_ID,"
+          [ "$WRITER_KEY_SET" = true ] || missing="$missing environment secret IDP_WRITER_PRIVATE_KEY,"
+          if [ -n "$missing" ]; then
+            echo "::error::the drift job is missing:${missing%,}. Check that the caller passes IDP_READER_PRIVATE_KEY, IDP_STATE_PASSPHRASE and IDP_WRITER_PRIVATE_KEY and that the idp-write environment holds the writer key and IDP_WRITER_CLIENT_ID (docs/pipelines.md); re-run the bootstrap for a missing variable (docs/runbooks/bootstrap.md)."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: wet
+          path: .idp/wet
+          persist-credentials: false
+      - name: inspect wet
+        id: wet
+        run: |
+          sha="$(git -C .idp/wet rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ -f .idp/wet/rendered/github/main.tf.json ]; then
+            echo "stack=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::wet has no github stack yet: only the bootstrap protections are checked"
+            echo "stack=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: mint the reader token
+        id: reader
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0 # zizmor: ignore[github-app] the read-only reader App reads the org settings and the claims repo for the bootstrap check (ADR-0023)
+        with:
+          client-id: ${{ vars.IDP_READER_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_READER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+      - name: mint the writer token for the plan
+        id: plan-token
+        if: steps.wet.outputs.stack == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.IDP_WRITER_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }} # zizmor: ignore[github-app] the plan reads every repository the claims declare, including admin-only fields (ADR-0025)
+          permission-administration: write
+          permission-contents: write
+          permission-environments: write
+          permission-members: write
+          permission-workflows: write
+      - name: export TF_ENCRYPTION
+        id: encryption
+        if: steps.wet.outputs.stack == 'true'
+        env:
+          IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}
+        run: idp encryption-env
+      - name: plan the github stack from wet
+        id: plan
+        if: steps.wet.outputs.stack == 'true'
+        working-directory: .idp/wet/rendered/github
+        env:
+          GITHUB_TOKEN: ${{ steps.plan-token.outputs.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/idp/plans"
+          tofu init -input=false -lockfile=readonly
+          code=0
+          tofu plan -input=false -lock=false -detailed-exitcode -out="$RUNNER_TEMP/idp/plans/github.tfplan" || code=$?
+          case "$code" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::the drift plan failed (exit $code)"; exit 1 ;;
+          esac
+          tofu show -json "$RUNNER_TEMP/idp/plans/github.tfplan" > "$RUNNER_TEMP/idp/plans/github.json"
+      - name: summarize the drift plan
+        id: summary
+        if: steps.wet.outputs.stack == 'true'
+        env:
+          WET_SHA: ${{ steps.wet.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/idp/out"
+          idp plan-summary --stacks '["github"]' --head-sha "$WET_SHA" --run-url "$RUN_URL" \
+            --comment-out "$RUNNER_TEMP/idp/out/plan.md" \
+            --fingerprint-out "$RUNNER_TEMP/idp/out/fingerprint.json" \
+            --plan "github=$RUNNER_TEMP/idp/plans/github.json"
+      - name: check the bootstrap protections
+        id: check
+        env:
+          GH_TOKEN: ${{ steps.reader.outputs.token }}
+          IDP_BOOTSTRAP: ${{ vars.IDP_BOOTSTRAP }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/idp/out"
+          code=0
+          idp bootstrap check --org "$GITHUB_REPOSITORY_OWNER" --claims-repo "${GITHUB_REPOSITORY#*/}" \
+            --params-env IDP_BOOTSTRAP --allow-hidden-bypass > "$RUNNER_TEMP/idp/out/bootstrap.txt" 2>&1 || code=$?
+          cat "$RUNNER_TEMP/idp/out/bootstrap.txt"
+          case "$code" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            3) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::idp bootstrap check could not run (exit $code)"; exit 1 ;;
+          esac
+      - name: report
+        id: report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PLAN_DRIFT: ${{ steps.plan.outputs.drift }}
+          CHECK_DRIFT: ${{ steps.check.outputs.drift }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$PLAN_DRIFT" != true ] && [ "$CHECK_DRIFT" != true ]; then
+            idp issue close --repo "$GITHUB_REPOSITORY" --label drift --title "Drift detected" --comment "No drift found by $RUN_URL."
+            exit 0
+          fi
+          body="$RUNNER_TEMP/idp/out/drift-issue.md"
+          {
+            echo "The drift check $RUN_URL found differences. Fix the claims, or run the reconcile workflow; nothing is remediated automatically."
+            echo
+            if [ "$PLAN_DRIFT" = true ]; then
+              echo "## GitHub stack"
+              echo
+              cat "$RUNNER_TEMP/idp/out/plan.md"
+              echo
+            fi
+            if [ "$CHECK_DRIFT" = true ]; then
+              echo "## Bootstrap protections"
+              echo
+              echo '```text'
+              head -c 4000 "$RUNNER_TEMP/idp/out/bootstrap.txt"
+              echo
+              echo '```'
+            fi
+          } > "$body"
+          idp issue open --repo "$GITHUB_REPOSITORY" --label drift --title "Drift detected" --body-file "$body"
+          echo "::warning::drift found: see the open drift issue"

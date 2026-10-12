@@ -1,0 +1,8 @@
+# actionlint configuration. Every ignore is narrow and says why.
+paths:
+  .github/workflows/*.yaml:
+    ignore:
+      # job.workflow_repository and job.workflow_sha are documented job-context
+      # properties (the reusable workflow's own repository and commit, ADR-0021)
+      # that actionlint v1.7.12 does not know yet.
+      - 'property "workflow_(repository|sha)" is not defined in object type'

@@ -1,0 +1,370 @@
+name: idp-reconcile
+
+# Reusable reconcile pipeline (spec §6.2): re-render and diff against the current
+# wet, plan, gate, wait for approval when the gate asks for it, apply the saved
+# plan, and commit the state and the render to wet in one commit (ADR-0019).
+# The plan runs in idp-write and refreshes with a writer token, which can see
+# admin-only repository fields (ADR-0025).
+# A run is never re-run; a failed run is retried with a new dispatch (ADR-0024).
+
+on:
+  workflow_call:
+    secrets:
+      IDP_STATE_PASSPHRASE:
+        description: The OpenTofu state passphrase (repo secret).
+        required: false
+      IDP_WRITER_PRIVATE_KEY:
+        description: The writer App's private key. The caller passes it by name; it resolves only in the jobs that reference the idp-write environment, which holds it (ADR-0023).
+        required: true
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: idp-write
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      wet-sha: ${{ steps.wet.outputs.sha }}
+      github: ${{ steps.stacks.outputs.github }}
+      changes: ${{ steps.summary.outputs.changes }}
+      decision: ${{ steps.gate.outputs.decision }}
+    steps:
+      - name: reconcile main, once
+        id: guard
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != refs/heads/main ]; then
+            echo "::error::the reconcile runs only on main"
+            exit 1
+          fi
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::a reconcile run is never re-run, because its plan may be stale: dispatch the reconcile workflow instead (docs/runbooks/pipelines.md)"
+            exit 1
+          fi
+      - name: refuse while a wet push is unrecovered
+        id: unrecovered
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open="$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=idp-wet-push&state=open&per_page=100" --jq '[.[] | select(.pull_request == null and .title == "Wet push failed" and .user.login == "github-actions[bot]")] | length')"
+          if [ "$open" != 0 ]; then
+            echo "::error::an idp-wet-push issue is open: an earlier reconcile applied changes it could not commit to wet, so wet is older than the real resources. Run the idp-recover workflow first (docs/runbooks/pipelines.md#a-wet-push-failed)."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: check the repository configuration
+        id: config
+        env:
+          WRITER_CLIENT_ID: ${{ vars.IDP_WRITER_CLIENT_ID }}
+          WRITER_KEY_SET: ${{ secrets.IDP_WRITER_PRIVATE_KEY != '' }}
+          PASSPHRASE_SET: ${{ secrets.IDP_STATE_PASSPHRASE != '' }}
+        run: |
+          missing=""
+          [ -n "$WRITER_CLIENT_ID" ] || missing="$missing environment variable IDP_WRITER_CLIENT_ID,"
+          [ "$WRITER_KEY_SET" = true ] || missing="$missing environment secret IDP_WRITER_PRIVATE_KEY,"
+          [ "$PASSPHRASE_SET" = true ] || missing="$missing secret IDP_STATE_PASSPHRASE,"
+          if [ -n "$missing" ]; then
+            echo "::error::the plan job is missing:${missing%,}. Check that the caller passes IDP_WRITER_PRIVATE_KEY and IDP_STATE_PASSPHRASE and that the idp-write environment holds the writer key and IDP_WRITER_CLIENT_ID (docs/pipelines.md)."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: wet
+          path: .idp/wet
+          persist-credentials: false
+      - name: record the wet commit
+        id: wet
+        run: |
+          sha="$(git -C .idp/wet rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: render the claims
+        id: render
+        run: |
+          idp render --out "$RUNNER_TEMP/idp/out/rendered"
+          mkdir -p "$RUNNER_TEMP/idp/work"
+          cp -R "$RUNNER_TEMP/idp/out/rendered" "$RUNNER_TEMP/idp/work/rendered"
+      - name: diff against wet
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          all=()
+          if [ "$EVENT" = workflow_dispatch ]; then all=(--all); fi
+          idp diff --new "$RUNNER_TEMP/idp/out/rendered" --wet .idp/wet/rendered "${all[@]}"
+      - name: check the affected stacks
+        id: stacks
+        env:
+          AFFECTED: ${{ steps.diff.outputs.affected }}
+        run: |
+          if ! jq -e 'all(.[]; . == "github")' <<<"$AFFECTED" >/dev/null; then
+            echo "::error::this engine version reconciles only the github stack; affected: $AFFECTED"
+            exit 1
+          fi
+          echo "github=$(jq -r 'any(.[]; . == "github")' <<<"$AFFECTED")" >> "$GITHUB_OUTPUT"
+      - name: mint the writer token for the plan
+        id: plan-token
+        if: steps.stacks.outputs.github == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.IDP_WRITER_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }} # zizmor: ignore[github-app] the plan reads every repository the claims declare, including admin-only fields (ADR-0025)
+          permission-administration: write
+          permission-contents: write
+          permission-environments: write
+          permission-members: write
+          permission-workflows: write
+      - name: export TF_ENCRYPTION
+        id: encryption
+        if: steps.stacks.outputs.github == 'true'
+        env:
+          IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}
+        run: idp encryption-env
+      - name: plan the github stack
+        id: plan
+        if: steps.stacks.outputs.github == 'true'
+        working-directory: ${{ runner.temp }}/idp/work/rendered/github
+        env:
+          GITHUB_TOKEN: ${{ steps.plan-token.outputs.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/idp/work/tfstate" "$RUNNER_TEMP/idp/plans"
+          if [ -f "$GITHUB_WORKSPACE/.idp/wet/tfstate/github.tfstate" ]; then
+            cp "$GITHUB_WORKSPACE/.idp/wet/tfstate/github.tfstate" "$RUNNER_TEMP/idp/work/tfstate/github.tfstate"
+          fi
+          tofu init -input=false -lockfile=readonly
+          tofu plan -input=false -lock=false -out="$RUNNER_TEMP/idp/out/github.tfplan"
+          tofu show -json "$RUNNER_TEMP/idp/out/github.tfplan" > "$RUNNER_TEMP/idp/plans/github.json"
+      - name: summarize the plan
+        id: summary
+        env:
+          AFFECTED: ${{ steps.diff.outputs.affected }}
+          GITHUB_STACK: ${{ steps.stacks.outputs.github }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          plans=()
+          if [ "$GITHUB_STACK" = true ]; then plans+=(--plan "github=$RUNNER_TEMP/idp/plans/github.json"); fi
+          idp plan-summary --stacks "$AFFECTED" --head-sha "$GITHUB_SHA" --run-url "$RUN_URL" \
+            --comment-out "$RUNNER_TEMP/idp/out/comment.md" \
+            --fingerprint-out "$RUNNER_TEMP/idp/out/fingerprint.json" "${plans[@]}"
+          cat "$RUNNER_TEMP/idp/out/comment.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: gate
+        id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: idp gate --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --fingerprint "$RUNNER_TEMP/idp/out/fingerprint.json"
+      - name: keep the plan and the render for the apply
+        id: upload
+        if: steps.stacks.outputs.github == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: idp-reconcile
+          path: ${{ runner.temp }}/idp/out
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+
+  approve:
+    name: approve
+    needs: plan
+    if: needs.plan.outputs.decision == 'approval'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: idp-approval
+    permissions: {}
+    steps:
+      - name: record the approval
+        id: approved
+        run: echo "approved in the idp-approval environment; the apply continues"
+
+  apply-github:
+    name: apply-github
+    needs: [plan, approve]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.github == 'true' && (needs.plan.outputs.decision == 'auto' || needs.approve.result == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    environment: idp-write
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: apply once, with the idp-write credentials
+        id: guard
+        env:
+          WRITER_CLIENT_ID: ${{ vars.IDP_WRITER_CLIENT_ID }}
+          WRITER_KEY_SET: ${{ secrets.IDP_WRITER_PRIVATE_KEY != '' }}
+          PASSPHRASE_SET: ${{ secrets.IDP_STATE_PASSPHRASE != '' }}
+        run: |
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::a reconcile run is never re-run, because its plan may be stale: dispatch the reconcile workflow instead (docs/runbooks/pipelines.md)"
+            exit 1
+          fi
+          missing=""
+          [ -n "$WRITER_CLIENT_ID" ] || missing="$missing environment variable IDP_WRITER_CLIENT_ID,"
+          [ "$WRITER_KEY_SET" = true ] || missing="$missing environment secret IDP_WRITER_PRIVATE_KEY,"
+          [ "$PASSPHRASE_SET" = true ] || missing="$missing secret IDP_STATE_PASSPHRASE,"
+          if [ -n "$missing" ]; then
+            echo "::error::the apply job is missing:${missing%,}. Check that the caller passes IDP_STATE_PASSPHRASE and IDP_WRITER_PRIVATE_KEY by name and that the idp-write environment holds IDP_WRITER_PRIVATE_KEY and IDP_WRITER_CLIENT_ID (docs/pipelines.md)."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: check out wet
+        id: wet-checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: wet
+          path: .idp/wet
+          persist-credentials: false
+      - name: refuse when wet moved since the plan
+        id: wet-base
+        env:
+          PLANNED: ${{ needs.plan.outputs.wet-sha }}
+        run: |
+          if [ "$(git -C .idp/wet rev-parse HEAD)" != "$PLANNED" ]; then
+            echo "::error::wet moved since this run's plan, so the saved plan may be stale: dispatch the reconcile workflow instead"
+            exit 1
+          fi
+      - name: fetch the saved plan and render
+        id: download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: idp-reconcile
+          path: ${{ runner.temp }}/idp/in
+      - name: export TF_ENCRYPTION
+        id: encryption
+        env:
+          IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}
+        run: idp encryption-env
+      - name: stage the saved render and the state the plan read
+        id: stage
+        run: |
+          mkdir -p "$RUNNER_TEMP/idp/work/tfstate"
+          cp -R "$RUNNER_TEMP/idp/in/rendered" "$RUNNER_TEMP/idp/work/rendered"
+          if [ -f .idp/wet/tfstate/github.tfstate ]; then
+            cp .idp/wet/tfstate/github.tfstate "$RUNNER_TEMP/idp/work/tfstate/github.tfstate"
+          fi
+      - name: mint the writer token for the apply
+        id: apply-token
+        if: needs.plan.outputs.changes != '0'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.IDP_WRITER_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }} # zizmor: ignore[github-app] the apply manages every repository the claims declare (ADR-0023)
+          permission-administration: write
+          permission-contents: write
+          permission-environments: write
+          permission-members: write
+          permission-workflows: write
+      - name: apply the saved plan
+        id: apply
+        if: always() && steps.apply-token.outcome == 'success'
+        working-directory: ${{ runner.temp }}/idp/work/rendered/github
+        env:
+          GITHUB_TOKEN: ${{ steps.apply-token.outputs.token }}
+        run: |
+          tofu init -input=false -lockfile=readonly
+          tofu apply -input=false "$RUNNER_TEMP/idp/in/github.tfplan"
+      - name: prepare the wet commit
+        id: prepare
+        if: always() && steps.stage.outcome == 'success'
+        env:
+          CHANGES: ${{ needs.plan.outputs.changes }}
+          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+          WET_SHA: ${{ needs.plan.outputs.wet-sha }}
+        run: |
+          root="$RUNNER_TEMP/idp/wet-root"
+          mkdir -p "$root/tfstate"
+          echo "$WET_SHA" > "$root/wet-base"
+          if [ -f "$RUNNER_TEMP/idp/work/tfstate/github.tfstate" ]; then
+            cp "$RUNNER_TEMP/idp/work/tfstate/github.tfstate" "$root/tfstate/github.tfstate"
+          fi
+          # The state is committed always: real resources may have changed. The render
+          # only when the apply succeeded or had nothing to apply; a failed stack keeps
+          # its old render in wet, so the next reconcile retries it (spec §6.2).
+          if [ "$CHANGES" = 0 ] || [ "$APPLY_OUTCOME" = success ]; then
+            mkdir -p "$root/rendered"
+            cp -R "$RUNNER_TEMP/idp/in/rendered/github" "$root/rendered/github"
+            echo "render=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::the apply did not succeed: only the state is committed, and the old render stays in wet so the next reconcile retries"
+            echo "render=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: keep the wet commit as an artifact
+        id: keep
+        if: always() && steps.prepare.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: idp-wet-root
+          path: ${{ runner.temp }}/idp/wet-root
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+      - name: mint the wet-commit token
+        id: push-token
+        if: always() && steps.prepare.outcome == 'success'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.IDP_WRITER_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: commit to wet
+        id: push
+        if: always() && steps.push-token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.push-token.outputs.token }}
+          RENDER: ${{ steps.prepare.outputs.render }}
+        run: |
+          paths=(--path tfstate/github.tfstate)
+          if [ "$RENDER" = true ]; then paths+=(--path rendered/github); fi
+          idp wet-push --repo "$GITHUB_REPOSITORY" --root "$RUNNER_TEMP/idp/wet-root" \
+            --message "idp: reconcile $GITHUB_SHA (run $GITHUB_RUN_ID)" "${paths[@]}"
+      - name: open the wet-push issue
+        id: issue
+        if: always() && steps.prepare.outcome == 'success' && steps.push.outcome != 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUNBOOK_URL: ${{ github.server_url }}/${{ job.workflow_repository }}/blob/${{ job.workflow_sha }}/docs/runbooks/pipelines.md#a-wet-push-failed
+        run: |
+          body="$RUNNER_TEMP/idp/wet-push-issue.md"
+          {
+            echo "The reconcile run $RUN_URL could not commit to the wet branch."
+            echo
+            echo "What it was about to commit is saved as the artifact idp-wet-root of that run, kept for 7 days."
+            echo "Run the idp-recover workflow with run-id $GITHUB_RUN_ID, following $RUNBOOK_URL"
+          } > "$body"
+          idp issue open --repo "$GITHUB_REPOSITORY" --label idp-wet-push --title "Wet push failed" --body-file "$body"

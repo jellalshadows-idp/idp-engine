@@ -408,9 +408,16 @@ exactly what will land in the repo.
 
 The guiding rule: **nothing is ever applied that nobody saw.**
 
-`idp-claims` contains three thin workflows. Each one is
-`uses: <org>/idp-engine/.github/workflows/<x>.yaml@vX.Y.Z`, and Renovate bumps the
-ref. Each workflow sets `permissions: {}`, and each job asks for what it needs.
+`idp-claims` contains four thin workflows, copied from the engine's
+`examples/claims-repo/.github/workflows/`: `pr`, `reconcile`, `drift`, and `recover`,
+the recovery button for a failed wet push (ADR-0024). Each one is
+`uses: <org>/idp-engine/.github/workflows/<x>.yaml@<commit SHA> # <version>`, and
+Renovate bumps the ref and the comment. Each workflow sets `permissions: {}`, and each
+job asks for what it needs. Every reusable job builds `idp` from the reusable
+workflow's own commit, so the workflow, the CLI and the module refs are one version
+(ADR-0021). Until Phase 2 the only stack is `github`, and until Phase 4 there are no
+features to fetch or adopt: the workflows fail if any other stack is affected.
+*(Amendment A6, 2026-10-11.)*
 
 ### 6.1 PR (`pull_request` → `main`)
 Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
@@ -419,6 +426,9 @@ Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
    → `diff` against `wet`. This produces a matrix of affected stacks, orphans
    included.
 3. **plan-github**: decrypts the state from `wet` and uses the `idp-reader` token.
+   It plans without refreshing (`-refresh=false`): the read-only token cannot see
+   admin-only repository fields, so the PR plan compares the claims with the state
+   the last apply wrote (ADR-0025). *(Amendment A7, 2026-10-12.)*
 4. **plan-aws** runs as a matrix, with one floci per job:
    1. Apply the env's `_baseline`.
    2. Apply the `wet` version of the stack, if it existed and is not `observe`.
@@ -434,6 +444,9 @@ Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
      The comment also carries `<!-- idp-plan -->`, and the job edits that one comment
      instead of adding new ones (ADR-0018). *(Amendment A3, 2026-10-10.)*
 7. **`idp-gate`** is the only required status check, because matrix job names vary.
+   It is a job of the caller workflow that always runs and passes only when the
+   reusable workflow succeeded; that workflow's last job, `verdict`, fails forks and
+   any failed job (ADR-0022). *(Amendment A6, 2026-10-11.)*
 
 **PRs from forks** only run validate and render. Plan jobs require
 `head.repo.full_name == github.repository`, and `idp-gate` fails with "a maintainer
@@ -443,7 +456,8 @@ must push this branch to the repo". `pull_request_target` is never used.
 This is one workflow with two triggers. The dispatch is the universal recovery
 button. Concurrency: group `idp-wet`, `cancel-in-progress: false`, `queue: max`.
 
-1. **plan** (no environment; reader token and passphrase as repo secrets):
+1. **plan** (environment `idp-write`, main only; the writer token, which can see
+   admin-only fields, and the passphrase; ADR-0025): *(Amendment A7, 2026-10-12.)*
    1. Re-render and diff against the **current** `wet`. Truth is `wet` now, not
       what the PR saw.
    2. Plan every affected stack, and save the GitHub plan as an artifact. The plan
@@ -495,8 +509,11 @@ button. Concurrency: group `idp-wet`, `cancel-in-progress: false`, `queue: max`.
 
       A stack that failed keeps its old render in `wet`, so the next run sees the
       difference and retries it. **The system self-heals.**
-   4. If the push fails, it uploads the encrypted state as an artifact, opens an
-      issue that links the runbook, and fails.
+   4. Before the push it uploads the exact tree it commits, with the `wet` commit the
+      plan read, as the artifact `idp-wet-root` (7 days). If the push fails, it opens
+      an issue that links the runbook, and fails; the `recover` workflow commits that
+      tree while `wet` has not moved (ADR-0024). A reconcile run is never re-run: a
+      failed run is retried with a new dispatch. *(Amendment A6, 2026-10-11.)*
 
 ### 6.3 Deletions
 Any delete or replace goes through `idp-approval`.
@@ -519,10 +536,12 @@ Any delete or replace goes through `idp-approval`.
 ### 6.4 Drift (daily cron)
 - It runs on `cron: '23 5 * * *'`, avoiding the top of the hour, and in concurrency
   group `idp-wet`, so it never reads state in the middle of an apply.
-- It plans the GitHub stack with `idp-reader` and runs
+- It plans the GitHub stack with the writer token in environment `idp-write`
+  (ADR-0025) and runs
   `idp bootstrap check --params-env IDP_BOOTSTRAP --allow-hidden-bypass` (§9.2)
-  with the same reader token. Ruleset bypass lists, which a read-only token
+  with the reader token. Ruleset bypass lists, which a read-only token
   cannot see, are reported as notices, not drift (ADR-0017). *(Amendment A5, 2026-10-10.)*
+  *(Amendment A7, 2026-10-12.)*
 - If it finds drift, it creates or updates **one** issue labeled `drift` with the
   plan. If there is no drift, it closes that issue. Issues are handled with
   `GITHUB_TOKEN` and `issues: write`.
@@ -530,6 +549,9 @@ Any delete or replace goes through `idp-approval`.
   reconcile.
 - Scheduled workflows in public repos are disabled after 60 days without activity.
   Renovate PRs keep the repo active, and this is documented.
+- It also runs on `workflow_dispatch`. A run fails only when the check cannot run;
+  drift itself is reported by the issue and a warning annotation.
+  *(Amendment A6, 2026-10-11.)*
 
 ## 7. State and security
 
@@ -538,8 +560,10 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 **who can write**, and limits the blast radius of a leaked credential.
 - **Fork contributors** get nothing (§6.1).
 - **Members who can push branches** can propose claims, and a plan executes module
-  code. That is why modules are allowlisted and pinned, plan-time tokens are
-  read-only, and the write key is out of reach of PR runs.
+  code. That is why modules are allowlisted and pinned, PR plan tokens are
+  read-only, and the write key is out of reach of PR runs; the reconcile and drift
+  plans run on main only and use the writer token (ADR-0025).
+  *(Amendment A7, 2026-10-12.)*
 
 ### 7.2 Encrypted state
 - The render emits `encryption { state { enforced = true } plan { enforced = true } }`.
@@ -561,8 +585,8 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 
 | Credential | Permissions | Where it lives |
 |---|---|---|
-| `idp-reader` App key | Read only | Repo secret: PR plans, reconcile plan, drift |
-| `idp-writer` App key | Write, **including `Workflows`** (features write `.github/workflows/`; `Contents` alone is rejected) | **Only** in environment `idp-write` (deployment branch `main`, no reviewers) |
+| `idp-reader` App key | Read only | Repo secret: PR plans, drift bootstrap check *(Amendment A7, 2026-10-12.)* |
+| `idp-writer` App key | Write, **including `Workflows`** (features write `.github/workflows/`; `Contents` alone is rejected) | **Only** in environment `idp-write` (deployment branch `main`, no reviewers): the applies and the `wet` commits, and also the reconcile and drift plans (ADR-0025) *(Amendment A7, 2026-10-12.)* |
 | State passphrase | — | Repo secret, needed to read state in plans |
 | Approval | — | Environment `idp-approval` (required reviewers, `main`, no secrets) |
 
@@ -571,9 +595,10 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
   `<org>-reader` and `<org>-writer`. For example, `jellalshadows-idp-writer` is 24
   characters. Both claims repos (`idp-claims` and `idp-claims-e2e`) share the same
   two Apps, because Apps are installed per org.
-- Tokens are minted per job with `actions/create-github-app-token` and expire after
-  1 hour. A longer apply is a known limitation, and Phase 0 measures how long
-  applies take.
+- Tokens are minted per step with `actions/create-github-app-token`, with the
+  narrowest scope that works (ADR-0023), and expire after 1 hour. A longer apply is a
+  known limitation, and Phase 0 measures how long applies take.
+  *(Amendment A6, 2026-10-11.)*
 - **Accepted risk:** the passphrase reaches PR plans. If it leaks, someone can read
   near-public state, but they still cannot write to `wet`.
 
@@ -597,7 +622,9 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
   `minimumReleaseAge`.
 - The CLI is released with checksums and a provenance attestation
   (`actions/attest-build-provenance`). The workflows run `gh attestation verify`
-  before they execute it.
+  before they execute it. Until the first release, the workflows build `idp` from
+  source at the pinned commit instead (ADR-0021); Phase 1d decides how releases
+  change that. *(Amendment A6, 2026-10-11.)*
 
 ### 7.6 No secrets flow through the IDP in v1
 - Claims have no secret fields, on purpose.

@@ -1,0 +1,153 @@
+name: idp-recover
+
+# Reusable recovery for a failed wet push (ADR-0024): commit the tree a failed
+# or cancelled reconcile run saved as its idp-wet-root artifact, only for the run
+# the open wet-push issue names and only while wet still points at the commit
+# that run's plan read.
+
+on:
+  workflow_call:
+    inputs:
+      run-id:
+        description: The id of the reconcile run whose wet push failed.
+        required: true
+        type: string
+    secrets:
+      IDP_WRITER_PRIVATE_KEY:
+        description: The writer App's private key. The caller passes it by name; it resolves only in the jobs that reference the idp-write environment, which holds it (ADR-0023).
+        required: true
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  recover:
+    name: recover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: idp-write
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: check the request
+        id: request
+        env:
+          REF: ${{ github.ref }}
+          RUN_ID: ${{ inputs.run-id }}
+          WRITER_CLIENT_ID: ${{ vars.IDP_WRITER_CLIENT_ID }}
+          WRITER_KEY_SET: ${{ secrets.IDP_WRITER_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$REF" != refs/heads/main ]; then
+            echo "::error::the recovery runs only on main"
+            exit 1
+          fi
+          if ! [[ "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::run-id must be the numeric id of a reconcile run"
+            exit 1
+          fi
+          if [ -z "$WRITER_CLIENT_ID" ] || [ "$WRITER_KEY_SET" != true ]; then
+            echo "::error::the idp-write environment must hold the variable IDP_WRITER_CLIENT_ID and the secret IDP_WRITER_PRIVATE_KEY. Check that the caller passes IDP_WRITER_PRIVATE_KEY by name and that the idp-write environment holds it and IDP_WRITER_CLIENT_ID (docs/pipelines.md)."
+            exit 1
+          fi
+      - name: check that the run is a failed or cancelled reconcile of main
+        id: run-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          read -r event branch conclusion < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '[.event, .head_branch, (.conclusion // "")] | @tsv')
+          if [ "$branch" != main ] || { [ "$event" != push ] && [ "$event" != workflow_dispatch ]; }; then
+            echo "::error::run $RUN_ID is not a reconcile of main (event: $event, branch: $branch)"
+            exit 1
+          fi
+          if [ "$conclusion" != failure ] && [ "$conclusion" != cancelled ]; then
+            echo "::error::run $RUN_ID neither failed nor was cancelled (conclusion: $conclusion): there is nothing to recover"
+            exit 1
+          fi
+      - name: check that the open wet-push issue names this run
+        id: issue-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          issues="$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=idp-wet-push&state=open&per_page=100")"
+          named="$(jq -r --arg id "$RUN_ID" '[.[] | select(.pull_request == null and .title == "Wet push failed" and .user.login == "github-actions[bot]") | select(.body | test("/actions/runs/" + $id + "([^0-9]|$)"))] | length' <<<"$issues")"
+          if [ "$named" != 1 ]; then
+            echo "::error::no open \"Wet push failed\" issue names run $RUN_ID: recover only the run the issue names"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: fetch the saved wet commit
+        id: download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: idp-wet-root
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/idp/wet-root
+      - name: check out wet
+        id: wet-checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: wet
+          path: .idp/wet
+          persist-credentials: false
+      - name: refuse when wet moved since that run
+        id: base
+        run: |
+          root="$RUNNER_TEMP/idp/wet-root"
+          base="$(tr -d '[:space:]' < "$root/wet-base")"
+          head="$(git -C .idp/wet rev-parse HEAD)"
+          if ! [[ "$base" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the artifact has no valid wet-base"
+            exit 1
+          fi
+          if [ "$base" != "$head" ]; then
+            echo "::error::wet moved since that run read it (then $base, now $head), so its saved state may be older than wet's. Follow the runbook instead (docs/runbooks/pipelines.md)."
+            exit 1
+          fi
+          if [ -d "$root/rendered/github" ]; then
+            echo "render=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "render=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: mint the wet-commit token
+        id: push-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.IDP_WRITER_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: commit to wet
+        id: push
+        env:
+          GH_TOKEN: ${{ steps.push-token.outputs.token }}
+          RENDER: ${{ steps.base.outputs.render }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          paths=(--path tfstate/github.tfstate)
+          if [ "$RENDER" = true ]; then paths+=(--path rendered/github); fi
+          idp wet-push --repo "$GITHUB_REPOSITORY" --root "$RUNNER_TEMP/idp/wet-root" \
+            --message "idp: recover the wet commit of run $RUN_ID" "${paths[@]}"
+      - name: close the wet-push issue
+        id: close
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: idp issue close --repo "$GITHUB_REPOSITORY" --label idp-wet-push --title "Wet push failed" --comment "Recovered by $RUN_URL."

@@ -101,4 +101,6 @@ The `aws` and `features` fields arrive in Phases 2 and 4. Until then they fail v
 
 `--out` is relative to the current directory, not to `--dir`. The stack's local backend writes its state to `<out>/../tfstate/github.tfstate`, which is where the `wet` branch keeps it (spec §5.4).
 
+Claim text is data: the render escapes `${` and `%{` (as `$${` and `%%{`) in every free-text value that comes from a claim, so OpenTofu never evaluates a template in it. The other claim values (names, logins, roles, topics, environment names) cannot contain those characters: the schemas forbid them.
+
 Development builds must pass `--module-ref <ref>`, or `--modules-dir <path>` to validate against local modules.

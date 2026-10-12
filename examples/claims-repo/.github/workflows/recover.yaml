@@ -1,0 +1,31 @@
+name: idp-recover
+
+# Claims repo caller of the engine's wet push recovery (docs/runbooks/pipelines.md).
+# Run it with the id of the reconcile run that opened the "Wet push failed" issue.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: The id of the reconcile run whose wet push failed (the number in its URL).
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: idp-wet
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  recover:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/recover.yaml@aa0f2b4a50e965c84e251f445b5938148ff8a1dc # unreleased
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    with:
+      run-id: ${{ inputs.run-id }}
+    secrets:
+      IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}

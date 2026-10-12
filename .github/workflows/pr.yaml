@@ -1,0 +1,218 @@
+name: idp-pr
+
+# Reusable PR pipeline (spec §6.1): validate and render, diff against wet, plan
+# the affected stacks with the reader App, keep one sticky plan comment, and end
+# in a verdict that the caller's idp-gate job mirrors (ADR-0022).
+# The PR plan does not refresh: it compares the claims with the state the last
+# apply wrote, because the read-only reader token cannot see admin-only
+# repository fields (ADR-0025).
+
+on:
+  workflow_call:
+    secrets:
+      IDP_READER_PRIVATE_KEY:
+        description: The reader App's private key (repo secret).
+        required: false
+      IDP_STATE_PASSPHRASE:
+        description: The OpenTofu state passphrase (repo secret).
+        required: false
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: validate the claims
+        run: idp validate
+      - name: render the claims
+        run: idp render --out "$RUNNER_TEMP/idp/rendered"
+
+  plan:
+    name: plan
+    needs: validate
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: check the repository configuration
+        id: config
+        env:
+          READER_CLIENT_ID: ${{ vars.IDP_READER_CLIENT_ID }}
+          READER_KEY_SET: ${{ secrets.IDP_READER_PRIVATE_KEY != '' }}
+          PASSPHRASE_SET: ${{ secrets.IDP_STATE_PASSPHRASE != '' }}
+        run: |
+          missing=""
+          [ -n "$READER_CLIENT_ID" ] || missing="$missing variable IDP_READER_CLIENT_ID,"
+          [ "$READER_KEY_SET" = true ] || missing="$missing secret IDP_READER_PRIVATE_KEY,"
+          [ "$PASSPHRASE_SET" = true ] || missing="$missing secret IDP_STATE_PASSPHRASE,"
+          if [ -n "$missing" ]; then
+            echo "::error::the claims repo is missing:${missing%,}. Re-run the bootstrap (docs/runbooks/bootstrap.md) and pass the secrets from the caller workflow."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: wet
+          path: .idp/wet
+          persist-credentials: false
+      - name: render the claims
+        id: render
+        run: idp render --out "$RUNNER_TEMP/idp/work/rendered"
+      - name: diff against wet
+        id: diff
+        run: idp diff --new "$RUNNER_TEMP/idp/work/rendered" --wet .idp/wet/rendered
+      - name: check the affected stacks
+        id: stacks
+        env:
+          AFFECTED: ${{ steps.diff.outputs.affected }}
+        run: |
+          if ! jq -e 'all(.[]; . == "github")' <<<"$AFFECTED" >/dev/null; then
+            echo "::error::this engine version reconciles only the github stack; affected: $AFFECTED"
+            exit 1
+          fi
+          echo "github=$(jq -r 'any(.[]; . == "github")' <<<"$AFFECTED")" >> "$GITHUB_OUTPUT"
+      - name: mint the reader token
+        id: reader
+        if: steps.stacks.outputs.github == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0 # zizmor: ignore[github-app] the read-only reader App plans every managed repo (ADR-0023)
+        with:
+          client-id: ${{ vars.IDP_READER_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_READER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+      - name: export TF_ENCRYPTION
+        id: encryption
+        if: steps.stacks.outputs.github == 'true'
+        env:
+          IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}
+        run: idp encryption-env
+      - name: plan the github stack
+        id: plan
+        if: steps.stacks.outputs.github == 'true'
+        working-directory: ${{ runner.temp }}/idp/work/rendered/github
+        env:
+          GITHUB_TOKEN: ${{ steps.reader.outputs.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/idp/work/tfstate" "$RUNNER_TEMP/idp/plans"
+          if [ -f "$GITHUB_WORKSPACE/.idp/wet/tfstate/github.tfstate" ]; then
+            cp "$GITHUB_WORKSPACE/.idp/wet/tfstate/github.tfstate" "$RUNNER_TEMP/idp/work/tfstate/github.tfstate"
+          fi
+          tofu init -input=false -lockfile=readonly
+          tofu plan -input=false -lock=false -refresh=false -out="$RUNNER_TEMP/idp/plans/github.tfplan"
+          tofu show -json "$RUNNER_TEMP/idp/plans/github.tfplan" > "$RUNNER_TEMP/idp/plans/github.json"
+      - name: summarize the plan
+        id: summary
+        env:
+          AFFECTED: ${{ steps.diff.outputs.affected }}
+          GITHUB_STACK: ${{ steps.stacks.outputs.github }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          plans=()
+          if [ "$GITHUB_STACK" = true ]; then plans+=(--plan "github=$RUNNER_TEMP/idp/plans/github.json"); fi
+          mkdir -p "$RUNNER_TEMP/idp/out"
+          idp plan-summary --stacks "$AFFECTED" --head-sha "$HEAD_SHA" --run-url "$RUN_URL" \
+            --comment-out "$RUNNER_TEMP/idp/out/comment.md" \
+            --fingerprint-out "$RUNNER_TEMP/idp/out/fingerprint.json" "${plans[@]}"
+      - name: keep the comment for the comment job
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: idp-pr-comment
+          path: ${{ runner.temp }}/idp/out/comment.md
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
+
+  comment:
+    name: comment
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: fetch the comment
+        id: download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: idp-pr-comment
+          path: ${{ runner.temp }}/idp/out
+      - name: post the sticky plan comment
+        id: post
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: idp comment --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --body-file "$RUNNER_TEMP/idp/out/comment.md"
+
+  verdict:
+    name: verdict
+    needs: [validate, plan, comment]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: decide
+        id: decide
+        env:
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          VALIDATE: ${{ needs.validate.result }}
+          PLAN: ${{ needs.plan.result }}
+          COMMENT: ${{ needs.comment.result }}
+        run: |
+          if [ "$SAME_REPO" != true ]; then
+            echo "::error::a maintainer must push this branch to the repo: pull requests from forks are validated but never planned"
+            exit 1
+          fi
+          if [ "$VALIDATE" != success ] || [ "$PLAN" != success ] || [ "$COMMENT" != success ]; then
+            echo "::error::the idp pipeline did not succeed (validate: $VALIDATE, plan: $PLAN, comment: $COMMENT)"
+            exit 1
+          fi
+          echo "idp: validated, planned and commented"

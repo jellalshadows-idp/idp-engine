@@ -39,7 +39,7 @@ The guiding rule of spec §6 is "nothing is ever applied that nobody saw". Recon
 
 ## Follow-up
 
-- Phase 1c decides whether to reject comments edited by anyone other than the Actions bot (GraphQL `editor` / `lastEditedAt`).
+- Deferred to Phase 1d by the Phase 1c plan: rejecting comments edited by anyone other than the Actions bot (GraphQL `editor` / `lastEditedAt`). Anyone who can edit the bot's comment has write access and, while `idp-main` requires no approving review, can already merge; the check pays off once reviews are required.
 
 ## Alternatives considered
 
