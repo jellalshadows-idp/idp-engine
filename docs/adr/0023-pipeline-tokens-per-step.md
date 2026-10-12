@@ -20,6 +20,7 @@ The pipelines use the reader App, the writer App and the workflow's `GITHUB_TOKE
 - Every token is set on the one step that uses it, never at job or workflow level.
 - `idp comment` and `idp issue` run with `GITHUB_TOKEN` and never with `GH_TOKEN` set, so the bot authors what the gate trusts (ADR-0018).
 - The apply token is minted right before the apply, and only when the plan has changes.
+- The reconcile and recover callers pass `IDP_WRITER_PRIVATE_KEY` by name (`${{ secrets.IDP_WRITER_PRIVATE_KEY }}`), as GitHub requires for an environment secret used in a reusable workflow; the value resolves only in the jobs that reference `idp-write`, whose deployment branch is `main`. The reusable workflows declare it required, so a caller that forgets it fails at the call. The pr and drift callers never pass it, and a contract test enforces both.
 
 ## Consequences
 

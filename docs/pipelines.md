@@ -4,7 +4,7 @@ A claims repo reconciles through four thin workflows that call the engine's reus
 
 ## Onboard a claims repo
 
-1. Bootstrap the repo first ([bootstrap runbook](runbooks/bootstrap.md)). The pipelines need what `idp bootstrap apply` creates: the `wet` branch, the rulesets, the `idp-approval` and `idp-write` environments, the secrets `IDP_READER_PRIVATE_KEY` and `IDP_STATE_PASSPHRASE`, the variables `IDP_READER_CLIENT_ID` and `IDP_BOOTSTRAP`, and, in `idp-write`, the secret `IDP_WRITER_PRIVATE_KEY` and the variable `IDP_WRITER_CLIENT_ID`.
+1. Bootstrap the repo first ([bootstrap runbook](runbooks/bootstrap.md)). The pipelines need what `idp bootstrap apply` creates: the `wet` branch, the rulesets, the `idp-approval` and `idp-write` environments, the secrets `IDP_READER_PRIVATE_KEY` and `IDP_STATE_PASSPHRASE`, the variables `IDP_READER_CLIENT_ID` and `IDP_BOOTSTRAP`, and, in `idp-write`, the secret `IDP_WRITER_PRIVATE_KEY` and the variable `IDP_WRITER_CLIENT_ID`. The reconcile and recover templates pass the writer key by name; keep that mapping.
 2. Copy the four files of [`examples/claims-repo/.github/workflows/`](../examples/claims-repo/.github/workflows/) into the claims repo's `.github/workflows/`. Keep the pinned engine commit; all four must pin the same one.
 3. Add `config/platform.yaml` ([claims reference](claims.md)), and claims when you want them.
 4. Open a pull request. The `idp-gate` check that the `main` ruleset requires comes from the PR workflow.
@@ -31,7 +31,7 @@ A claims repo reconciles through four thin workflows that call the engine's reus
 - The state is always committed to `wet`, even when the apply failed, because real resources may have changed. The render is committed only when the apply succeeded or had nothing to apply, so a failed stack is retried by the next reconcile.
 - A reconcile run is never re-run: its jobs refuse a second attempt, and the apply refuses a `wet` that moved since its plan. Retry with a new dispatch ([ADR-0024](adr/0024-failed-wet-push-recovery.md)).
 - While an issue labelled `idp-wet-push` is open, every reconcile refuses to plan: an earlier run applied changes it could not commit, so `wet` is older than the real resources until the `recover` workflow commits the saved tree and closes the issue ([ADR-0024](adr/0024-failed-wet-push-recovery.md)).
-- Cancelling a run does not stop an apply that has started: the apply job runs with `always()` so that the state is always committed. A force-cancel can kill OpenTofu mid-apply and lose state; avoid it.
+- Cancelling a run does not interrupt an apply that has started: the apply step runs to completion, and the state is committed. A force-cancel kills OpenTofu mid-apply and can lose state; never force-cancel while `reconcile / apply-github` runs.
 
 ### Drift
 
@@ -40,7 +40,7 @@ A claims repo reconciles through four thin workflows that call the engine's reus
 
 ### Recover
 
-- See the [runbook](runbooks/pipelines.md#a-wet-push-failed). The recovery refuses a run that is not a failed reconcile of `main`, and refuses when `wet` moved since that run's plan.
+- See the [runbook](runbooks/pipelines.md#a-wet-push-failed). The recovery refuses a run that is not a failed or cancelled reconcile of `main`, a run the open "Wet push failed" issue does not name, and any run after `wet` moved since that run's plan.
 
 ## Permissions and credentials
 

@@ -18,7 +18,7 @@ The gate asked for approval: the plan deletes or replaces something, or has a ch
 
 1. Read the plan.
 2. Approve or reject the `idp-approval` deployment in the run.
-3. Rejecting applies nothing; the next reconcile plans again.
+3. Rejecting applies nothing now, but the change stays merged: the next reconcile plans it again, and the next PR's plan shows it, so the gate can apply it without approval once that PR merges (unless it is destructive). To drop the change, revert the claim in a PR.
 
 While it waits, the run holds the `idp-wet` concurrency group: drift and other reconciles queue behind it. Decide promptly.
 
@@ -36,8 +36,8 @@ gh workflow run reconcile.yaml --repo <repo> --ref main
 
 - **`apply-github` failed in "apply the saved plan"**: the state was still committed to `wet`, because real resources may have changed, and the old render stayed, so the next reconcile retries the stack. Fix the cause (a claims PR, or wait out a transient error), then dispatch. The new plan shows only what is left; the gate asks for approval when that is not in the last merged PR's plan.
 - **`apply-github` failed in "refuse when wet moved since the plan"**: something committed to `wet` after this run planned. Dispatch a new reconcile.
-- **`apply-github` failed in "commit to wet"**: do not dispatch. Follow [A wet push failed](#a-wet-push-failed); until the recovery runs, every reconcile refuses to plan.
-- **The run was cancelled or its runner was lost during the apply**: compare the newest `wet` commit with the run before dispatching. If `wet` has no commit from that run but the run's log shows applied resources, treat it as a failed wet push.
+- **The run opened a "Wet push failed" issue** (its wet-commit token or its commit to wet failed): do not dispatch. Follow [A wet push failed](#a-wet-push-failed); until the recovery runs, every reconcile refuses to plan.
+- **The run was cancelled during `apply-github`**: if it opened a "Wet push failed" issue, follow [A wet push failed](#a-wet-push-failed); the recovery accepts cancelled runs. **The runner was lost** (the run has no `idp-wet-root` artifact and no issue): compare the newest `wet` commit with the run's log before dispatching; if resources were applied but never committed, the state has to be rebuilt with `import` blocks (spec §7.7), so open an issue in the engine repo.
 
 ## A wet push failed
 
@@ -49,16 +49,16 @@ The apply job opened an issue labelled `idp-wet-push`, titled "Wet push failed".
    gh workflow run recover.yaml --repo <repo> --ref main -f run-id=<run id>
    ```
 
-2. It checks that the run is a failed reconcile of `main`, downloads the artifact, and refuses if `wet` moved since that run's plan. Otherwise it commits the saved state, and the render if the apply had succeeded, and closes the issue.
+2. It checks that the run is a failed or cancelled reconcile of `main` and that the open issue names it, downloads the artifact, and refuses if `wet` moved since that run's plan. Otherwise it commits the saved state, and the render if the apply had succeeded, and closes the issue.
 3. If it refuses because `wet` moved, or the 7 days have passed, do not force anything: the saved state is older than `wet`'s. The state has to be rebuilt with `import` blocks (spec §7.7); that runbook is not written yet, so open an issue in the engine repo.
 4. If the recovery committed to `wet` but failed to close the issue, a second recovery refuses (wet moved). Check that the newest `wet` commit is "idp: recover the wet commit of run <id>", then close the issue by hand; that unblocks the reconcile.
-5. A run that was cancelled (not failed) is refused by the recovery even if its push failed. Treat it like step 3.
+5. After a successful recovery, dispatch a reconcile: claims merged while the reconcile was held are not in `wet` yet, and the drift check cannot see them.
 
 ## A drift issue is open
 
 The drift check found that GitHub differs from the `wet` render, or that a bootstrap protection changed. The issue holds the plan summary and the bootstrap findings.
 
-- Fix the claims in a PR, or dispatch the reconcile to put GitHub back to the claims. A remediation is not in the last merged PR's plan, so it waits for approval.
+- Fix the claims in a PR, or dispatch the reconcile to put GitHub back to the claims. A remediation usually waits for approval: the gate applies automatically only changes whose address and action were in the last merged PR's plan.
 - For bootstrap findings, re-run `idp bootstrap apply` ([bootstrap runbook](bootstrap.md)).
 - The issue closes on the next clean drift run. To run one now:
 
