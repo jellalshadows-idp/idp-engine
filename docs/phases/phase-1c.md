@@ -173,7 +173,7 @@ Statuses: **Fixed** (done, with the commits), **Phase 1d**, **Won't fix** (consc
 - Final review C1, I1, I2, I3 and M1 to M5: **Fixed**, `7187b79`, `063a67c`, `917e795`, `488f041`, `575fbc1`; the scoped re-review addressed all nine and found nothing new.
 - Smoke S3 phantom drift: **Fixed**, `43515fc`, `aa0f2b4`, `5730de3`, `089c63e` (ADR-0025, A7).
 - ADR-0025 wording ("spec §7.1 is unchanged", "remediation asks for approval"), the ADR-0025 alternatives entry for a narrower plan token, the runbook lost-runner bullet, ADR-0024 (a lost runner is outside the recovery; a run can end cancelled): **Fixed**, this commit.
-- Phase 1b carry-over, the misplaced `SetOutput` doc comment: **Fixed**, `4c817f6`. The other Phase 1b carry-overs for the workflows (the wet hygiene rules, the bounded issue body, the `GITHUB_TOKEN` for `idp comment` and `idp issue`) were part of the workflow tasks and their reviews.
+- Phase 1b carry-over, the misplaced `SetOutput` doc comment: **Fixed**, `4c817f6`. The other Phase 1b carry-overs for the workflows are **Fixed** and pinned by contract tests: the wet hygiene rules (`TestTofuFollowsTheWetHygieneRules`, `TestRenderArtifactsKeepHiddenFiles`, the wet sync from the clean render artifact in `TestApplyCommitsTheRenderOnlyAfterASuccessfulApply`), the bounded drift issue body (`TestDriftReportsThroughOneBoundedIssue`), and the `GITHUB_TOKEN` without `GH_TOKEN` for `idp comment` and `idp issue` (`TestBotWritesUseTheWorkflowToken`).
 
 ### Phase 1d
 
@@ -219,7 +219,7 @@ Statuses: **Fixed** (done, with the commits), **Phase 1d**, **Won't fix** (consc
 
 ## Process notes
 
-- **Owner rule:** the docs describe the platform on its own terms. The naming check ran on every task and on the whole branch (including hidden directories), and was clean each time. Three shell-rule slips by subagents were recorded (one `ls`, one `sed`, both read-only, with no effect).
+- **Owner rule:** the docs describe the platform on its own terms. The naming check ran on every task and on the whole branch (including hidden directories), and was clean each time. Three shell-rule slips were recorded, all read-only and with no effect: the controller piped a file listing through `sed` while planning, and two subagents used `ls` (Task 3) and `sed` (Task 8).
 - **Execution:** subagent-driven. Per-task reviews, one final whole-branch review and one fix wave, then a smoke-driven fix with its own scoped review. Fix rounds used: Task 2 (1), Task 5 (1), final wave (1), smoke fix (1 plus a docs round).
 - **Interruptions:** the owner paused the run once (2026-10-11, no new agents) and it resumed on 2026-10-12. A power loss in the middle of the final fix-wave re-review was recovered from the ledger and the saved transcript: the repo was intact at `575fbc1`, the remote at `6c56481`, and the same reviewer resumed.
 - **Plan handling:** the planning assumption about the writer key was wrong and was reversed by ruling, not by rewriting the plan; the plan stays as approved.
