@@ -4,7 +4,7 @@ A claims repo reconciles through four thin workflows that call the engine's reus
 
 ## Onboard a claims repo
 
-1. Bootstrap the repo first ([bootstrap runbook](runbooks/bootstrap.md)). The pipelines need what `idp bootstrap apply` creates: the `wet` branch, the rulesets, the `idp-approval` and `idp-write` environments, the secrets `IDP_READER_PRIVATE_KEY` and `IDP_STATE_PASSPHRASE`, the variables `IDP_READER_CLIENT_ID` and `IDP_BOOTSTRAP`, and, in `idp-write`, the secret `IDP_WRITER_PRIVATE_KEY` and the variable `IDP_WRITER_CLIENT_ID`. The reconcile and recover templates pass the writer key by name; keep that mapping.
+1. Bootstrap the repo first ([bootstrap runbook](runbooks/bootstrap.md)). The pipelines need what `idp bootstrap apply` creates: the `wet` branch, the rulesets, the `idp-approval` and `idp-write` environments, the secrets `IDP_READER_PRIVATE_KEY` and `IDP_STATE_PASSPHRASE`, the variables `IDP_READER_CLIENT_ID` and `IDP_BOOTSTRAP`, and, in `idp-write`, the secret `IDP_WRITER_PRIVATE_KEY` and the variable `IDP_WRITER_CLIENT_ID`. The reconcile, recover and drift templates pass the writer key by name; keep that mapping.
 2. Copy the four files of [`examples/claims-repo/.github/workflows/`](../examples/claims-repo/.github/workflows/) into the claims repo's `.github/workflows/`. Keep the pinned engine commit; all four must pin the same one.
 3. Add `config/platform.yaml` ([claims reference](claims.md)), and claims when you want them.
 4. Open a pull request. The `idp-gate` check that the `main` ruleset requires comes from the PR workflow.
@@ -13,14 +13,15 @@ A claims repo reconciles through four thin workflows that call the engine's reus
 
 | Workflow | Trigger | Checks | What it does |
 |---|---|---|---|
-| `pr.yaml` | pull request to `main` | `pr / validate`, `pr / plan`, `pr / comment`, `pr / verdict`, `idp-gate` | Validates and renders the claims, diffs the render against `wet`, plans the affected stacks with the reader App, and keeps one sticky plan comment on the PR. |
-| `reconcile.yaml` | push to `main`, manual dispatch | `reconcile / plan`, `reconcile / approve`, `reconcile / apply-github` | Re-renders and diffs against the current `wet` (every stack on a dispatch), plans, gates, waits for approval when the gate asks for it, applies the saved plan with the writer App, and commits the state and the render to `wet`. |
-| `drift.yaml` | daily at 05:23 UTC, manual dispatch | `drift / drift` | Plans the `wet` render and checks the bootstrap protections, both with the reader App, and keeps one `drift` issue open while anything drifted. |
+| `pr.yaml` | pull request to `main` | `pr / validate`, `pr / plan`, `pr / comment`, `pr / verdict`, `idp-gate` | Validates and renders the claims, diffs the render against `wet`, plans the affected stacks with the reader App without refreshing, and keeps one sticky plan comment on the PR. |
+| `reconcile.yaml` | push to `main`, manual dispatch | `reconcile / plan`, `reconcile / approve`, `reconcile / apply-github` | Re-renders and diffs against the current `wet` (every stack on a dispatch), plans with the writer App in `idp-write`, gates, waits for approval when the gate asks for it, applies the saved plan with the writer App, and commits the state and the render to `wet`. |
+| `drift.yaml` | daily at 05:23 UTC, manual dispatch | `drift / drift` | Plans the `wet` render with the writer App in `idp-write`, checks the bootstrap protections with the reader App, and keeps one `drift` issue open while anything drifted. |
 | `recover.yaml` | manual dispatch with a run id | `recover / recover` | Commits the tree a reconcile run saved when its wet push failed. |
 
 ### Pull requests
 
 - Pull requests from forks are validated and rendered, never planned: they get no secrets, and `pr / verdict` fails with "a maintainer must push this branch to the repo" (spec §6.1).
+- The PR plan does not refresh: it shows what the PR changes against the state the last apply wrote. Live drift is reported by the drift check, and the reconcile plan sees it ([ADR-0025](adr/0025-plans-refresh-with-the-writer-on-main.md)).
 - The plan comment carries a hidden fingerprint of the plan for the PR's head commit. The reconcile gate trusts only that comment, written by `github-actions[bot]` ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)).
 - `idp-gate` always runs and passes only when the reusable workflow succeeded, so a cancelled or failed run never counts as passing ([ADR-0022](adr/0022-required-check-lives-in-the-caller.md)).
 
@@ -47,13 +48,13 @@ A claims repo reconciles through four thin workflows that call the engine's reus
 | Job | `GITHUB_TOKEN` scopes | App token | Environment |
 |---|---|---|---|
 | `pr / validate` | `contents: read` | none | none |
-| `pr / plan` | `contents: read` | reader, whole installation | none |
+| `pr / plan` | `contents: read` | reader (no refresh), whole installation | none |
 | `pr / comment` | `contents: read`, `pull-requests: write` | none | none |
 | `pr / verdict` | none | none | none |
-| `reconcile / plan` | `contents`, `issues`, `pull-requests`: read | reader | none |
+| `reconcile / plan` | `contents`, `issues`, `pull-requests`: read | writer (plan; the writer manifest's permissions, whole installation) | `idp-write` |
 | `reconcile / approve` | none | none | `idp-approval` |
 | `reconcile / apply-github` | `contents: read`, `issues: write` | writer for the apply (the writer manifest's permissions, whole installation); writer for the wet commit (`contents: write`, the claims repo only) | `idp-write` |
-| `drift / drift` | `contents: read`, `issues: write` | reader | none |
+| `drift / drift` | `contents: read`, `issues: write` | writer for the plan (the writer manifest's permissions, whole installation), reader for the bootstrap check | `idp-write` |
 | `recover / recover` | `actions: read`, `contents: read`, `issues: write` | writer for the wet commit | `idp-write` |
 
 Each token is set only on the step that uses it ([ADR-0023](adr/0023-pipeline-tokens-per-step.md)).

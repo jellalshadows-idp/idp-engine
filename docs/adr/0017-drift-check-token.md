@@ -18,11 +18,13 @@ The daily drift workflow (spec §6.4) runs `idp bootstrap check` unattended. Two
 - **Reading the identities.** `idp bootstrap check --params-env IDP_BOOTSTRAP` reads the identities from that environment variable instead of from `--approver/--reader/--writer`.
 - **Owner check.** Bypass lists stay verified by the owner-run `check`, which uses an owner token (runbook), and by every `apply`.
 
+*(Amended by ADR-0025, 2026-10-12: the drift plan of the GitHub stack refreshes with the writer token on main; the bootstrap check keeps the reader token as decided here.)*
+
 ## Consequences
 
 ### Positive
 
-- No write-capable key is ever present in a scheduled job.
+- No write-capable key is ever present in a scheduled job. *(Amended by ADR-0025, 2026-10-12: the drift job holds the writer key on main, for the plan only.)*
 - The daily drift run has no permanent false positive.
 
 ### Negative / costs

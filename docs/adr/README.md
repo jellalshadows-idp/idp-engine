@@ -28,3 +28,4 @@ An ADR records one decision that shapes this platform: the context that forced i
 | 0022 | [The required check lives in the caller](0022-required-check-lives-in-the-caller.md) | Accepted |
 | 0023 | [Pipeline tokens are minted per step with the narrowest scope that works](0023-pipeline-tokens-per-step.md) | Accepted |
 | 0024 | [A failed wet push is recovered from the run's own artifact](0024-failed-wet-push-recovery.md) | Accepted |
+| 0025 | [Plans refresh with the writer token on main](0025-plans-refresh-with-the-writer-on-main.md) | Accepted |

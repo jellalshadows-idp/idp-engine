@@ -426,6 +426,9 @@ Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
    → `diff` against `wet`. This produces a matrix of affected stacks, orphans
    included.
 3. **plan-github**: decrypts the state from `wet` and uses the `idp-reader` token.
+   It plans without refreshing (`-refresh=false`): the read-only token cannot see
+   admin-only repository fields, so the PR plan compares the claims with the state
+   the last apply wrote (ADR-0025). *(Amendment A7, 2026-10-12.)*
 4. **plan-aws** runs as a matrix, with one floci per job:
    1. Apply the env's `_baseline`.
    2. Apply the `wet` version of the stack, if it existed and is not `observe`.
@@ -453,7 +456,8 @@ must push this branch to the repo". `pull_request_target` is never used.
 This is one workflow with two triggers. The dispatch is the universal recovery
 button. Concurrency: group `idp-wet`, `cancel-in-progress: false`, `queue: max`.
 
-1. **plan** (no environment; reader token and passphrase as repo secrets):
+1. **plan** (environment `idp-write`, main only; the writer token, which can see
+   admin-only fields, and the passphrase; ADR-0025): *(Amendment A7, 2026-10-12.)*
    1. Re-render and diff against the **current** `wet`. Truth is `wet` now, not
       what the PR saw.
    2. Plan every affected stack, and save the GitHub plan as an artifact. The plan
@@ -532,10 +536,12 @@ Any delete or replace goes through `idp-approval`.
 ### 6.4 Drift (daily cron)
 - It runs on `cron: '23 5 * * *'`, avoiding the top of the hour, and in concurrency
   group `idp-wet`, so it never reads state in the middle of an apply.
-- It plans the GitHub stack with `idp-reader` and runs
+- It plans the GitHub stack with the writer token in environment `idp-write`
+  (ADR-0025) and runs
   `idp bootstrap check --params-env IDP_BOOTSTRAP --allow-hidden-bypass` (§9.2)
-  with the same reader token. Ruleset bypass lists, which a read-only token
+  with the reader token. Ruleset bypass lists, which a read-only token
   cannot see, are reported as notices, not drift (ADR-0017). *(Amendment A5, 2026-10-10.)*
+  *(Amendment A7, 2026-10-12.)*
 - If it finds drift, it creates or updates **one** issue labeled `drift` with the
   plan. If there is no drift, it closes that issue. Issues are handled with
   `GITHUB_TOKEN` and `issues: write`.
@@ -577,8 +583,8 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 
 | Credential | Permissions | Where it lives |
 |---|---|---|
-| `idp-reader` App key | Read only | Repo secret: PR plans, reconcile plan, drift |
-| `idp-writer` App key | Write, **including `Workflows`** (features write `.github/workflows/`; `Contents` alone is rejected) | **Only** in environment `idp-write` (deployment branch `main`, no reviewers) |
+| `idp-reader` App key | Read only | Repo secret: PR plans, drift bootstrap check *(Amendment A7, 2026-10-12.)* |
+| `idp-writer` App key | Write, **including `Workflows`** (features write `.github/workflows/`; `Contents` alone is rejected) | **Only** in environment `idp-write` (deployment branch `main`, no reviewers): the applies and the `wet` commits, and also the reconcile and drift plans (ADR-0025) *(Amendment A7, 2026-10-12.)* |
 | State passphrase | — | Repo secret, needed to read state in plans |
 | Approval | — | Environment `idp-approval` (required reviewers, `main`, no secrets) |
 
