@@ -18,10 +18,10 @@ func TestReconcileInterface(t *testing.T) {
 		t.Errorf("triggers = %v, want only workflow_call", got)
 	}
 	// The writer key is required: an environment secret reaches a reusable workflow
-	// only when the caller passes it by name (ADR-0023). The reader key and the
-	// passphrase stay optional, so each job names the missing one (ruling P-11).
+	// only when the caller passes it by name (ADR-0023). The passphrase stays
+	// optional, so each job names it when it is missing (ruling P-11). The reader
+	// key is gone: the plan refreshes with the writer token (ADR-0025).
 	wantSecrets(t, reconcilePath, w.call(t), map[string]bool{
-		"IDP_READER_PRIVATE_KEY": false,
 		"IDP_STATE_PASSPHRASE":   false,
 		"IDP_WRITER_PRIVATE_KEY": true,
 	})
@@ -158,24 +158,63 @@ func writerManifestPermissions(t *testing.T) map[string]string {
 	return out
 }
 
+// checkManifestToken pins a writer token that plans or applies the GitHub
+// stack: exactly the writer App's client id and key, the whole installation
+// (no repositories input), because the claims may declare any repository, and
+// exactly the writer manifest's permissions (ADR-0023, ADR-0025).
+func checkManifestToken(t *testing.T, where string, s step) {
+	t.Helper()
+	if !strings.HasPrefix(s.Uses, "actions/create-github-app-token@") {
+		t.Errorf("%s: uses = %q, want actions/create-github-app-token", where, s.Uses)
+	}
+	want := writerManifestPermissions(t)
+	want["client-id"] = "${{ vars.IDP_WRITER_CLIENT_ID }}"
+	want["private-key"] = "${{ secrets.IDP_WRITER_PRIVATE_KEY }}"
+	want["owner"] = "${{ github.repository_owner }}"
+	if !maps.Equal(map[string]string(s.With), want) {
+		t.Errorf("%s: with = %v, want %v (the writer manifest's permissions over the whole installation)", where, s.With, want)
+	}
+}
+
 func TestApplyTokenHasTheWriterManifestPermissions(t *testing.T) {
 	w := loadWorkflow(t, reconcilePath)
 	_, s := mustStep(t, "apply-github", mustJob(t, w, "apply-github").Steps, "apply-token")
 	if want := "needs.plan.outputs.changes != '0'"; s.If != want {
 		t.Errorf("apply-token if = %q, want %q", s.If, want)
 	}
-	if s.With["repositories"] != "" {
-		t.Errorf("the apply token spans the installation: the claims may declare any repository (ADR-0023)")
+	checkManifestToken(t, "apply-github apply-token", s)
+}
+
+func TestReconcilePlansWithTheWriterToken(t *testing.T) {
+	// The read-only reader token cannot see admin-only repository fields, so the
+	// plan refreshes with a writer token in idp-write, on main only (ADR-0025).
+	w := loadWorkflow(t, reconcilePath)
+	plan := mustJob(t, w, "plan")
+	if plan.Environment != "idp-write" {
+		t.Errorf("plan environment = %q, want idp-write: the plan refreshes with the writer token (ADR-0025)", plan.Environment)
 	}
-	got := map[string]string{}
-	for k, v := range s.With {
-		if strings.HasPrefix(k, "permission-") {
-			got[k] = v
+	for _, s := range plan.Steps {
+		if s.ID == "reader" {
+			t.Errorf("plan: a step with id reader remains; the reconcile plan uses no reader token (ADR-0025)")
 		}
 	}
-	if want := writerManifestPermissions(t); !maps.Equal(got, want) {
-		t.Errorf("apply token permissions = %v, want the writer manifest's %v", got, want)
+	_, cfg := mustStep(t, "plan", plan.Steps, "config")
+	wantEnv(t, "plan config", cfg, map[string]string{
+		"WRITER_CLIENT_ID": "${{ vars.IDP_WRITER_CLIENT_ID }}",
+		"WRITER_KEY_SET":   "${{ secrets.IDP_WRITER_PRIVATE_KEY != '' }}",
+		"PASSPHRASE_SET":   "${{ secrets.IDP_STATE_PASSPHRASE != '' }}",
+	})
+	iTok, tok := mustStep(t, "plan", plan.Steps, "plan-token")
+	if want := "steps.stacks.outputs.github == 'true'"; tok.If != want {
+		t.Errorf("plan-token if = %q, want %q", tok.If, want)
 	}
+	checkManifestToken(t, "plan plan-token", tok)
+	iPlan, p := mustStep(t, "plan", plan.Steps, "plan")
+	if iTok > iPlan {
+		t.Errorf("plan-token must come before the plan")
+	}
+	wantEnv(t, "plan plan", p, map[string]string{"GITHUB_TOKEN": "${{ steps.plan-token.outputs.token }}"})
+	wantRun(t, "plan plan", p, `tofu plan -input=false -lock=false -out="$RUNNER_TEMP/idp/out/github.tfplan"`)
 }
 
 // checkPushToken pins the wet-commit token: the claims repo only, contents:

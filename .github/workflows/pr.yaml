@@ -3,6 +3,9 @@ name: idp-pr
 # Reusable PR pipeline (spec §6.1): validate and render, diff against wet, plan
 # the affected stacks with the reader App, keep one sticky plan comment, and end
 # in a verdict that the caller's idp-gate job mirrors (ADR-0022).
+# The PR plan does not refresh: it compares the claims with the state the last
+# apply wrote, because the read-only reader token cannot see admin-only
+# repository fields (ADR-0025).
 
 on:
   workflow_call:
@@ -130,7 +133,7 @@ jobs:
             cp "$GITHUB_WORKSPACE/.idp/wet/tfstate/github.tfstate" "$RUNNER_TEMP/idp/work/tfstate/github.tfstate"
           fi
           tofu init -input=false -lockfile=readonly
-          tofu plan -input=false -lock=false -out="$RUNNER_TEMP/idp/plans/github.tfplan"
+          tofu plan -input=false -lock=false -refresh=false -out="$RUNNER_TEMP/idp/plans/github.tfplan"
           tofu show -json "$RUNNER_TEMP/idp/plans/github.tfplan" > "$RUNNER_TEMP/idp/plans/github.json"
       - name: summarize the plan
         id: summary

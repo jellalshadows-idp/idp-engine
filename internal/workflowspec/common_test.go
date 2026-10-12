@@ -101,8 +101,9 @@ func TestBotWritesUseTheWorkflowToken(t *testing.T) {
 
 // writerKeyCaller matches a call of the engine workflows whose idp-write jobs
 // read the writer key. GitHub hands an environment secret to a reusable
-// workflow only when the caller passes it by name (ADR-0023).
-var writerKeyCaller = regexp.MustCompile(`/idp-engine/\.github/workflows/(reconcile|recover)\.yaml@`)
+// workflow only when the caller passes it by name (ADR-0023); the drift job
+// plans with the writer token (ADR-0025). The pr workflow never gets it.
+var writerKeyCaller = regexp.MustCompile(`/idp-engine/\.github/workflows/(reconcile|recover|drift)\.yaml@`)
 
 // writerKeyByName is the one value a caller may pass as IDP_WRITER_PRIVATE_KEY.
 const writerKeyByName = "${{ secrets.IDP_WRITER_PRIVATE_KEY }}"
@@ -111,7 +112,7 @@ const writerKeyByName = "${{ secrets.IDP_WRITER_PRIVATE_KEY }}"
 // the approval job touch a secret. It scans every scalar under a job, not only
 // the steps: job env, with, outputs and a caller job's secrets: block count too.
 // Inside a workflow only idp-write jobs may read the key; a caller job may only
-// pass it by name to the engine's reconcile or recover workflow.
+// pass it by name to the engine's reconcile, recover or drift workflow.
 func writerKeyErrors(w *workflow) []string {
 	var errs []string
 	for k, v := range w.Env {
@@ -131,13 +132,14 @@ func writerKeyErrors(w *workflow) []string {
 			errs = append(errs, where+": secrets: inherit hands every secret to the called workflow; pass named secrets")
 		}
 		// byName is the one value the scan below lets through: the writer key that
-		// a caller job passes by name to the engine's reconcile or recover workflow.
+		// a caller job passes by name to the engine's reconcile, recover or drift
+		// workflow.
 		var byName *yaml.Node
 		if passed := mapValue(mapValue(node, "secrets"), "IDP_WRITER_PRIVATE_KEY"); passed != nil {
 			if writerKeyCaller.MatchString(j.Uses) && passed.Kind == yaml.ScalarNode && passed.Value == writerKeyByName {
 				byName = passed
 			} else {
-				errs = append(errs, fmt.Sprintf("%s: passes IDP_WRITER_PRIVATE_KEY; only a caller of the engine's reconcile or recover workflow may, and only as %s (ADR-0023)", where, writerKeyByName))
+				errs = append(errs, fmt.Sprintf("%s: passes IDP_WRITER_PRIVATE_KEY; only a caller of the engine's reconcile, recover or drift workflow may, and only as %s (ADR-0023)", where, writerKeyByName))
 			}
 		}
 		for _, s := range scalars(node) {
@@ -166,7 +168,7 @@ func writerKeyErrors(w *workflow) []string {
 				if strings.Contains(s, "IDP_WRITER_PRIVATE_KEY") {
 					switch {
 					case j.Uses != "":
-						errs = append(errs, fmt.Sprintf("%s: %s hands the writer key to a called workflow other than by name to the engine's reconcile or recover workflow (ADR-0023)", where, u.label))
+						errs = append(errs, fmt.Sprintf("%s: %s hands the writer key to a called workflow other than by name to the engine's reconcile, recover or drift workflow (ADR-0023)", where, u.label))
 					case j.Environment != "idp-write":
 						errs = append(errs, fmt.Sprintf("%s: %s reads the writer key outside environment idp-write", where, u.label))
 					}

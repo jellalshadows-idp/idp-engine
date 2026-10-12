@@ -24,6 +24,5 @@ jobs:
       issues: write
       pull-requests: read
     secrets:
-      IDP_READER_PRIVATE_KEY: ${{ secrets.IDP_READER_PRIVATE_KEY }}
       IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}
       IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}

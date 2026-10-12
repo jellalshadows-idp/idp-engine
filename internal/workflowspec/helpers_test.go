@@ -173,12 +173,21 @@ jobs:
     secrets:
       IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
 `, true},
-		{"key passed to the drift workflow", `
+		{"key passed by name to the drift workflow", `
 jobs:
   drift:
     uses: jellalshadows-idp/idp-engine/.github/workflows/drift.yaml@0123456789abcdef0123456789abcdef01234567
     secrets:
+      IDP_READER_PRIVATE_KEY: ${{ secrets.IDP_READER_PRIVATE_KEY }}
+      IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}
       IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_WRITER_PRIVATE_KEY }}
+`, false},
+		{"another secret passed as the key to the drift workflow", `
+jobs:
+  drift:
+    uses: jellalshadows-idp/idp-engine/.github/workflows/drift.yaml@0123456789abcdef0123456789abcdef01234567
+    secrets:
+      IDP_WRITER_PRIVATE_KEY: ${{ secrets.IDP_READER_PRIVATE_KEY }}
 `, true},
 		{"key passed by name to the reconcile workflow", `
 jobs:

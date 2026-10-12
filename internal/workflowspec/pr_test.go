@@ -41,6 +41,16 @@ func TestPRPlansOnlySameRepoBranches(t *testing.T) {
 	}
 }
 
+func TestPRPlanDoesNotRefresh(t *testing.T) {
+	// The read-only reader token cannot see admin-only repository fields, so a
+	// refresh with it plans phantom updates. The PR plan compares the claims with
+	// the state the last apply wrote (ADR-0025).
+	w := loadWorkflow(t, prPath)
+	_, p := mustStep(t, "plan", mustJob(t, w, "plan").Steps, "plan")
+	wantEnv(t, "plan plan", p, map[string]string{"GITHUB_TOKEN": "${{ steps.reader.outputs.token }}"})
+	wantRun(t, "plan plan", p, `tofu plan -input=false -lock=false -refresh=false -out="$RUNNER_TEMP/idp/plans/github.tfplan"`)
+}
+
 func TestPRVerdictFailsForksAndFailures(t *testing.T) {
 	w := loadWorkflow(t, prPath)
 	v := mustJob(t, w, "verdict")
