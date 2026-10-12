@@ -206,8 +206,11 @@ func TestApplyCommitsTheRenderOnlyAfterASuccessfulApply(t *testing.T) {
 	w := loadWorkflow(t, reconcilePath)
 	a := mustJob(t, w, "apply-github")
 	_, apply := mustStep(t, "apply-github", a.Steps, "apply")
-	if want := "needs.plan.outputs.changes != '0'"; apply.If != want {
-		t.Errorf("apply if = %q, want %q (never always(): it must not run after a failed step)", apply.If, want)
+	// apply-token keeps the implicit success() and the changes condition, so the
+	// apply never starts after a failed step or an earlier cancel; once started, a
+	// cancel must not kill OpenTofu mid-apply.
+	if want := "always() && steps.apply-token.outcome == 'success'"; apply.If != want {
+		t.Errorf("apply if = %q, want %q (it runs only after the apply token was minted, and a cancel must not stop it once it started)", apply.If, want)
 	}
 	wantRun(t, "apply-github apply", apply, "tofu init -input=false -lockfile=readonly", `tofu apply -input=false "$RUNNER_TEMP/idp/in/github.tfplan"`)
 	_, prep := mustStep(t, "apply-github", a.Steps, "prepare")

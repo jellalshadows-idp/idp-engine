@@ -284,7 +284,7 @@ jobs:
           permission-workflows: write
       - name: apply the saved plan
         id: apply
-        if: needs.plan.outputs.changes != '0'
+        if: always() && steps.apply-token.outcome == 'success'
         working-directory: ${{ runner.temp }}/idp/work/rendered/github
         env:
           GITHUB_TOKEN: ${{ steps.apply-token.outputs.token }}
