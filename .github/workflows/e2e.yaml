@@ -1,0 +1,72 @@
+name: idp-e2e
+
+# End-to-end harness (spec §8.5, ADR-0027): drives idp-claims-e2e through the
+# real pipelines at this commit, nightly and on demand from main.
+
+on:
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: idp-e2e
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: idp-e2e
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: check the environment
+        id: config
+        env:
+          BOT_CLIENT_ID: ${{ vars.IDP_BOT_CLIENT_ID }}
+          BOT_KEY_SET: ${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}
+          APPROVER_SET: ${{ secrets.IDP_E2E_APPROVER_TOKEN != '' }}
+        run: |
+          missing=""
+          [ -n "$BOT_CLIENT_ID" ] || missing="$missing variable IDP_BOT_CLIENT_ID,"
+          [ "$BOT_KEY_SET" = true ] || missing="$missing secret IDP_BOT_PRIVATE_KEY,"
+          [ "$APPROVER_SET" = true ] || missing="$missing secret IDP_E2E_APPROVER_TOKEN,"
+          if [ -n "$missing" ]; then
+            echo "::error::the idp-e2e environment is missing:${missing%,} (docs/e2e.md)"
+            exit 1
+          fi
+      - name: mint the bot token
+        id: bot
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.IDP_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: idp-claims-e2e
+          permission-actions: write
+          permission-checks: read
+          permission-contents: write
+          permission-issues: read
+          permission-members: read
+          permission-pull-requests: write
+          permission-workflows: write
+      - name: run the harness
+        id: harness
+        env:
+          E2E_BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          E2E_APPROVER_TOKEN: ${{ secrets.IDP_E2E_APPROVER_TOKEN }}
+        run: go run ./cmd/idp-e2e --repo "$GITHUB_REPOSITORY_OWNER/idp-claims-e2e" --engine-sha "$GITHUB_SHA" --run "$GITHUB_RUN_ID"

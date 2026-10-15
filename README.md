@@ -10,6 +10,7 @@ The engine of an internal developer platform (IDP) that reconciles on **GitHub A
 - Decisions: [docs/adr/](docs/adr/)
 - Claims reference: [docs/claims.md](docs/claims.md)
 - Pipelines: [docs/pipelines.md](docs/pipelines.md)
+- End-to-end harness: [docs/e2e.md](docs/e2e.md)
 - CLI reference: [docs/cli.md](docs/cli.md)
 - Runbooks: [docs/runbooks/](docs/runbooks/)
 - Phase log: [docs/phases/](docs/phases/)
