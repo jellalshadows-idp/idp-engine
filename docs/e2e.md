@@ -43,7 +43,7 @@ Both live only in the `idp-engine` environment `idp-e2e` (deployment branch `mai
 | Name | What | Scope |
 |---|---|---|
 | `IDP_BOT_PRIVATE_KEY` (secret), `IDP_BOT_CLIENT_ID` (variable) | The bot App ([ADR-0026](adr/0026-automation-app.md)) | Installation tokens the harness mints itself and renews before the hour runs out, each for `idp-claims-e2e` only: actions write, checks read, contents write, issues read, members read, pull requests write, workflows write |
-| `IDP_E2E_APPROVER_TOKEN` (secret) | A fine-grained token of the test account `adrian-da-silva`, an org member and a second `idp-approval` reviewer in `idp-claims-e2e` only | `idp-claims-e2e` only: Actions read, Deployments read and write |
+| `IDP_E2E_APPROVER_TOKEN` (secret) | A fine-grained token of `jellalshadows`, the org owner and the only `idp-approval` reviewer of `idp-claims-e2e` | `idp-claims-e2e` only: Actions read, Deployments read and write |
 
 An installation token lives one hour and a run can last longer, so the harness mints the bot's tokens from the App key rather than receiving one. The key is passed only to the `run the harness` step, and the binary is built in an earlier step that sees no secret.
 
@@ -61,11 +61,15 @@ gh variable set IDP_BOT_CLIENT_ID --env idp-e2e --repo jellalshadows-idp/idp-eng
 gh secret set IDP_E2E_APPROVER_TOKEN --env idp-e2e --repo jellalshadows-idp/idp-engine
 ```
 
-The approver account must be an org member and listed as an approver of `idp-claims-e2e`: `idp bootstrap apply --org jellalshadows-idp --claims-repo idp-claims-e2e --approver jellalshadows --approver adrian-da-silva …` ([bootstrap runbook](runbooks/bootstrap.md)).
+The approver must be listed as an approver of `idp-claims-e2e`, which `jellalshadows` already is: `idp bootstrap apply --org jellalshadows-idp --claims-repo idp-claims-e2e --approver jellalshadows …` ([bootstrap runbook](runbooks/bootstrap.md)).
+
+A fine-grained token never exceeds the permissions it is granted, so a leaked approver token can approve or reject deployments of `idp-claims-e2e` and read its runs, and nothing else.
+
+The harness team's member is `Adrian-Manuel`, the owner's second personal account and an org member.
 
 ### Rotating the approver token
 
-Fine-grained tokens expire. Before the expiry date, sign in as `adrian-da-silva`, create a new token with the same scope, approve it in the org settings if asked, run the `gh secret set IDP_E2E_APPROVER_TOKEN …` line above, then delete the old token. A run with an expired token fails at preflight, before it creates anything: `the approver token cannot read the claims repo's runs (expired or missing Actions read?)`.
+Fine-grained tokens expire. Before the expiry date, sign in as `jellalshadows`, create a new token with the same scope, run the `gh secret set IDP_E2E_APPROVER_TOKEN …` line above, then delete the old token. A run with an expired token fails at preflight, before it creates anything: `the approver token cannot read the claims repo's runs (expired or missing Actions read?)`.
 
 ## When a run fails
 

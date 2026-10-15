@@ -23,7 +23,7 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
 - It runs nightly at 03:41 UTC and on demand from `idp-engine` `main`, in environment `idp-e2e` (deployment branch `main`), one run at a time (concurrency group `idp-e2e`). Release PRs join in Phase 1e.
 - Credentials, both only in `idp-e2e`:
   - the bot App token (ADR-0026), minted for `idp-claims-e2e` only with actions write, checks read, contents write, issues read, members read, pull requests write and workflows write. Installation tokens expire after an hour and a run can last longer, so the harness mints and refreshes the bot's tokens from the App key, each scoped to the claims repo and the permissions the forge calls. *(Amended in execution, 2026-10-15.)*
-  - the approver token: a fine-grained token of the test account `adrian-da-silva`, an org member and, in `idp-claims-e2e` only, a second `idp-approval` reviewer. It is limited to `idp-claims-e2e` with Actions read and Deployments write.
+  - the approver token: a fine-grained token of the org owner `jellalshadows`, limited to `idp-claims-e2e` with Actions read and Deployments write. *(Amended in execution, 2026-10-16.)*
 - Not covered, and proven by the Phase 1c smoke: a partial apply failure, the `recover` workflow, pull requests from forks.
 
 ## Consequences
@@ -35,12 +35,13 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
 
 ### Negative / costs
 
-- A test account and a token that expires; the runbook covers rotation.
+- A token that expires; the runbook covers rotation.
 - A run takes tens of minutes of CI, creates and deletes real `e2e-` resources, and shares the org's rate limit.
 - `idp-claims-e2e` belongs to the harness: people should not commit there while it runs.
 
 ## Alternatives considered
 
-- **The owner's token.** Rejected: an org owner's token in CI is a takeover of the org if it leaks.
+- **The owner's token.** Rejected: an org owner's token in CI is a takeover of the org if it leaks. *(Amended in execution, 2026-10-16.)* The rejection holds for a classic or broadly scoped token. A fine-grained token limited to the test repo and these two permissions has the same exposure as a second account's token, so the decision uses it.
+- **A second account's fine-grained token.** The first choice; dropped in execution because no dedicated test account exists. Same exposure; it would tell the harness's approvals apart from the owner's in the audit log.
 - **Approving by hand.** Rejected by the owner: a nightly run must finish on its own.
 - **A custom deployment protection App.** Rejected: more machinery than a test account for one approval.
