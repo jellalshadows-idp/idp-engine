@@ -28,7 +28,7 @@ The remaining Phase 1 work is two independent subsystems, each worth its own rev
 The executor copies these into the ledger as rulings before Task 1. D-1 to D-4 are the owner's (AskUserQuestion, 2026-10-13).
 
 - **D-1 (owner). A third App, `<org>-bot`,** created with the manifest flow and installed only on `idp-engine`, `idp-claims` and `idp-claims-e2e`, opens and merges pull requests for the harness now and for release-please and Renovate in Phase 1e (ADR-0026). Its manifest already carries the permissions Phase 1e needs, so there is no second browser step.
-- **D-2 (owner). The test account `adrian-da-silva` joins the org** and becomes a second `idp-approval` reviewer in `idp-claims-e2e` only; its fine-grained token, limited to `idp-claims-e2e` with Actions read and Deployments write, approves the harness's destructive reconcile (ADR-0027).
+- **D-2 (owner). The second account joins the org** and becomes a second `idp-approval` reviewer in `idp-claims-e2e` only; its fine-grained token, limited to `idp-claims-e2e` with Actions read and Deployments write, approves the harness's destructive reconcile (ADR-0027).
 - **D-3 (owner). Renovate runs self-hosted with the bot App** — Phase 1e.
 - **D-4 (owner). The workflows download the release binary and verify its attestation**, building from source only when the pinned commit has no release — Phase 1e (spec §7.5 as written).
 - **D-5. Re-split** (table above).
@@ -56,7 +56,7 @@ The executor copies these into the ledger as rulings before Task 1. D-1 to D-4 a
 - Bot App role `bot`; App name and slug `<org>-bot` (here `jellalshadows-idp-bot`); manifest `bootstrap/apps/bot.json`.
 - Bot App permissions (repository): `actions: write`, `checks: read`, `contents: write`, `issues: write`, `metadata: read`, `pull_requests: write`, `statuses: read`, `workflows: write`; (organization): `members: read`. No events.
 - `idp-engine` environment `idp-e2e` (deployment branch `main`); its secrets `IDP_BOT_PRIVATE_KEY`, `IDP_E2E_APPROVER_TOKEN`; its variable `IDP_BOT_CLIENT_ID`.
-- Approvers: `idp-claims-e2e` → `jellalshadows`, `adrian-da-silva`; `idp-claims` → `jellalshadows`.
+- Approvers: `idp-claims-e2e` → `jellalshadows`, the second account; `idp-claims` → `jellalshadows`.
 - Harness: binary `cmd/idp-e2e`, package `internal/e2e`, workflow `.github/workflows/e2e.yaml` (`name: idp-e2e`), concurrency group `idp-e2e`, cron `41 3 * * *`.
 - Harness claim names: `e2e-r<run>-team` (Group) and `e2e-r<run>-app` (Component), where `<run>` is the workflow run id; branches `e2e/<run>/<step>`.
 - Harness bot token: repositories `idp-claims-e2e`; permissions `actions: write`, `checks: read`, `contents: write`, `issues: read`, `members: read`, `pull-requests: write`, `workflows: write`.
@@ -74,15 +74,15 @@ The executor copies these into the ledger as rulings before Task 1. D-1 to D-4 a
 **Owner actions** (only the owner can do these; the plan stops and asks at each)
 - O-1. Confirm "Create GitHub App" in the browser for the bot App (the controller starts `idp bootstrap app --role bot`).
 - O-2. Install the bot App on **only** `idp-engine`, `idp-claims`, `idp-claims-e2e`.
-- O-3. Accept the org invitation from the `adrian-da-silva` account.
-- O-4. As `adrian-da-silva`, create the fine-grained token (resource owner `jellalshadows-idp`; repository `idp-claims-e2e` only; Actions read, Deployments read and write; the longest expiry the org allows), approve it in the org settings if the org asks, and store it: `! gh secret set IDP_E2E_APPROVER_TOKEN --env idp-e2e --repo jellalshadows-idp/idp-engine`.
+- O-3. Accept the org invitation from the second account.
+- O-4. As the second account, create the fine-grained token (resource owner `jellalshadows-idp`; repository `idp-claims-e2e` only; Actions read, Deployments read and write; the longest expiry the org allows), approve it in the org settings if the org asks, and store it: `! gh secret set IDP_E2E_APPROVER_TOKEN --env idp-e2e --repo jellalshadows-idp/idp-engine`.
 
 **Side effects this plan authorizes** (controller, after the owner approves the plan)
 1. Push `feat/phase-1d-e2e-harness`, open its PR, merge it after review and the live run.
 2. Start `idp bootstrap app --org jellalshadows-idp --role bot` locally (loopback callback); it writes `~/.idp/apps/jellalshadows-idp-bot.{json,pem}`.
-3. Invite `adrian-da-silva` to `jellalshadows-idp` as a member (owner token).
+3. Invite the second account to `jellalshadows-idp` as a member (owner token).
 4. In `idp-engine`: create environment `idp-e2e` with deployment branch policy `main`; set its secret `IDP_BOT_PRIVATE_KEY` from the bot's `.pem` and its variable `IDP_BOT_CLIENT_ID` from the bot's `.json`; for the pre-merge live run, add the branch `feat/phase-1d-e2e-harness` to that policy, and remove it right after.
-5. `idp bootstrap apply` for `idp-claims-e2e` (approvers `jellalshadows`, `adrian-da-silva`) and `idp-claims` (approver `jellalshadows`), which rewrites `IDP_BOOTSTRAP` in the new format and sets the e2e approval reviewers.
+5. `idp bootstrap apply` for `idp-claims-e2e` (approvers `jellalshadows` and the second account) and `idp-claims` (approver `jellalshadows`), which rewrites `IDP_BOOTSTRAP` in the new format and sets the e2e approval reviewers.
 6. Harness runs: in `idp-claims-e2e`, branches, pull requests, merges, workflow dispatches, one approval per run with the approver token; through the platform, creating and deleting `e2e-r<run>-*` repositories and teams.
 7. Doc-only commits straight to `main` after the merge (phase log, README).
 
@@ -218,7 +218,7 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
 - It runs nightly at 03:41 UTC and on demand from `idp-engine` `main`, in environment `idp-e2e` (deployment branch `main`), one run at a time (concurrency group `idp-e2e`). Release PRs join in Phase 1e.
 - Credentials, both only in `idp-e2e`:
   - the bot App token (ADR-0026), minted for `idp-claims-e2e` only with actions write, checks read, contents write, issues read, members read, pull requests write and workflows write;
-  - the approver token: a fine-grained token of the test account `adrian-da-silva`, an org member and, in `idp-claims-e2e` only, a second `idp-approval` reviewer. It is limited to `idp-claims-e2e` with Actions read and Deployments write.
+  - the approver token: a fine-grained token of the second account, an org member and, in `idp-claims-e2e` only, a second `idp-approval` reviewer. It is limited to `idp-claims-e2e` with Actions read and Deployments write.
 - Not covered, and proven by the Phase 1c smoke: a partial apply failure, the `recover` workflow, pull requests from forks.
 
 ## Consequences
@@ -885,7 +885,7 @@ func TestInstallAdvice(t *testing.T) {
 }
 ```
 
-and a bootstrap `apply` test with two approvers, modelled on the existing apply test: `--approver jellalshadows --approver adrian-da-silva` with both users seeded in the fake (`/users/<login>` → `{"id": N}`); assert the environment write for `idp-approval` lists both reviewer ids, and that `--role bot` is accepted by `bootstrap app` flag validation while `--role admin` fails with "--role must be reader, writer or bot".
+and a bootstrap `apply` test with two approvers, modelled on the existing apply test: `--approver jellalshadows --approver <second account>` with both users seeded in the fake (`/users/<login>` → `{"id": N}`); assert the environment write for `idp-approval` lists both reviewer ids, and that `--role bot` is accepted by `bootstrap app` flag validation while `--role admin` fails with "--role must be reader, writer or bot".
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -2853,7 +2853,7 @@ func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) i
 	run := fs.String("run", "", "unique id of this run (the workflow run id)")
 	templates := fs.String("templates", "examples/claims-repo/.github/workflows", "directory of the caller templates")
 	owner := fs.String("owner", "jellalshadows", "login of the harness team's maintainer")
-	member := fs.String("member", "adrian-da-silva", "login of the harness team's member")
+	member := fs.String("member", "<second account>", "login of the harness team's member")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -3130,7 +3130,7 @@ Both live only in the `idp-engine` environment `idp-e2e` (deployment branch `mai
 | Name | What | Scope |
 |---|---|---|
 | `IDP_BOT_PRIVATE_KEY` (secret), `IDP_BOT_CLIENT_ID` (variable) | The bot App ([ADR-0026](adr/0026-automation-app.md)) | A token per run for `idp-claims-e2e` only: actions write, checks read, contents write, issues read, members read, pull requests write, workflows write |
-| `IDP_E2E_APPROVER_TOKEN` (secret) | A fine-grained token of the test account `adrian-da-silva`, an org member and a second `idp-approval` reviewer in `idp-claims-e2e` only | `idp-claims-e2e` only: Actions read, Deployments read and write |
+| `IDP_E2E_APPROVER_TOKEN` (secret) | A fine-grained token of the second account, an org member and a second `idp-approval` reviewer in `idp-claims-e2e` only | `idp-claims-e2e` only: Actions read, Deployments read and write |
 
 ### Setting up
 
@@ -3146,11 +3146,11 @@ gh variable set IDP_BOT_CLIENT_ID --env idp-e2e --repo jellalshadows-idp/idp-eng
 gh secret set IDP_E2E_APPROVER_TOKEN --env idp-e2e --repo jellalshadows-idp/idp-engine
 ```
 
-The approver account must be an org member and listed as an approver of `idp-claims-e2e`: `idp bootstrap apply --org jellalshadows-idp --claims-repo idp-claims-e2e --approver jellalshadows --approver adrian-da-silva …` ([bootstrap runbook](runbooks/bootstrap.md)).
+The approver account must be an org member and listed as an approver of `idp-claims-e2e`: `idp bootstrap apply --org jellalshadows-idp --claims-repo idp-claims-e2e --approver jellalshadows --approver <second account> …` ([bootstrap runbook](runbooks/bootstrap.md)).
 
 ### Rotating the approver token
 
-Fine-grained tokens expire. Before the expiry date, sign in as `adrian-da-silva`, create a new token with the same scope, approve it in the org settings if asked, run the `gh secret set IDP_E2E_APPROVER_TOKEN …` line above, then delete the old token. A run with an expired token fails at its first approval.
+Fine-grained tokens expire. Before the expiry date, sign in as the second account, create a new token with the same scope, approve it in the org settings if asked, run the `gh secret set IDP_E2E_APPROVER_TOKEN …` line above, then delete the old token. A run with an expired token fails at its first approval.
 
 ## When a run fails
 
@@ -3188,8 +3188,8 @@ gh pr create --repo jellalshadows-idp/idp-engine --base main --head feat/phase-1
 - [ ] **Step 3: CI** — `gh pr checks --repo jellalshadows-idp/idp-engine --watch`: `go`, `workflows`, `modules (github/group)`, `modules (github/component)`, `render-smoke` pass. A failure goes through the fix loop.
 - [ ] **Step 4: Credentials** (owner actions O-1 to O-4 and side effects 2–5, in this order):
   1. Start `go run ./cmd/idp bootstrap app --org jellalshadows-idp --role bot` and give the owner the printed link — **O-1**. Then the install link — **O-2** (only `idp-engine`, `idp-claims`, `idp-claims-e2e`). Verify: `gh api orgs/jellalshadows-idp/installations --jq '.installations[] | [.app_slug, .repository_selection] | @tsv'` lists `jellalshadows-idp-bot	selected`.
-  2. Invite: `gh api -X PUT orgs/jellalshadows-idp/memberships/adrian-da-silva -f role=member` — then **O-3**. Verify: `gh api orgs/jellalshadows-idp/members/adrian-da-silva --silent` succeeds.
-  3. Bootstrap (git bash, from the branch): `idp bootstrap check` then `apply` then `check` for `idp-claims-e2e` with `--approver jellalshadows --approver adrian-da-silva --passphrase-file ~/.idp/e2e.pass`, and for `idp-claims` with `--approver jellalshadows --passphrase-file ~/.idp/main.pass` (same flags as the Phase 1c plan's Task 9 Step 4). Expected: the first check reports `IDP_BOOTSTRAP` (old format) and, for e2e, the `idp-approval` reviewers; `apply` changes exactly those; the second check prints `bootstrap check: no drift`.
+  2. Invite: `gh api -X PUT orgs/jellalshadows-idp/memberships/<second account> -f role=member` — then **O-3**. Verify: `gh api orgs/jellalshadows-idp/members/<second account> --silent` succeeds.
+  3. Bootstrap (git bash, from the branch): `idp bootstrap check` then `apply` then `check` for `idp-claims-e2e` with `--approver jellalshadows --approver <second account> --passphrase-file ~/.idp/e2e.pass`, and for `idp-claims` with `--approver jellalshadows --passphrase-file ~/.idp/main.pass` (same flags as the Phase 1c plan's Task 9 Step 4). Expected: the first check reports `IDP_BOOTSTRAP` (old format) and, for e2e, the `idp-approval` reviewers; `apply` changes exactly those; the second check prints `bootstrap check: no drift`.
   4. The `idp-e2e` environment, `IDP_BOT_PRIVATE_KEY` and `IDP_BOT_CLIENT_ID`, with the commands in `docs/e2e.md` ("Setting up"; the controller never prints the key).
   5. **O-4** (the approver token). Verify: `gh secret list --env idp-e2e --repo jellalshadows-idp/idp-engine` shows both secrets.
 - [ ] **Step 5: Final whole-branch review** (most capable model) with the package `main..HEAD`, the spec, ADRs 0018, 0026, 0027 and this plan; one fix wave; one scoped re-review; rulings in the ledger.
@@ -3200,7 +3200,7 @@ gh pr create --repo jellalshadows-idp/idp-engine --base main --head feat/phase-1
 
 - [ ] **Step 1: Allow the branch for one run** — `gh api -X POST repos/jellalshadows-idp/idp-engine/environments/idp-e2e/deployment-branch-policies -f name=feat/phase-1d-e2e-harness -f type=branch` (note the returned `id`).
 - [ ] **Step 2: Run** — `gh workflow run e2e.yaml --repo jellalshadows-idp/idp-engine --ref feat/phase-1d-e2e-harness`; find the run (`gh run list --repo jellalshadows-idp/idp-engine --workflow e2e.yaml --limit 1 --json databaseId --jq '.[0].databaseId'`) and watch it (`gh run watch <id> --repo jellalshadows-idp/idp-engine --exit-status`).
-- [ ] **Step 3: Expected** — the run succeeds and its log shows every step: the pin PR (the callers move from the 1c merge commit to the branch head), create, update with topics removed, `No infrastructure changes.` for the case-only edit, a clean drift, the delete with one approval by `adrian-da-silva`, a clean final drift, `e2e: passed`. Record every PR number and run URL in `idp-claims-e2e` for the phase log.
+- [ ] **Step 3: Expected** — the run succeeds and its log shows every step: the pin PR (the callers move from the 1c merge commit to the branch head), create, update with topics removed, `No infrastructure changes.` for the case-only edit, a clean drift, the delete with one approval by the second account, a clean final drift, `e2e: passed`. Record every PR number and run URL in `idp-claims-e2e` for the phase log.
 - [ ] **Step 4: Fix loop** — when a step fails: read the harness log and the failing run in `idp-claims-e2e`; rule on the cause; fix on the branch with a test that pins it (a scenario test, a module test, or a workflow contract test), scoped review, push, CI; re-run from Step 2 (the harness cleans up after itself; if it could not, stop and ask the owner before anything is deleted). Known candidates to watch: the case-only login edit planning a membership change (fix: lowercase the login in the render or the module, with a test), and the topics resource on create.
 - [ ] **Step 5: Remove the temporary branch policy** — `gh api -X DELETE repos/jellalshadows-idp/idp-engine/environments/idp-e2e/deployment-branch-policies/<id>`.
 

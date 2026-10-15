@@ -37,7 +37,7 @@ on, and record everything in ADRs.
   `wet` branch, encrypted state and passphrase.
 - Apps: `jellalshadows-idp-reader` and `jellalshadows-idp-writer` (at most 34 characters),
   created once and shared by both claims repos.
-- Approver: `jellalshadows`. Test account: `adrian-da-silva`.
+- Approver: `jellalshadows`. Test account: the spike's second account.
 - Names shared with Phase 1 workflows (changing one is a breaking change):
   - branch `wet`;
   - environments `idp-approval` and `idp-write`;
@@ -4119,10 +4119,10 @@ resource "github_team" "spike" {
   privacy = "closed"
 }
 
-# adrian-da-silva is NOT an org member: this sends an org invitation (pending).
+# the second account is NOT an org member: this sends an org invitation (pending).
 resource "github_team_membership" "invitee" {
   team_id  = github_team.spike.id
-  username = "adrian-da-silva"
+  username = "<second account>"
   role     = "member"
 }
 
@@ -4324,9 +4324,9 @@ Run the workflow with `-f action=plan`.
 Record `plan_exit`: 0 means no diff, 2 means a diff. Also record `plan_seconds`,
 which is the refresh time for 10 resources.
 
-- [ ] **Step 6: Accept the invitation as adrian-da-silva, then plan again** (manual)
+- [ ] **Step 6: Accept the invitation as the second account, then plan again** (manual)
 
-The owner logs in to github.com as `adrian-da-silva` (for example in a private
+The owner logs in to github.com as the second account (for example in a private
 window), opens https://github.com/orgs/jellalshadows-idp/invitation, and
 accepts. Then run the workflow with `-f action=plan` again and record `plan_exit`.
 
@@ -4340,9 +4340,9 @@ Decision rule for ADR-0013 and spec §11 risk 1:
 
 Run the workflow with `-f action=destroy`. Record `destroy_seconds`.
 Then (outward-facing: ask first):
-`gh api --method DELETE /orgs/jellalshadows-idp/members/adrian-da-silva`
+`gh api --method DELETE /orgs/jellalshadows-idp/members/<second account>`
 Expected: `gh api orgs/jellalshadows-idp/members --jq '.[].login'` no
-longer lists `adrian-da-silva`.
+longer lists the second account.
 
 - [ ] **Step 8: Reader probe — what the reader App can actually see** (added by ruling R12)
 

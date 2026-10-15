@@ -44,7 +44,7 @@ What a sandbox org would have added is accepted as lost (spec §8.5):
 
 - Phase 1 creates the E2E harness; its exit criterion is creating, modifying and deleting an `e2e-` repo and team through `idp-claims-e2e` (§10).
 - Bootstrap must create both claims repos and wire their passphrases (§9.2, ADR-0011).
-- Phase 0 records pending-invite behavior using the test account `adrian-da-silva` (§10, §12).
+- Phase 0 records pending-invite behavior using the spike's second account (§10, §12).
 
 ## Alternatives considered
 

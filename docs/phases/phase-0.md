@@ -244,11 +244,11 @@ On 2026-10-09 the owner connected Claude in Chrome, after first testing that the
 
 Not possible: accepting the invitation for `Adrian-Manuel`. That account is not signed in to the browser's GitHub account switcher, and Claude cannot sign in (passwords are off limits), so the invitation stays an owner action.
 
-Note on the two accounts: `Adrian-Manuel` is the owner's other account (its invitation is to be accepted). `adrian-da-silva` is the spike's test account; it stayed a non-member until the S2 pending-invite test, was invited by the spike, accepted through the API and then removed.
+Note on the two accounts: `Adrian-Manuel` is the owner's other account (its invitation is to be accepted). The spike's second account stayed a non-member until the S2 pending-invite test, was invited by the spike, accepted through the API and then removed.
 
 ## Cleanup verification (S2)
 
-- `DELETE orgs/jellalshadows-idp/members/adrian-da-silva` done; the members list contains only `jellalshadows` (the account still listed for about five seconds after the delete); `memberships/adrian-da-silva` returns 404.
+- `DELETE orgs/jellalshadows-idp/members/<second account>` done; the members list contains only `jellalshadows` (the account still listed for about five seconds after the delete); `memberships/<second account>` returns 404.
 - The `spike-component` repo and the `spike-team` team return 404 (destroy removed all 10 resources, `resources_in_state=0`).
 - The pre-existing pending invitation for `Adrian-Manuel` was not created by the spike and was left untouched.
 

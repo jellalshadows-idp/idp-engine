@@ -801,6 +801,6 @@ Phase 1 is delivered as four plans, each shipping working software: **1a** claim
 - A single org, `jellalshadows-idp`, created by hand because Free orgs cannot be
   created through the API. The 2026-10-08 plan for a separate sandbox org was
   dropped by the owner on 2026-10-09; tests are isolated by repo and prefix (§8.5).
-- Test account for Group members and the pending-invite spike: `adrian-da-silva`.
+- A second account serves as the Group member and for the pending-invite spike.
   The approver and platform admin is `jellalshadows`.
 - Timing: this runs in parallel with `chart-base`.
