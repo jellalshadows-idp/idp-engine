@@ -102,6 +102,8 @@ func (s *Scenario) validate() error {
 	switch {
 	case s.F == nil || s.Clock == nil || s.Log == nil:
 		return errors.New("forge, clock and log are required")
+	case len(s.Templates) == 0:
+		return errors.New("templates are required")
 	case s.Org == "":
 		return errors.New("org is required")
 	case !loginPattern.MatchString(s.Owner) || !loginPattern.MatchString(s.Member):
@@ -136,7 +138,7 @@ func (s *Scenario) preflight(ctx context.Context) error {
 		return err
 	}
 	for _, f := range files {
-		if strings.HasPrefix(path.Base(f), prefix) {
+		if leftover.MatchString(strings.TrimSuffix(path.Base(f), ".yaml")) {
 			return fmt.Errorf("%s is on main: an earlier run left its claims behind; delete them through a PR (docs/e2e.md)", f)
 		}
 	}
@@ -144,8 +146,14 @@ func (s *Scenario) preflight(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(left) > 0 {
-		return fmt.Errorf("%v exist: an earlier run left them behind (docs/e2e.md)", left)
+	var mine []string
+	for _, name := range left {
+		if leftover.MatchString(name) {
+			mine = append(mine, name)
+		}
+	}
+	if len(mine) > 0 {
+		return fmt.Errorf("%v exist: an earlier run left them behind (docs/e2e.md)", mine)
 	}
 	return nil
 }
@@ -329,15 +337,23 @@ func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup boo
 	return nil
 }
 
-// destroysOnlyOwnNames checks every delete or replace row of the plan comment
-// names one of this run's resources.
+// destroysOnlyOwnNames checks every delete or replace of the plan comment's
+// fingerprint (complete even when the rendered rows are truncated) belongs to
+// one of this run's modules.
 func (s *Scenario) destroysOnlyOwnNames(comment string) error {
-	for _, line := range strings.Split(comment, "\n") {
-		if !strings.Contains(line, "delete |") && !strings.Contains(line, "replace |") {
-			continue
-		}
-		if !strings.Contains(line, s.names.Group) && !strings.Contains(line, s.names.Component) {
-			return fmt.Errorf("the delete would destroy something the harness does not own: %s", strings.TrimSpace(line))
+	_, fp, ok, err := plan.DecodeMarker(comment)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("the plan comment carries no fingerprint")
+	}
+	own := []string{"module.group_" + s.names.Group + ".", "module.component_" + s.names.Component + "."}
+	for _, entry := range fp.Destructive() {
+		_, address, _ := strings.Cut(entry, " ") // "stack: action address"
+		_, address, _ = strings.Cut(address, " ")
+		if !strings.HasPrefix(address, own[0]) && !strings.HasPrefix(address, own[1]) {
+			return fmt.Errorf("the delete would destroy something the harness does not own: %s", entry)
 		}
 	}
 	return nil
@@ -570,7 +586,10 @@ func flipCase(login string) string {
 	if out := strings.Join(parts, "-"); out != login {
 		return out
 	}
-	return strings.ToUpper(login)
+	if out := strings.ToUpper(login); out != login {
+		return out
+	}
+	return strings.ToLower(login)
 }
 
 func sameSet(a, b []string) bool {

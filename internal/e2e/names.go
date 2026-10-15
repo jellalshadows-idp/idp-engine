@@ -14,6 +14,9 @@ const prefix = "e2e-"
 
 var runPattern = regexp.MustCompile(`^[a-z0-9]{1,12}$`)
 
+// leftover matches the names a run creates, from any run.
+var leftover = regexp.MustCompile(`^e2e-r[a-z0-9]{1,12}-(app|team)$`)
+
 // Names are the claim names one run owns.
 type Names struct {
 	Group     string

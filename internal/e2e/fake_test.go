@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/jellalshadows-idp/idp-engine/internal/plan"
 )
 
 // fakeForge models just enough of GitHub and the pipelines for the scenario:
@@ -25,7 +27,9 @@ type fakeForge struct {
 	approval map[string]bool              // slug → its reconcile waits for idp-approval
 	approved map[int64]bool
 	rejected map[int64]bool
-	failRun  map[string]bool // slug → its reconcile concludes failure
+	raw      map[string]string           // slug → whole plan comment, verbatim
+	fps      map[string]plan.Fingerprint // slug → fingerprint its plan comment carries
+	failRun  map[string]bool             // slug → its reconcile concludes failure
 	active   []Run
 	written  []string
 	drifts   int
@@ -39,7 +43,7 @@ func newFakeForge() *fakeForge {
 		merged: map[string]string{}, paths: map[string]any{}, issues: map[string]int{},
 		gate: map[string]string{}, comments: map[string]string{}, effects: map[string]func(*fakeForge){},
 		approval: map[string]bool{}, approved: map[int64]bool{},
-		rejected: map[int64]bool{}, failRun: map[string]bool{},
+		rejected: map[int64]bool{}, raw: map[string]string{}, fps: map[string]plan.Fingerprint{}, failRun: map[string]bool{},
 	}
 }
 
@@ -104,11 +108,23 @@ func (f *fakeForge) Checks(_ context.Context, sha string) (map[string]string, er
 }
 
 func (f *fakeForge) PlanComment(_ context.Context, pr int) (string, error) {
-	c, ok := f.comments[slugOf(f.prs[pr])]
+	slug := slugOf(f.prs[pr])
+	if raw, ok := f.raw[slug]; ok { // replaces the whole comment; %SHA% is the PR head
+		return strings.ReplaceAll(raw, "%SHA%", fakeSHA(1000+pr)), nil
+	}
+	c, ok := f.comments[slug]
 	if !ok {
 		c = "<code>github</code>: +2 ~0 -0 ±0"
 	}
-	return planMarker + "\n" + c + "\n<!-- idp-fingerprint:v1 sha=" + fakeSHA(1000+pr) + " data=x -->", nil
+	fp := f.fps[slug]
+	if fp == nil {
+		fp = plan.Fingerprint{}
+	}
+	marker, err := plan.EncodeMarker(fakeSHA(1000+pr), fp)
+	if err != nil {
+		return "", err
+	}
+	return planMarker + "\n" + c + "\n" + marker, nil
 }
 
 func (f *fakeForge) Merge(_ context.Context, pr int, _ string) (string, error) {

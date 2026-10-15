@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jellalshadows-idp/idp-engine/internal/plan"
 )
 
 const testSHA = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
@@ -46,6 +48,10 @@ func world(t *testing.T) (*fakeForge, *Scenario) {
 	f.comments["case"] = "No infrastructure changes."
 	f.comments["pin"] = "No infrastructure changes."
 	f.comments["delete"] = "<code>github</code>: +0 ~0 -8 ±0\n> [!WARNING]"
+	f.fps["delete"] = plan.Fingerprint{"github": {
+		{Address: "module.component_e2e-r42-app.github_repository.this", Action: plan.Delete},
+		{Address: "module.group_e2e-r42-team.github_team.this", Action: plan.Delete},
+	}}
 	f.approval["delete"] = true
 	f.effects["delete"] = func(f *fakeForge) {
 		for p := range f.paths {
@@ -200,9 +206,13 @@ func TestScenarioRequiresThePinToPlanNothing(t *testing.T) {
 
 func TestDeleteRefusesForeignDestroys(t *testing.T) {
 	f, s := world(t)
-	f.comments["delete"] = "| ⚠️ delete | <code>module.group_e2e-r42-team.github_team.this</code> |\n| ⚠️ delete | <code>module.group_platform.github_team.this</code> |\n> [!WARNING]"
+	f.fps["delete"] = plan.Fingerprint{"github": {
+		{Address: "module.group_e2e-r42-team.github_team.this", Action: plan.Delete},
+		{Address: "module.group_e2e-r42-team2.github_team.this", Action: plan.Replace},
+	}}
+	f.comments["delete"] = "| ⚠️ delete | <code>module.group_e2e-r42-team.github_team.this</code> |\n| … | and 1 more changes |\n> [!WARNING]"
 	err := s.Execute(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "the delete would destroy something the harness does not own") {
+	if err == nil || !strings.Contains(err.Error(), "the delete would destroy something the harness does not own: github: replace module.group_e2e-r42-team2.github_team.this") {
 		t.Fatalf("err = %v", err)
 	}
 	if slices.Contains(f.log, "merge delete") {
@@ -215,6 +225,7 @@ func TestCleanupRemovesClaimsThatWereNeverApplied(t *testing.T) {
 	f.effects["create"] = nil
 	f.failRun["create"] = true
 	f.comments["delete"] = "No infrastructure changes."
+	f.fps["delete"] = nil
 	f.approval["delete"] = false
 	err := s.Execute(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "create: reconcile run 501 concluded failure") || strings.Contains(err.Error(), "cleanup:") {
@@ -262,6 +273,7 @@ func TestScenarioValidatesItsInputs(t *testing.T) {
 		{"no org", func(s *Scenario) { s.Org = "" }, "org is required"},
 		{"digit-only member", func(s *Scenario) { s.Member = "1234" }, "needs a letter"},
 		{"bad login", func(s *Scenario) { s.Owner = "a b" }, "must be GitHub logins"},
+		{"no templates", func(s *Scenario) { s.Templates = nil }, "templates are required"},
 		{"zero interval", func(s *Scenario) { s.Timeouts.Interval = 0 }, "poll interval must be positive"},
 	} {
 		_, s := world(t)
@@ -269,5 +281,31 @@ func TestScenarioValidatesItsInputs(t *testing.T) {
 		if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: err = %v, want %q", tt.name, err, tt.want)
 		}
+	}
+}
+
+func TestDeleteRefusesACommentWithoutFingerprint(t *testing.T) {
+	f, s := world(t)
+	f.raw["delete"] = planMarker + "\n<code>github</code>: +0 ~0 -8 ±0\n> [!WARNING]\n<!-- idp-fingerprint:v1 sha=%SHA% data=!! -->"
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "delete: ") || slices.Contains(f.log, "merge delete") {
+		t.Fatalf("err = %v: a delete whose fingerprint cannot be read must not be merged", err)
+	}
+}
+
+func TestFlipCaseAlwaysChangesALoginWithALetter(t *testing.T) {
+	for _, login := range []string{"adrian-da-silva", "Adrian", "ADRIAN", "a1", "A1"} {
+		if got := flipCase(login); got == login || !strings.EqualFold(got, login) {
+			t.Errorf("flipCase(%q) = %q", login, got)
+		}
+	}
+}
+
+func TestPreflightIgnoresUnrelatedE2ENames(t *testing.T) {
+	f, s := world(t)
+	f.paths["/repos/acme/e2e-reports"] = map[string]any{}
+	f.main["claims/components/e2e-reports.yaml"] = []byte("x")
+	if err := s.Execute(context.Background()); err != nil {
+		t.Fatalf("unrelated e2e- names must not block a run: %v", err)
 	}
 }
