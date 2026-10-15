@@ -69,3 +69,13 @@ func TestBotPermissions(t *testing.T) {
 		t.Errorf("botPermissions = %v, want %v: every bot token gets exactly what the GitHub forge calls (ADR-0027)", botPermissions, want)
 	}
 }
+
+func TestMainDefaultMemberIsTheOwnersSecondAccount(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := Main([]string{"-h"}, &out, &errb, func(string) string { return "" }); code != 2 {
+		t.Fatalf("exit %d, want 2 for -h", code)
+	}
+	if !strings.Contains(errb.String(), `(default "Adrian-Manuel")`) {
+		t.Errorf("usage does not pin the default --member to Adrian-Manuel:\n%s", errb.String())
+	}
+}

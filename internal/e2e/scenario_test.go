@@ -298,7 +298,7 @@ func TestDeleteRefusesACommentWithoutFingerprint(t *testing.T) {
 }
 
 func TestFlipCaseAlwaysChangesALoginWithALetter(t *testing.T) {
-	for _, login := range []string{"adrian-da-silva", "Adrian", "ADRIAN", "a1", "A1"} {
+	for _, login := range []string{"Adrian-Manuel", "Adrian", "ADRIAN", "a1", "A1"} {
 		if got := flipCase(login); got == login || !strings.EqualFold(got, login) {
 			t.Errorf("flipCase(%q) = %q", login, got)
 		}

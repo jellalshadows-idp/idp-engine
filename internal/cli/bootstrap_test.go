@@ -172,10 +172,10 @@ func TestApplyThenCheckEndToEnd(t *testing.T) {
 
 func TestApplyWithSeveralApprovers(t *testing.T) {
 	f := newE2E(t)
-	f.fake.Objects["/users/adrian-da-silva"] = map[string]any{"login": "adrian-da-silva", "id": 7}
+	f.fake.Objects["/users/Adrian-Manuel"] = map[string]any{"login": "Adrian-Manuel", "id": 7}
 
 	// newE2E already passes --approver jellalshadows; repeating the flag adds one.
-	code, _, stderr := f.run(f.env(nil), "apply", "--passphrase-file", f.pass, "--approver", "adrian-da-silva")
+	code, _, stderr := f.run(f.env(nil), "apply", "--passphrase-file", f.pass, "--approver", "Adrian-Manuel")
 	if code != 0 {
 		t.Fatalf("apply exit code = %d, want 0 (stderr %q)", code, stderr)
 	}

@@ -37,7 +37,7 @@ func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) i
 	run := fs.String("run", "", "unique id of this run (the workflow run id)")
 	templates := fs.String("templates", "examples/claims-repo/.github/workflows", "directory of the caller templates")
 	owner := fs.String("owner", "jellalshadows", "login of the harness team's maintainer")
-	member := fs.String("member", "adrian-da-silva", "login of the harness team's member")
+	member := fs.String("member", "Adrian-Manuel", "login of the harness team's member")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
