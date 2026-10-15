@@ -22,11 +22,20 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    # Outlasts the harness's bounded waits (DefaultTimeouts, about 300 minutes
+    # in the worst case), so its cleanup always gets to run.
+    timeout-minutes: 330
     environment: idp-e2e
     permissions:
       contents: read
     steps:
+      - name: run once
+        id: guard
+        run: |
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::re-running idp-e2e reuses its run id and collides with the first attempt's branches; dispatch a new run (docs/e2e.md)"
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -34,6 +43,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: build the harness
+        id: build
+        run: go build -o "$RUNNER_TEMP/idp-e2e" ./cmd/idp-e2e
       - name: check the environment
         id: config
         env:
@@ -69,4 +81,5 @@ jobs:
         env:
           E2E_BOT_TOKEN: ${{ steps.bot.outputs.token }}
           E2E_APPROVER_TOKEN: ${{ secrets.IDP_E2E_APPROVER_TOKEN }}
-        run: go run ./cmd/idp-e2e --repo "$GITHUB_REPOSITORY_OWNER/idp-claims-e2e" --engine-sha "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
+        run: |
+          "$RUNNER_TEMP/idp-e2e" --repo "$GITHUB_REPOSITORY_OWNER/idp-claims-e2e" --engine-sha "$GITHUB_SHA" --run "$GITHUB_RUN_ID"

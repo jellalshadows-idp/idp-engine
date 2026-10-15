@@ -177,30 +177,88 @@ func (g GitHub) Checks(ctx context.Context, sha string) (map[string]string, erro
 	return out, nil
 }
 
+// PlanComment returns the bot's plan comment, and refuses one that anyone but
+// the bot edited, as the gate does (ADR-0018): the harness approves on it.
 func (g GitHub) PlanComment(ctx context.Context, pr int) (string, error) {
+	repo := ghops.Repo{API: g.Bot, Owner: g.Owner, Name: g.Repo}
 	var c *ghops.Comment
 	err := g.read(ctx, func() (err error) {
-		c, err = ghops.Repo{API: g.Bot, Owner: g.Owner, Name: g.Repo}.FindBotComment(ctx, pr, planMarker)
+		c, err = repo.FindBotComment(ctx, pr, planMarker)
 		return err
 	})
 	if err != nil || c == nil {
 		return "", err
 	}
+	var edited bool
+	var editor string
+	if err := g.read(ctx, func() (err error) {
+		edited, editor, err = repo.EditedByOthers(ctx, c.NodeID)
+		return err
+	}); err != nil {
+		return "", err
+	}
+	if edited {
+		return "", fmt.Errorf("the plan comment on PR #%d was edited by %s: the harness trusts only the bot's own comment", pr, editor)
+	}
 	return c.Body, nil
 }
 
-func (g GitHub) Merge(ctx context.Context, pr int, title string) (string, error) {
+// Merge merges pr with a merge commit, pinned to the head the harness
+// verified: GitHub answers 409 when the head moved.
+func (g GitHub) Merge(ctx context.Context, pr PR, title string) (string, error) {
 	var resp struct {
 		SHA    string `json:"sha"`
 		Merged bool   `json:"merged"`
 	}
-	if err := g.Bot.Put(ctx, g.path(fmt.Sprintf("/pulls/%d/merge", pr)), map[string]string{"merge_method": "merge", "commit_title": title}, &resp); err != nil {
+	body := map[string]string{"merge_method": "merge", "commit_title": title, "sha": pr.HeadSHA}
+	if err := g.Bot.Put(ctx, g.path(fmt.Sprintf("/pulls/%d/merge", pr.Number)), body, &resp); err != nil {
 		return "", err
 	}
 	if !resp.Merged {
-		return "", fmt.Errorf("PR #%d was not merged", pr)
+		return "", fmt.Errorf("PR #%d was not merged", pr.Number)
 	}
 	return resp.SHA, nil
+}
+
+// Parent returns the first parent of a commit: for a merge commit, the head
+// the base branch had when it landed.
+func (g GitHub) Parent(ctx context.Context, sha string) (string, error) {
+	var commit struct {
+		Parents []struct {
+			SHA string `json:"sha"`
+		} `json:"parents"`
+	}
+	if err := g.read(ctx, func() error { return g.Bot.Get(ctx, g.path("/commits/"+sha), &commit) }); err != nil {
+		return "", err
+	}
+	if len(commit.Parents) == 0 {
+		return "", fmt.Errorf("commit %s has no parent", short(sha))
+	}
+	return commit.Parents[0].SHA, nil
+}
+
+// CheckApprover proves the approver token still reads the claims repo's runs,
+// so an expired token stops a run before it creates anything.
+func (g GitHub) CheckApprover(ctx context.Context) error {
+	if err := g.read(ctx, func() error { return g.Approver.Get(ctx, g.path("/actions/runs?per_page=1"), nil) }); err != nil {
+		return fmt.Errorf("the approver token cannot read the claims repo's runs (expired or missing Actions read?): rotate it, see docs/e2e.md: %w", err)
+	}
+	return nil
+}
+
+// DeleteBranch deletes a branch with the bot token; a 404 means it is already
+// gone, which is success.
+func (g GitHub) DeleteBranch(ctx context.Context, branch string) error {
+	err := g.Bot.Delete(ctx, g.path("/git/refs/heads/"+branch))
+	if errors.Is(err, ghapi.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+// ClosePR closes a pull request with the bot token.
+func (g GitHub) ClosePR(ctx context.Context, number int) error {
+	return g.Bot.Patch(ctx, g.path(fmt.Sprintf("/pulls/%d", number)), map[string]string{"state": "closed"}, nil)
 }
 
 func (g GitHub) Runs(ctx context.Context, workflow, sha string) ([]Run, error) {

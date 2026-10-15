@@ -6,6 +6,7 @@ import "context"
 type PR struct {
 	Number  int
 	HeadSHA string
+	BaseSHA string // the main head its branch was created from
 }
 
 // Run is one workflow run.
@@ -29,9 +30,10 @@ type Forge interface {
 	// Checks maps each check run on sha to its conclusion, empty while it runs.
 	Checks(ctx context.Context, sha string) (map[string]string, error)
 	// PlanComment is the newest plan comment github-actions[bot] wrote on pr,
-	// or "" when there is none yet.
+	// or "" when there is none yet; a comment anyone else edited is an error.
 	PlanComment(ctx context.Context, pr int) (string, error)
-	Merge(ctx context.Context, pr int, title string) (string, error)
+	// Merge merges pr with a merge commit, only while its head is pr.HeadSHA.
+	Merge(ctx context.Context, pr PR, title string) (string, error)
 	// Runs lists a workflow's runs for a head commit, newest first.
 	Runs(ctx context.Context, workflow, sha string) ([]Run, error)
 	// Jobs maps each job of a run to its conclusion.
@@ -55,4 +57,12 @@ type Forge interface {
 	ActiveRuns(ctx context.Context) ([]Run, error)
 	// Reject rejects a pending idp-approval deployment, so nothing is applied.
 	Reject(ctx context.Context, runID, envID int64, comment string) error
+	// Parent returns a commit's first parent: for a merge commit, main's head
+	// when it landed.
+	Parent(ctx context.Context, sha string) (string, error)
+	// CheckApprover fails when the approver token cannot read the claims repo's runs.
+	CheckApprover(ctx context.Context) error
+	// DeleteBranch deletes a branch; one that is already gone is not an error.
+	DeleteBranch(ctx context.Context, branch string) error
+	ClosePR(ctx context.Context, number int) error
 }

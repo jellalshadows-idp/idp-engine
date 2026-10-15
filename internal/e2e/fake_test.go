@@ -30,10 +30,13 @@ type fakeForge struct {
 	raw      map[string]string           // slug → whole plan comment, verbatim
 	fps      map[string]plan.Fingerprint // slug → fingerprint its plan comment carries
 	failRun  map[string]bool             // slug → its reconcile concludes failure
+	parent   map[string]string           // slug → first parent its merge commit reports (default: main's head before the merge)
+	checkErr error                       // what CheckApprover answers
+	unbranch error                       // what DeleteBranch answers
 	active   []Run
 	written  []string
 	drifts   int
-	head     int
+	head     int // main's head is fakeSHA(head); an effect that bumps it is someone else's push
 	log      []string
 }
 
@@ -44,6 +47,7 @@ func newFakeForge() *fakeForge {
 		gate: map[string]string{}, comments: map[string]string{}, effects: map[string]func(*fakeForge){},
 		approval: map[string]bool{}, approved: map[int64]bool{},
 		rejected: map[int64]bool{}, raw: map[string]string{}, fps: map[string]plan.Fingerprint{}, failRun: map[string]bool{},
+		parent: map[string]string{},
 	}
 }
 
@@ -127,8 +131,11 @@ func (f *fakeForge) PlanComment(_ context.Context, pr int) (string, error) {
 	return planMarker + "\n" + c + "\n" + marker, nil
 }
 
-func (f *fakeForge) Merge(_ context.Context, pr int, _ string) (string, error) {
-	branch := f.prs[pr]
+func (f *fakeForge) Merge(_ context.Context, pr PR, _ string) (string, error) {
+	if pr.HeadSHA != fakeSHA(1000+pr.Number) {
+		return "", fmt.Errorf("PR #%d: 409 head moved", pr.Number) // GitHub refuses a merge whose sha is not the head
+	}
+	branch := f.prs[pr.Number]
 	for p, b := range f.branches[branch] {
 		if b == nil {
 			delete(f.main, p)
@@ -254,4 +261,31 @@ func (f *fakeForge) GetJSON(_ context.Context, path string, out any) error {
 
 func (f *fakeForge) OpenIssues(_ context.Context, label, title string) (int, error) {
 	return f.issues[label+"/"+title], nil
+}
+
+func (f *fakeForge) Parent(_ context.Context, sha string) (string, error) {
+	slug, ok := f.merged[sha]
+	if !ok {
+		return "", fmt.Errorf("unexpected commit %s", sha)
+	}
+	if p, ok := f.parent[slug]; ok {
+		return p, nil
+	}
+	return fakeSHA(shaNumber(sha) - 1), nil // the head main had when the merge landed
+}
+
+func (f *fakeForge) CheckApprover(context.Context) error { return f.checkErr }
+
+func (f *fakeForge) DeleteBranch(_ context.Context, branch string) error {
+	if f.unbranch != nil {
+		return f.unbranch
+	}
+	delete(f.branches, branch)
+	f.log = append(f.log, "delete branch "+branch)
+	return nil
+}
+
+func (f *fakeForge) ClosePR(_ context.Context, number int) error {
+	f.log = append(f.log, fmt.Sprintf("close %d", number))
+	return nil
 }

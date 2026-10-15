@@ -120,8 +120,8 @@ func TestGitHubRunsAndMerge(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/idp-claims-e2e/pulls/4/merge":
 			var b map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&b)
-			if b["merge_method"] != "merge" {
-				t.Errorf("merge body = %v", b)
+			if b["merge_method"] != "merge" || b["sha"] != "h1" {
+				t.Errorf("merge body = %v: want a merge pinned to the verified head h1", b)
 			}
 			_, _ = w.Write([]byte(`{"sha":"m1","merged":true}`))
 		default:
@@ -132,8 +132,127 @@ func TestGitHubRunsAndMerge(t *testing.T) {
 	if err != nil || len(runs) != 1 || runs[0].ID != 11 || runs[0].Status != "waiting" {
 		t.Errorf("Runs = %+v, %v", runs, err)
 	}
-	if sha, err := g.Merge(context.Background(), 4, "t"); err != nil || sha != "m1" {
+	if sha, err := g.Merge(context.Background(), PR{Number: 4, HeadSHA: "h1"}, "t"); err != nil || sha != "m1" {
 		t.Errorf("Merge = %q, %v", sha, err)
+	}
+}
+
+func TestGitHubPlanCommentTrustsOnlyTheBotsEdits(t *testing.T) {
+	var editor string
+	var graphAuth string
+	g := forgeAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/idp-claims-e2e/issues/3/comments":
+			fmt.Fprint(w, `[{"id":1,"node_id":"IC_1","body":"<!-- idp-plan -->\nplan","user":{"login":"github-actions[bot]","type":"Bot"}}]`)
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			graphAuth = r.Header.Get("Authorization")
+			var b struct {
+				Variables map[string]any `json:"variables"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			if b.Variables["id"] != "IC_1" {
+				t.Errorf("graphql variables = %v, want the comment's node id", b.Variables)
+			}
+			fmt.Fprintf(w, `{"data":{"node":{"editor":%s}}}`, editor)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+		}
+	})
+	editor = `{"login":"mallory","__typename":"User"}`
+	_, err := g.PlanComment(context.Background(), 3)
+	if err == nil || err.Error() != "the plan comment on PR #3 was edited by mallory: the harness trusts only the bot's own comment" {
+		t.Fatalf("err = %v", err)
+	}
+	if graphAuth != "Bearer bot-token" {
+		t.Errorf("Authorization = %q: the editor check reads with the bot token", graphAuth)
+	}
+	for _, e := range []string{`null`, `{"login":"github-actions","__typename":"Bot"}`} {
+		editor = e
+		if body, err := g.PlanComment(context.Background(), 3); err != nil || body != "<!-- idp-plan -->\nplan" {
+			t.Errorf("editor %s: PlanComment = %q, %v; an unedited comment and the bot's own edit are trusted", e, body, err)
+		}
+	}
+}
+
+func TestGitHubChecksTheApproverToken(t *testing.T) {
+	status := http.StatusOK
+	var auth string
+	g := forgeAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/idp-claims-e2e/actions/runs" || r.URL.Query().Get("per_page") != "1" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+		}
+		auth = r.Header.Get("Authorization")
+		w.WriteHeader(status)
+		fmt.Fprint(w, `{"total_count":0,"workflow_runs":[]}`)
+	})
+	if err := g.CheckApprover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if auth != "Bearer approver-token" {
+		t.Errorf("Authorization = %q: the check must use the approver token", auth)
+	}
+	status = http.StatusUnauthorized
+	err := g.CheckApprover(context.Background())
+	if err == nil || !strings.HasPrefix(err.Error(), "the approver token cannot read the claims repo's runs (expired or missing Actions read?): rotate it, see docs/e2e.md: ") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestGitHubParentIsTheFirstParent(t *testing.T) {
+	g := forgeAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/idp-claims-e2e/commits/m1":
+			fmt.Fprint(w, `{"sha":"m1","parents":[{"sha":"base1"},{"sha":"head1"}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/idp-claims-e2e/commits/root":
+			fmt.Fprint(w, `{"sha":"root","parents":[]}`)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+		}
+	})
+	if p, err := g.Parent(context.Background(), "m1"); err != nil || p != "base1" {
+		t.Errorf("Parent = %q, %v; want the first parent", p, err)
+	}
+	if _, err := g.Parent(context.Background(), "root"); err == nil {
+		t.Error("a commit without parents is not a merge")
+	}
+}
+
+func TestGitHubDeleteBranchAcceptsAMissingBranch(t *testing.T) {
+	status := http.StatusNoContent
+	var got []string
+	g := forgeAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path+" "+r.Header.Get("Authorization"))
+		w.WriteHeader(status)
+	})
+	if err := g.DeleteBranch(context.Background(), "e2e/42/create"); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"DELETE /repos/acme/idp-claims-e2e/git/refs/heads/e2e/42/create Bearer bot-token"}; !slices.Equal(got, want) {
+		t.Errorf("requests = %v, want %v", got, want)
+	}
+	status = http.StatusNotFound
+	if err := g.DeleteBranch(context.Background(), "e2e/42/create"); err != nil {
+		t.Errorf("a branch that is already gone is deleted: %v", err)
+	}
+	status = http.StatusUnprocessableEntity
+	if err := g.DeleteBranch(context.Background(), "e2e/42/create"); err == nil {
+		t.Error("want the error of a failed delete")
+	}
+}
+
+func TestGitHubClosePR(t *testing.T) {
+	var got string
+	var body map[string]any
+	g := forgeAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r.Method + " " + r.URL.Path + " " + r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		fmt.Fprint(w, `{}`)
+	})
+	if err := g.ClosePR(context.Background(), 5); err != nil {
+		t.Fatal(err)
+	}
+	if got != "PATCH /repos/acme/idp-claims-e2e/pulls/5 Bearer bot-token" || len(body) != 1 || body["state"] != "closed" {
+		t.Errorf("request = %s %v", got, body)
 	}
 }
 

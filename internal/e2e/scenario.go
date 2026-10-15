@@ -33,7 +33,13 @@ type Timeouts struct {
 }
 
 // DefaultTimeouts suit the real pipelines, where every job builds idp and plans.
-var DefaultTimeouts = Timeouts{Interval: 15 * time.Second, Checks: 20 * time.Minute, Reconcile: 40 * time.Minute, Drift: 20 * time.Minute}
+// They fit under the e2e job's timeout-minutes (330), so GitHub never kills a
+// run before its own bounded waits end and its cleanup runs. Worst case, seven
+// waited steps and a cleanup: pin, create, update, case-only and delete each
+// wait for a gate and a reconcile (15 + 30 = 45 minutes), the two drift checks
+// for a drift run (15 each), and the cleanup for a gate and a reconcile (45):
+// 5×45 + 2×15 + 45 = 300 minutes, leaving 30 for setup, the build and polling.
+var DefaultTimeouts = Timeouts{Interval: 15 * time.Second, Checks: 15 * time.Minute, Reconcile: 30 * time.Minute, Drift: 15 * time.Minute}
 
 // approval says how a step treats a reconcile that waits on idp-approval.
 type approval int
@@ -61,11 +67,22 @@ type Scenario struct {
 	Member    string            // the harness team's member; its case changes in one step
 	Timeouts  Timeouts
 	names     Names
+	lastMerge string         // the merge commit of the harness's last merge
+	open      map[int]string // PRs this run opened and has not merged → their branches
 }
 
 // Execute runs every step. When a step fails after the claims may have been
 // merged, it still deletes them through the platform and reports both errors.
+// After any failure it closes the pull requests it opened and did not merge.
 func (s *Scenario) Execute(ctx context.Context) error {
+	err := s.execute(ctx)
+	if err != nil {
+		s.closeOpenPRs(ctx)
+	}
+	return err
+}
+
+func (s *Scenario) execute(ctx context.Context) error {
 	if err := s.validate(); err != nil {
 		return err
 	}
@@ -116,9 +133,13 @@ func (s *Scenario) validate() error {
 	return nil
 }
 
-// preflight refuses a run that could not finish cleanly: an unrecovered wet
-// push, pipeline runs still going, or anything an earlier run left behind.
+// preflight refuses a run that could not finish cleanly: an approver token
+// that no longer works, an unrecovered wet push, pipeline runs still going, or
+// anything an earlier run left behind.
 func (s *Scenario) preflight(ctx context.Context) error {
+	if err := s.F.CheckApprover(ctx); err != nil {
+		return err
+	}
 	n, err := s.F.OpenIssues(ctx, "idp-wet-push", "Wet push failed")
 	if err != nil {
 		return err
@@ -190,7 +211,7 @@ func (s *Scenario) pin(ctx context.Context) error {
 	if !strings.Contains(comment, noChanges) {
 		return errors.New("the pin PR must plan no infrastructure change: claims the platform has not applied are on main (docs/e2e.md)")
 	}
-	sha, err := s.F.Merge(ctx, pr.Number, title)
+	sha, err := s.merge(ctx, pr, title)
 	if err != nil {
 		return err
 	}
@@ -234,7 +255,7 @@ func (s *Scenario) caseOnly(ctx context.Context) error {
 	if !strings.Contains(comment, noChanges) {
 		return errors.New("a case-only login edit must plan no change (phase 1a F1)")
 	}
-	sha, err := s.F.Merge(ctx, pr.Number, title)
+	sha, err := s.merge(ctx, pr, title)
 	if err != nil {
 		return err
 	}
@@ -290,16 +311,27 @@ func (s *Scenario) drift(ctx context.Context) error {
 }
 
 // deleteClaims deletes claim files through a pull request and checks the
-// resources are gone. The main path (cleanup false) requires a destructive plan
-// and an approval request, and approves only that run; the cleanup path accepts
-// claims that were never applied and approves only if its run asks. Both refuse
-// a plan that would destroy anything but this run's names.
+// resources are gone. The main path (cleanup false) starts only from the main
+// the harness's last merge left, requires a destructive plan and an approval
+// request, and approves only that run; the cleanup path accepts claims that
+// were never applied and approves only if its run asks. Both refuse a plan that
+// would destroy anything but this run's names, and approve nothing when main
+// moved while the PR was open.
 func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup bool) error {
 	if err := s.names.guard(); err != nil {
 		return err
 	}
+	base, err := s.F.HeadSHA(ctx, "main")
+	if err != nil {
+		return err
+	}
+	// The last merge reconciled and a drift run then found nothing to change, so
+	// a delete from that main can destroy only this run's resources.
+	if !cleanup && base != s.lastMerge {
+		return fmt.Errorf("main moved since the harness's last merge (now %s, expected %s): someone changed the claims repo during the run; see docs/e2e.md", short(base), short(s.lastMerge))
+	}
 	title := "feat: delete the e2e harness claims " + s.names.Component
-	pr, err := s.openPR(ctx, "delete", title, nil, paths)
+	pr, err := s.openPRFrom(ctx, base, "delete", title, nil, paths)
 	if err != nil {
 		return err
 	}
@@ -310,12 +342,24 @@ func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup boo
 	if !cleanup && !strings.Contains(comment, warning) {
 		return errors.New("the delete plan must be flagged destructive")
 	}
-	if err := s.destroysOnlyOwnNames(comment); err != nil {
+	if err := s.destroysOnlyOwnNames(comment, pr); err != nil {
 		return err
 	}
-	sha, err := s.F.Merge(ctx, pr.Number, title)
+	sha, err := s.merge(ctx, pr, title)
 	if err != nil {
 		return err
+	}
+	parent, err := s.F.Parent(ctx, sha)
+	if err != nil {
+		return err
+	}
+	if parent != pr.BaseSHA {
+		// Someone else's commit reconciles with this merge: its plan is not the
+		// one the harness checked, so a wait for approval is rejected.
+		if _, err := s.waitReconcile(ctx, sha, rejectApproval); err != nil {
+			s.logf("e2e: the reconcile of %s: %v", short(sha), err)
+		}
+		return fmt.Errorf("main moved while PR #%d was open: nothing was approved", pr.Number)
 	}
 	mode := requireApproval
 	if cleanup {
@@ -337,16 +381,19 @@ func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup boo
 	return nil
 }
 
-// destroysOnlyOwnNames checks every delete or replace of the plan comment's
-// fingerprint (complete even when the rendered rows are truncated) belongs to
-// one of this run's modules.
-func (s *Scenario) destroysOnlyOwnNames(comment string) error {
-	_, fp, ok, err := plan.DecodeMarker(comment)
+// destroysOnlyOwnNames checks the plan comment's fingerprint was planned for
+// the PR's head, and that every delete or replace in it (complete even when
+// the rendered rows are truncated) belongs to one of this run's modules.
+func (s *Scenario) destroysOnlyOwnNames(comment string, pr PR) error {
+	head, fp, ok, err := plan.DecodeMarker(comment)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return errors.New("the plan comment carries no fingerprint")
+	}
+	if head != pr.HeadSHA {
+		return fmt.Errorf("the fingerprint on PR #%d was planned for %s, not its head %s", pr.Number, short(head), short(pr.HeadSHA))
 	}
 	own := []string{"module.group_" + s.names.Group + ".", "module.component_" + s.names.Component + "."}
 	for _, entry := range fp.Destructive() {
@@ -398,7 +445,7 @@ func (s *Scenario) change(ctx context.Context, slug, title string, put map[strin
 	if strings.Contains(comment, warning) {
 		return fmt.Errorf("the %s plan is destructive", slug)
 	}
-	sha, err := s.F.Merge(ctx, pr.Number, title)
+	sha, err := s.merge(ctx, pr, title)
 	if err != nil {
 		return err
 	}
@@ -417,6 +464,12 @@ func (s *Scenario) openPR(ctx context.Context, slug, title string, put map[strin
 	if err != nil {
 		return PR{}, err
 	}
+	return s.openPRFrom(ctx, base, slug, title, put, del)
+}
+
+// openPRFrom opens a pull request from a branch created at base, the main head
+// the harness read, and records it as open.
+func (s *Scenario) openPRFrom(ctx context.Context, base, slug, title string, put map[string][]byte, del []string) (PR, error) {
 	branch := "e2e/" + s.Run + "/" + slug
 	if err := s.F.CreateBranch(ctx, branch, base); err != nil {
 		return PR{}, err
@@ -435,8 +488,42 @@ func (s *Scenario) openPR(ctx context.Context, slug, title string, put map[strin
 	if err != nil {
 		return PR{}, err
 	}
+	pr.BaseSHA = base
+	if s.open == nil {
+		s.open = map[int]string{}
+	}
+	s.open[pr.Number] = branch
 	s.logf("e2e: opened PR #%d (%s)", pr.Number, title)
 	return pr, nil
+}
+
+// merge merges pr pinned to its verified head, records the merge commit, and
+// deletes the PR's branch. A branch it cannot delete is only logged.
+func (s *Scenario) merge(ctx context.Context, pr PR, title string) (string, error) {
+	sha, err := s.F.Merge(ctx, pr, title)
+	if err != nil {
+		return "", err
+	}
+	s.lastMerge = sha
+	branch := s.open[pr.Number]
+	delete(s.open, pr.Number)
+	if err := s.F.DeleteBranch(ctx, branch); err != nil {
+		s.logf("e2e: could not delete branch %s: %v", branch, err)
+	}
+	return sha, nil
+}
+
+// closeOpenPRs closes, best effort, the pull requests this run opened and did
+// not merge; their branches stay as evidence.
+func (s *Scenario) closeOpenPRs(ctx context.Context) {
+	for _, n := range slices.Sorted(maps.Keys(s.open)) {
+		if err := s.F.ClosePR(ctx, n); err != nil {
+			s.logf("e2e: could not close PR #%d: %v", n, err)
+			continue
+		}
+		delete(s.open, n)
+		s.logf("e2e: closed PR #%d", n)
+	}
 }
 
 // waitChecks waits for the pull request's idp-gate check, which mirrors the
@@ -461,7 +548,11 @@ func (s *Scenario) waitChecks(ctx context.Context, pr PR) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.Contains(comment, planMarker) || !strings.Contains(comment, "sha="+pr.HeadSHA) {
+	head, _, ok, err := plan.DecodeMarker(comment)
+	if err != nil {
+		return "", fmt.Errorf("the plan comment on PR #%d: %w", pr.Number, err)
+	}
+	if !strings.Contains(comment, planMarker) || !ok || head != pr.HeadSHA {
 		return "", fmt.Errorf("PR #%d has no plan comment for its head %s", pr.Number, short(pr.HeadSHA))
 	}
 	return comment, nil
@@ -564,6 +655,32 @@ func (s *Scenario) assertResources(ctx context.Context, description string, topi
 	}
 	if len(envs.Environments) != 1 || envs.Environments[0].Name != "dev" {
 		return fmt.Errorf("environments of %s = %+v, want [dev]", s.names.Component, envs.Environments)
+	}
+	type ruleset struct {
+		Name        string `json:"name"`
+		Enforcement string `json:"enforcement"`
+	}
+	var rulesets []ruleset
+	if err := s.F.GetJSON(ctx, s.repoPath()+"/rulesets", &rulesets); err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(rulesets, func(r ruleset) bool { return r.Name == "idp-default-branch" && r.Enforcement == "active" }) {
+		return fmt.Errorf("repository %s has no active idp-default-branch ruleset (rulesets %+v)", s.names.Component, rulesets)
+	}
+	type grant struct {
+		Name        string `json:"name"`
+		Permissions struct {
+			Admin    bool `json:"admin"`
+			Maintain bool `json:"maintain"`
+		} `json:"permissions"`
+	}
+	var granted []grant
+	if err := s.F.GetJSON(ctx, s.teamPath()+"/repos", &granted); err != nil {
+		return err
+	}
+	i := slices.IndexFunc(granted, func(g grant) bool { return g.Name == s.names.Component })
+	if i < 0 || !granted[i].Permissions.Maintain || granted[i].Permissions.Admin {
+		return fmt.Errorf("team %s must maintain %s without admin (repositories %+v)", s.names.Group, s.names.Component, granted)
 	}
 	s.logf("e2e: %s and %s match the claims", s.names.Component, s.names.Group)
 	return nil

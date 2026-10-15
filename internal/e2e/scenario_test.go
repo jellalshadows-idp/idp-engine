@@ -1,7 +1,9 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -41,6 +43,8 @@ func world(t *testing.T) (*fakeForge, *Scenario) {
 		f.paths[team+"/memberships/owner"] = map[string]any{"role": "maintainer", "state": "active"}
 		f.paths[team+"/memberships/member-one"] = map[string]any{"role": "member", "state": "active"}
 		f.paths[repo+"/environments"] = map[string]any{"environments": []any{map[string]any{"name": "dev"}}}
+		f.paths[repo+"/rulesets"] = []any{map[string]any{"name": "idp-default-branch", "enforcement": "active"}}
+		f.paths[team+"/repos"] = []any{map[string]any{"name": "e2e-r42-app", "permissions": map[string]any{"admin": false, "maintain": true, "push": true}}}
 	}
 	f.effects["update"] = func(f *fakeForge) {
 		f.paths[repo] = map[string]any{"visibility": "public", "description": "End-to-end harness repository, updated", "topics": []string{}}
@@ -74,11 +78,11 @@ func TestScenarioPassesAgainstWorkingPipelines(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"branch e2e/42/create", "pr create", "merge create",
-		"branch e2e/42/update", "pr update", "merge update",
-		"branch e2e/42/case", "pr case", "merge case",
+		"branch e2e/42/create", "pr create", "merge create", "delete branch e2e/42/create",
+		"branch e2e/42/update", "pr update", "merge update", "delete branch e2e/42/update",
+		"branch e2e/42/case", "pr case", "merge case", "delete branch e2e/42/case",
 		"drift",
-		"branch e2e/42/delete", "pr delete", "merge delete", "approve 504",
+		"branch e2e/42/delete", "pr delete", "merge delete", "delete branch e2e/42/delete", "approve 504",
 		"drift",
 	}
 	if !slices.Equal(f.log, want) {
@@ -307,5 +311,193 @@ func TestPreflightIgnoresUnrelatedE2ENames(t *testing.T) {
 	f.main["claims/components/e2e-reports.yaml"] = []byte("x")
 	if err := s.Execute(context.Background()); err != nil {
 		t.Fatalf("unrelated e2e- names must not block a run: %v", err)
+	}
+}
+
+func TestDefaultTimeoutsFitTheJob(t *testing.T) {
+	d := DefaultTimeouts
+	if d.Interval != 15*time.Second || d.Checks != 15*time.Minute || d.Reconcile != 30*time.Minute || d.Drift != 15*time.Minute {
+		t.Errorf("DefaultTimeouts = %+v", d)
+	}
+	// pin, create, update, case-only and delete wait for a gate and a reconcile,
+	// both drift checks for a drift run, and a cleanup for a gate and a reconcile.
+	if worst := 6*(d.Checks+d.Reconcile) + 2*d.Drift; worst > 300*time.Minute {
+		t.Errorf("worst case %s: the job's timeout-minutes (330) must outlast every bounded wait", worst)
+	}
+}
+
+func TestDeleteRefusesWhenMainMovedSinceTheLastMerge(t *testing.T) {
+	f, s := world(t)
+	f.effects["case"] = func(f *fakeForge) { f.head++ } // someone else pushes to main after the case merge
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "delete: main moved since the harness's last merge (now ") ||
+		!strings.Contains(err.Error(), "someone changed the claims repo during the run; see docs/e2e.md") {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(f.log, "pr delete") {
+		t.Errorf("steps = %v: no delete PR may be opened on a main the harness did not verify", f.log)
+	}
+	if len(f.approved) != 0 {
+		t.Errorf("approved %v: nothing may be approved", f.approved)
+	}
+}
+
+func TestDeleteRejectsWhenMainMovedWhileItsPRWasOpen(t *testing.T) {
+	f, s := world(t)
+	f.parent["delete"] = fakeSHA(99) // someone else's commit landed on main before the delete merged
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "delete: main moved while PR #4 was open: nothing was approved") {
+		t.Fatalf("err = %v", err)
+	}
+	if !f.rejected[504] || len(f.approved) != 0 {
+		t.Errorf("the delete's reconcile must be rejected, never approved (rejected %v, approved %v)", f.rejected, f.approved)
+	}
+}
+
+func TestCleanupRejectsWhenMainMovedWhileItsPRWasOpen(t *testing.T) {
+	f, s := world(t)
+	f.gate["update"] = "failure"
+	f.parent["delete"] = fakeSHA(99)
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update: idp-gate on PR #2 concluded failure") ||
+		!strings.Contains(err.Error(), "cleanup: main moved while PR #3 was open: nothing was approved") {
+		t.Fatalf("err = %v", err)
+	}
+	if !f.rejected[502] || len(f.approved) != 0 {
+		t.Errorf("the cleanup's reconcile must be rejected, never approved (rejected %v, approved %v)", f.rejected, f.approved)
+	}
+}
+
+func TestDeleteRequiresTheFingerprintOfThePRHead(t *testing.T) {
+	_, s := world(t)
+	names, err := NewNames(s.Run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.names = names
+	marker, err := plan.EncodeMarker(strings.Repeat("a", 40), plan.Fingerprint{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.destroysOnlyOwnNames(planMarker+"\n"+marker, PR{Number: 4, HeadSHA: strings.Repeat("b", 40)})
+	if err == nil || !strings.Contains(err.Error(), "the fingerprint on PR #4 was planned for aaaaaaa, not its head bbbbbbb") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestScenarioRequiresThePlanCommentOfThePRHead(t *testing.T) {
+	f, s := world(t)
+	marker, err := plan.EncodeMarker(strings.Repeat("a", 40), plan.Fingerprint{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.raw["create"] = planMarker + "\n<code>github</code>: +2 ~0 -0 ±0\nplanned for sha=%SHA%\n" + marker
+	err = s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "create: PR #1 has no plan comment for its head") {
+		t.Fatalf("err = %v: the fingerprint marker, not a substring, names the planned head", err)
+	}
+	if slices.Contains(f.log, "merge create") {
+		t.Error("a PR whose plan is for another head must not be merged")
+	}
+}
+
+func TestPreflightChecksTheApproverTokenFirst(t *testing.T) {
+	f, s := world(t)
+	f.checkErr = errors.New("the approver token cannot read the claims repo's runs")
+	f.issues["idp-wet-push/Wet push failed"] = 1
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "preflight: the approver token cannot read the claims repo's runs") || len(f.log) != 0 {
+		t.Fatalf("err = %v, steps %v: an unusable approver token must stop the run before anything else", err, f.log)
+	}
+}
+
+func TestScenarioDeletesTheBranchesItMerged(t *testing.T) {
+	f, s := world(t)
+	s.EngineSHA = strings.Repeat("b", 40) // the pin PR merges too
+	if err := s.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	merges := 0
+	for i, step := range f.log {
+		slug, ok := strings.CutPrefix(step, "merge ")
+		if !ok {
+			continue
+		}
+		merges++
+		if i+1 == len(f.log) || f.log[i+1] != "delete branch e2e/42/"+slug {
+			t.Errorf("steps = %v: the branch of %s must be deleted right after its merge", f.log, slug)
+		}
+		if _, ok := f.branches["e2e/42/"+slug]; ok {
+			t.Errorf("branch e2e/42/%s is still there", slug)
+		}
+	}
+	if merges != 5 {
+		t.Errorf("steps = %v: want 5 merges", f.log)
+	}
+}
+
+func TestScenarioOnlyLogsABranchItCannotDelete(t *testing.T) {
+	f, s := world(t)
+	var out bytes.Buffer
+	s.Log = &out
+	f.unbranch = errors.New("boom")
+	if err := s.Execute(context.Background()); err != nil {
+		t.Fatalf("a branch that cannot be deleted must not fail the run: %v", err)
+	}
+	if !strings.Contains(out.String(), "e2e: could not delete branch e2e/42/create: boom") {
+		t.Errorf("log = %s", out.String())
+	}
+}
+
+func TestScenarioClosesItsOpenPRsAfterAFailure(t *testing.T) {
+	f, s := world(t)
+	f.gate["update"] = "failure"
+	if err := s.Execute(context.Background()); err == nil {
+		t.Fatal("want the update's gate failure")
+	}
+	closed := slices.Index(f.log, "close 2")
+	if closed < 0 || closed < slices.Index(f.log, "merge delete") {
+		t.Errorf("steps = %v: the failed update PR must be closed after the cleanup", f.log)
+	}
+	for _, step := range f.log {
+		if strings.HasPrefix(step, "close ") && step != "close 2" {
+			t.Errorf("steps = %v: only PRs that were not merged are closed", f.log)
+		}
+	}
+	if _, ok := f.branches["e2e/42/update"]; !ok || slices.Contains(f.log, "delete branch e2e/42/update") {
+		t.Error("the branch of a PR that was not merged stays as evidence")
+	}
+}
+
+func TestScenarioRequiresTheDefaultBranchRuleset(t *testing.T) {
+	for _, rulesets := range [][]any{
+		{},
+		{map[string]any{"name": "idp-default-branch", "enforcement": "evaluate"}},
+		{map[string]any{"name": "other", "enforcement": "active"}},
+	} {
+		f, s := world(t)
+		create := f.effects["create"]
+		f.effects["create"] = func(f *fakeForge) { create(f); f.paths["/repos/acme/e2e-r42-app/rulesets"] = rulesets }
+		err := s.Execute(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "create: repository e2e-r42-app has no active idp-default-branch ruleset") {
+			t.Errorf("rulesets %v: err = %v", rulesets, err)
+		}
+	}
+}
+
+func TestScenarioRequiresTheTeamToMaintainTheRepository(t *testing.T) {
+	for _, repos := range [][]any{
+		{},
+		{map[string]any{"name": "e2e-r42-app", "permissions": map[string]any{"admin": false, "maintain": false, "push": true}}},
+		{map[string]any{"name": "e2e-r42-app", "permissions": map[string]any{"admin": true, "maintain": true, "push": true}}},
+		{map[string]any{"name": "other", "permissions": map[string]any{"admin": false, "maintain": true, "push": true}}},
+	} {
+		f, s := world(t)
+		create := f.effects["create"]
+		f.effects["create"] = func(f *fakeForge) { create(f); f.paths["/orgs/acme/teams/e2e-r42-team/repos"] = repos }
+		err := s.Execute(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "create: team e2e-r42-team must maintain e2e-r42-app without admin") {
+			t.Errorf("repos %v: err = %v", repos, err)
+		}
 	}
 }
