@@ -85,6 +85,29 @@ func TestNewWithTokensAsksATokenPerRequest(t *testing.T) {
 	}
 }
 
+func TestNewWithTokensRefusesAnEmptyToken(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := NewWithTokens(srv.URL, func(context.Context) (string, error) { return "", nil })
+	err := c.Post(context.Background(), "/x", map[string]string{"a": "b"}, nil)
+	if err == nil || err.Error() != "token for POST /x: empty token" {
+		t.Errorf("err = %v, want %q", err, "token for POST /x: empty token")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 0 {
+		t.Errorf("requests = %d, want none: a request without a token would go out unauthenticated", requests)
+	}
+}
+
 func TestEmptyTokenSendsNoAuthorization(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "" {

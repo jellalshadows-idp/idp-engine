@@ -95,6 +95,12 @@ func (f *fakeGitHub) setNow(t time.Time) {
 	f.now = t
 }
 
+func (f *fakeGitHub) setLookup(status int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookup = status
+}
+
 func (f *fakeGitHub) seen() (requests, bearers, bodies []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -239,6 +245,42 @@ func TestTokenIsRefreshedWithTenMinutesOrLessLeft(t *testing.T) {
 				t.Errorf("requests = %q, want two mints of two requests", requests)
 			}
 		})
+	}
+}
+
+func TestTokenFallsBackToAValidCachedTokenWhenARefreshFails(t *testing.T) {
+	f := &fakeGitHub{now: t0}
+	s := newSource(t, f)
+	ctx := context.Background()
+	if _, err := s.Token(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.setNow(t0.Add(55 * time.Minute)) // five minutes left
+	f.setLookup(http.StatusBadGateway)
+	if got, err := s.Token(ctx); err != nil || got != "ghs_1" {
+		t.Errorf("Token = %q, %v, want the cached ghs_1 while it has five minutes left", got, err)
+	}
+	if requests, _, _ := f.seen(); len(requests) != 3 {
+		t.Errorf("requests = %q, want the first mint and one failed refresh", requests)
+	}
+	f.setLookup(0)
+	if got, err := s.Token(ctx); err != nil || got != "ghs_2" {
+		t.Errorf("Token = %q, %v, want the next call to mint ghs_2", got, err)
+	}
+}
+
+func TestTokenFailsWhenARefreshFailsAndTheCachedTokenIsExpiring(t *testing.T) {
+	f := &fakeGitHub{now: t0}
+	s := newSource(t, f)
+	ctx := context.Background()
+	if _, err := s.Token(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.setNow(t0.Add(59*time.Minute + 30*time.Second)) // thirty seconds left
+	f.setLookup(http.StatusBadGateway)
+	got, err := s.Token(ctx)
+	if err == nil || got != "" || !strings.HasPrefix(err.Error(), "mint a token for acme/claims: ") {
+		t.Errorf("Token = %q, %v, want the mint error: thirty seconds cannot serve a request", got, err)
 	}
 }
 

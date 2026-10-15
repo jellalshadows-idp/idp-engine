@@ -50,7 +50,8 @@ func New(baseURL, token string) *Client {
 }
 
 // NewWithTokens returns a client that asks tokens for the token of every
-// request, so a token that expires can be refreshed between requests.
+// request, so a token that expires can be refreshed between requests. An empty
+// token fails the request instead of sending it unauthenticated.
 func NewWithTokens(baseURL string, tokens func(context.Context) (string, error)) *Client {
 	c := New(baseURL, "")
 	c.tokens = tokens
@@ -96,6 +97,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (http
 		t, err := c.tokens(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("token for %s %s: %w", method, path, err)
+		}
+		if t == "" {
+			return nil, fmt.Errorf("token for %s %s: empty token", method, path)
 		}
 		token = t
 	}

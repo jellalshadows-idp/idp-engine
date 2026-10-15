@@ -24,6 +24,10 @@ import (
 // enough for the request that asked for it, and a retry, to finish.
 const refreshBefore = 10 * time.Minute
 
+// fallbackLife is the life a cached token must have left to be handed out when
+// a refresh fails: enough for one request.
+const fallbackLife = time.Minute
+
 // jwtHeader is the base64url header of every App JWT.
 var jwtHeader = base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
 
@@ -70,8 +74,10 @@ func ParseKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 }
 
 // Token returns the cached token while it has more than ten minutes left, and
-// mints a new one otherwise. It is safe for concurrent use: callers that find
-// the token stale wait for one mint instead of each minting their own.
+// mints a new one otherwise. When that mint fails and the cached token still
+// has more than a minute left, Token returns the cached token and keeps it, so
+// the next call tries the mint again. It is safe for concurrent use: callers
+// that find the token stale wait for one mint instead of each minting their own.
 func (s *Source) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -81,6 +87,9 @@ func (s *Source) Token(ctx context.Context) (string, error) {
 	}
 	token, expires, err := s.mint(ctx, now)
 	if err != nil {
+		if s.token != "" && s.expires.Sub(now) > fallbackLife {
+			return s.token, nil
+		}
 		return "", fmt.Errorf("mint a token for %s/%s: %w", s.Owner, s.Repo, err)
 	}
 	s.token, s.expires = token, expires
