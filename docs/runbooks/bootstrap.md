@@ -43,8 +43,9 @@ Confirm **Create GitHub App** in the browser, then open the printed install link
 
 1. Generate a new private key in the App's settings (`https://github.com/organizations/<org>/settings/apps/<org>-bot`).
 2. `gh secret set IDP_BOT_PRIVATE_KEY --env idp-e2e --repo <org>/idp-engine < <new pem>`
-3. Run the e2e workflow once (`gh workflow run e2e.yaml --repo <org>/idp-engine --ref main`) and check it passes.
-4. Delete the old key in the App's settings.
+3. Save the new key as `~/.idp/apps/<org>-bot.pem`, replacing the old one: the [e2e setup](../e2e.md#setting-up) command reads it.
+4. Run the e2e workflow once (`gh workflow run e2e.yaml --repo <org>/idp-engine --ref main`) and check it passes.
+5. Delete the old key in the App's settings.
 
 ## Create the passphrase file
 

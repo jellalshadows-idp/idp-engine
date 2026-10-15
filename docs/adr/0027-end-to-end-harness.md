@@ -22,7 +22,7 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
 - Before a run, the harness refuses to start while any `e2e-` claim is on `main`, any `e2e-r` repository or team exists, or any reconcile, drift or recover run of the claims repo is unfinished. A reconcile of the harness's own merge that unexpectedly waits for approval is rejected (nothing is applied and the queue frees), never left waiting. *(Amended in execution, 2026-10-15.)*
 - It runs nightly at 03:41 UTC and on demand from `idp-engine` `main`, in environment `idp-e2e` (deployment branch `main`), one run at a time (concurrency group `idp-e2e`). Release PRs join in Phase 1e.
 - Credentials, both only in `idp-e2e`:
-  - the bot App token (ADR-0026), minted for `idp-claims-e2e` only with actions write, checks read, contents write, issues read, members read, pull requests write and workflows write;
+  - the bot App token (ADR-0026), minted for `idp-claims-e2e` only with actions write, checks read, contents write, issues read, members read, pull requests write and workflows write. Installation tokens expire after an hour and a run can last longer, so the harness mints and refreshes the bot's tokens from the App key, each scoped to the claims repo and the permissions the forge calls. *(Amended in execution, 2026-10-15.)*
   - the approver token: a fine-grained token of the test account `adrian-da-silva`, an org member and, in `idp-claims-e2e` only, a second `idp-approval` reviewer. It is limited to `idp-claims-e2e` with Actions read and Deployments write.
 - Not covered, and proven by the Phase 1c smoke: a partial apply failure, the `recover` workflow, pull requests from forks.
 

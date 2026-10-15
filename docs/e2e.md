@@ -42,8 +42,10 @@ Both live only in the `idp-engine` environment `idp-e2e` (deployment branch `mai
 
 | Name | What | Scope |
 |---|---|---|
-| `IDP_BOT_PRIVATE_KEY` (secret), `IDP_BOT_CLIENT_ID` (variable) | The bot App ([ADR-0026](adr/0026-automation-app.md)) | A token per run for `idp-claims-e2e` only: actions write, checks read, contents write, issues read, members read, pull requests write, workflows write |
+| `IDP_BOT_PRIVATE_KEY` (secret), `IDP_BOT_CLIENT_ID` (variable) | The bot App ([ADR-0026](adr/0026-automation-app.md)) | Installation tokens the harness mints itself and renews before the hour runs out, each for `idp-claims-e2e` only: actions write, checks read, contents write, issues read, members read, pull requests write, workflows write |
 | `IDP_E2E_APPROVER_TOKEN` (secret) | A fine-grained token of the test account `adrian-da-silva`, an org member and a second `idp-approval` reviewer in `idp-claims-e2e` only | `idp-claims-e2e` only: Actions read, Deployments read and write |
+
+An installation token lives one hour and a run can last longer, so the harness mints the bot's tokens from the App key rather than receiving one. The key is passed only to the `run the harness` step, and the binary is built in an earlier step that sees no secret.
 
 ### Setting up
 
