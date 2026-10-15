@@ -3,6 +3,7 @@ package workflowspec
 import (
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -59,6 +60,9 @@ func TestDriftPlansTheWetRenderWithTheWriterToken(t *testing.T) {
 		t.Errorf("plan working-directory = %q, want the wet render", p.WorkingDirectory)
 	}
 	wantEnv(t, "drift plan", p, map[string]string{"GITHUB_TOKEN": "${{ steps.plan-token.outputs.token }}"})
+	if strings.Contains(p.Run, "-refresh") {
+		t.Errorf("the drift plan must refresh (ADR-0025): no -refresh flag")
+	}
 	wantRun(t, "drift plan", p, "-detailed-exitcode", `2) echo "drift=true" >> "$GITHUB_OUTPUT" ;;`)
 }
 

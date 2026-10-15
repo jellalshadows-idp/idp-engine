@@ -51,6 +51,7 @@ A claims repo reconciles through four thin workflows that call the engine's reus
 | `pr / plan` | `contents: read` | reader (no refresh), whole installation | none |
 | `pr / comment` | `contents: read`, `pull-requests: write` | none | none |
 | `pr / verdict` | none | none | none |
+| `idp-gate` (caller) | none | none | none |
 | `reconcile / plan` | `contents`, `issues`, `pull-requests`: read | writer (plan; the writer manifest's permissions, whole installation) | `idp-write` |
 | `reconcile / approve` | none | none | `idp-approval` |
 | `reconcile / apply-github` | `contents: read`, `issues: write` | writer for the apply (the writer manifest's permissions, whole installation); writer for the wet commit (`contents: write`, the claims repo only) | `idp-write` |
