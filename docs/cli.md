@@ -135,7 +135,7 @@ The rules, in order ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)):
 4. A change missing from the same stack of the trusted fingerprint: `approval`.
 5. Otherwise: `auto`.
 
-A fingerprint is trusted only when it is in the newest comment written by `github-actions[bot]` (type `Bot`) that contains `<!-- idp-plan -->`, on the pull request whose merge commit is `--sha`, and only when the marker's SHA equals that pull request's head SHA. Comments by anyone else are ignored, so a stranger cannot even force an approval prompt.
+A fingerprint is trusted only when it is in the newest comment written by `github-actions[bot]` (type `Bot`) that contains `<!-- idp-plan -->`, on the pull request whose merge commit is `--sha`, and only when the marker's SHA equals that pull request's head SHA. Comments by anyone else are ignored, so a stranger cannot even force an approval prompt. A comment that anyone but the Actions bot last edited is not trusted either; the gate reads its last editor through the GraphQL API ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)).
 
 The gate reports its answer through the output. It exits 0 for both decisions.
 

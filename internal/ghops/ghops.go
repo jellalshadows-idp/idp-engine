@@ -61,15 +61,45 @@ func (r Repo) MergedPullForCommit(ctx context.Context, sha string) (*PullRequest
 
 // Comment is an issue or pull request comment.
 type Comment struct {
-	ID   int64  `json:"id"`
-	Body string `json:"body"`
-	User struct {
+	ID     int64  `json:"id"`
+	NodeID string `json:"node_id"`
+	Body   string `json:"body"`
+	User   struct {
 		Login string `json:"login"`
 		Type  string `json:"type"`
 	} `json:"user"`
 }
 
 func (c Comment) byActionsBot() bool { return c.User.Login == ActionsBot && c.User.Type == "Bot" }
+
+// actionsBotGraphQL is the Actions bot's login in GraphQL, which has no "[bot]" suffix.
+const actionsBotGraphQL = "github-actions"
+
+// EditedByOthers reports whether anyone but the Actions bot made the last edit
+// of a comment, and who (ADR-0018). An unedited comment, and one the bot itself
+// updated, are not edited by others.
+func (r Repo) EditedByOthers(ctx context.Context, nodeID string) (bool, string, error) {
+	const q = `query($id: ID!) { node(id: $id) { ... on IssueComment { editor { login __typename } } } }`
+	var out struct {
+		Node *struct {
+			Editor *struct {
+				Login    string `json:"login"`
+				Typename string `json:"__typename"`
+			} `json:"editor"`
+		} `json:"node"`
+	}
+	if err := r.API.GraphQL(ctx, q, map[string]any{"id": nodeID}, &out); err != nil {
+		return false, "", fmt.Errorf("read the last editor of comment %s: %w", nodeID, err)
+	}
+	if out.Node == nil {
+		return false, "", fmt.Errorf("comment %s not found", nodeID)
+	}
+	e := out.Node.Editor
+	if e == nil || (e.Typename == "Bot" && e.Login == actionsBotGraphQL) {
+		return false, "", nil
+	}
+	return true, e.Login, nil
+}
 
 // FindBotComment returns the newest comment on issue or pull request number
 // that the Actions bot wrote and that contains marker, or nil. Comments by

@@ -89,6 +89,13 @@ func trustedPRPlan(ctx context.Context, repo ghops.Repo, sha string) (*plan.PRPl
 	if c == nil {
 		return nil, fmt.Sprintf("PR #%d has no plan comment from %s", pr.Number, ghops.ActionsBot), nil
 	}
+	edited, editor, err := repo.EditedByOthers(ctx, c.NodeID)
+	if err != nil {
+		return nil, "", err
+	}
+	if edited {
+		return nil, fmt.Sprintf("the plan comment on PR #%d was edited by %s", pr.Number, editor), nil
+	}
 	head, fp, ok, err := plan.DecodeMarker(c.Body)
 	switch {
 	case err != nil:

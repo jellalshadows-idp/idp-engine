@@ -119,6 +119,28 @@ func TestGateApprovalWhenChangeMissingFromPR(t *testing.T) {
 	}
 }
 
+func TestGateIgnoresACommentEditedByAPerson(t *testing.T) {
+	fake := fakegithub.New(t, "acme")
+	shown := plan.Fingerprint{"github": {{Address: "a", Action: plan.Create}}}
+	seedMergedPR(fake, map[string]any{"id": 1, "node_id": "IC_1", "body": planComment(t, prHead, shown), "user": map[string]any{"login": "github-actions[bot]", "type": "Bot"}})
+	fake.CommentEditors = map[string]map[string]any{"IC_1": {"login": "mallory", "__typename": "User"}}
+	code, decision, out := gateRun(t, fake, shown)
+	if code != 0 || decision != "decision=approval" || !strings.Contains(out, "edited by mallory") {
+		t.Errorf("exit %d, %q, %q: a comment a person edited must not be trusted", code, decision, out)
+	}
+}
+
+func TestGateTrustsACommentTheBotEdited(t *testing.T) {
+	fake := fakegithub.New(t, "acme")
+	shown := plan.Fingerprint{"github": {{Address: "a", Action: plan.Create}}}
+	seedMergedPR(fake, map[string]any{"id": 1, "node_id": "IC_1", "body": planComment(t, prHead, shown), "user": map[string]any{"login": "github-actions[bot]", "type": "Bot"}})
+	fake.CommentEditors = map[string]map[string]any{"IC_1": {"login": "github-actions", "__typename": "Bot"}}
+	code, decision, out := gateRun(t, fake, shown)
+	if code != 0 || decision != "decision=auto" {
+		t.Errorf("exit %d, %q, %q: the bot updates its own comment on every push", code, decision, out)
+	}
+}
+
 func TestGateUsageErrors(t *testing.T) {
 	for _, args := range [][]string{
 		{"gate"},
