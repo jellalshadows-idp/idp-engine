@@ -3,6 +3,7 @@ package ghops
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -62,11 +63,11 @@ func TestOpenIssueUpdatesExistingAcrossPages(t *testing.T) {
 	fake.Objects["/repos/acme/idp-claims/labels/drift"] = map[string]any{"name": "drift"}
 	issues := []any{}
 	for i := 1; i <= 3; i++ {
-		issues = append(issues, map[string]any{"number": i, "title": "other", "state": "open", "labels": []any{map[string]any{"name": "drift"}}})
+		issues = append(issues, map[string]any{"number": i, "title": "other", "state": "open", "labels": []any{map[string]any{"name": "drift"}}, "user": user("github-actions[bot]", "Bot")})
 	}
 	issues = append(issues,
-		map[string]any{"number": 4, "title": "Drift detected", "state": "open", "labels": []any{map[string]any{"name": "drift"}}, "pull_request": map[string]any{}},
-		map[string]any{"number": 5, "title": "Drift detected", "state": "open", "labels": []any{map[string]any{"name": "drift"}}},
+		map[string]any{"number": 4, "title": "Drift detected", "state": "open", "labels": []any{map[string]any{"name": "drift"}}, "user": user("github-actions[bot]", "Bot"), "pull_request": map[string]any{}},
+		map[string]any{"number": 5, "title": "Drift detected", "state": "open", "labels": []any{map[string]any{"name": "drift"}}, "user": user("github-actions[bot]", "Bot")},
 	)
 	fake.Lists["/repos/acme/idp-claims/issues"] = issues
 	n, created, err := repo.OpenIssue(context.Background(), "drift", "Drift detected", "new plan")
@@ -78,10 +79,36 @@ func TestOpenIssueUpdatesExistingAcrossPages(t *testing.T) {
 	}
 }
 
+func TestFindOpenIssueIgnoresIssuesByOthers(t *testing.T) {
+	fake, repo := newRepo(t)
+	fake.Lists["/repos/acme/idp-claims/issues"] = []any{map[string]any{
+		"number": 3, "title": "Drift detected", "state": "open",
+		"labels": []any{map[string]any{"name": "drift"}},
+		"user":   user("mallory", "User"),
+	}}
+	got, err := repo.FindOpenIssue(context.Background(), "drift", "Drift detected")
+	if err != nil || got != nil {
+		t.Fatalf("FindOpenIssue = %+v, %v: an issue by a person is never the platform's", got, err)
+	}
+	number, created, err := repo.OpenIssue(context.Background(), "drift", "Drift detected", "body")
+	if err != nil || !created || number == 3 {
+		t.Errorf("OpenIssue = %d, %v, %v: it must open its own issue, not edit #3", number, created, err)
+	}
+	_, closed, err := repo.CloseIssue(context.Background(), "drift", "Drift detected", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range fake.Writes {
+		if strings.Contains(w, "/issues/3") {
+			t.Errorf("the platform touched the person's issue: %s (closed=%v)", w, closed)
+		}
+	}
+}
+
 func TestCloseIssue(t *testing.T) {
 	fake, repo := newRepo(t)
 	fake.Lists["/repos/acme/idp-claims/issues"] = []any{
-		map[string]any{"number": 9, "title": "Drift detected", "state": "open", "labels": []any{map[string]any{"name": "drift"}}},
+		map[string]any{"number": 9, "title": "Drift detected", "state": "open", "labels": []any{map[string]any{"name": "drift"}}, "user": user("github-actions[bot]", "Bot")},
 	}
 	n, closed, err := repo.CloseIssue(context.Background(), "drift", "Drift detected", "No drift on the last run.")
 	if err != nil || !closed || n != 9 {

@@ -332,7 +332,7 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 		for _, l := range asList(body["labels"]) {
 			labels = append(labels, map[string]any{"name": l})
 		}
-		issue := map[string]any{"number": len(f.Lists[path]) + 1, "title": body["title"], "body": body["body"], "state": "open", "labels": labels}
+		issue := map[string]any{"number": len(f.Lists[path]) + 1, "title": body["title"], "body": body["body"], "state": "open", "labels": labels, "user": f.Actor}
 		f.Lists[path] = append(f.Lists[path], issue)
 		return http.StatusCreated, issue
 	case method == http.MethodPatch && reIssue.MatchString(path):

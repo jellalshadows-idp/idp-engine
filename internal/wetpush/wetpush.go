@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -49,6 +50,9 @@ type treeEntry struct {
 // is a single file on the branch is never deleted: a missing local copy is an
 // error, because deleting the state is never part of a reconcile.
 func (p Pusher) Sync(ctx context.Context, root string, paths []string, message string) (Result, error) {
+	if err := validateBranch(p.Branch); err != nil {
+		return Result{}, err
+	}
 	if err := validatePaths(paths); err != nil {
 		return Result{}, err
 	}
@@ -146,6 +150,22 @@ func (p Pusher) Sync(ctx context.Context, root string, paths []string, message s
 	}
 	res.Commit = newCommit.SHA
 	return res, nil
+}
+
+var branchSegment = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validateBranch accepts the branch names the pipelines use, so a name never
+// needs escaping in an API path (Phase 1b M7).
+func validateBranch(b string) error {
+	for _, seg := range strings.Split(b, "/") {
+		if !branchSegment.MatchString(seg) {
+			return fmt.Errorf("invalid branch name %q", b)
+		}
+	}
+	if strings.Contains(b, "..") || strings.HasSuffix(b, ".lock") {
+		return fmt.Errorf("invalid branch name %q", b)
+	}
+	return nil
 }
 
 func validatePaths(paths []string) error {
