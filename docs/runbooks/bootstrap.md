@@ -118,7 +118,7 @@ IDP_BOOTSTRAP='<the variable value>' GH_TOKEN=<reader token> go run ./cmd/idp bo
 
 ## After bootstrapping
 
-Once every claims repo you intend to bootstrap is done and `check` is clean, delete the local `.pem` files and the passphrase files. The keys and the passphrase now live in GitHub secrets and your password manager.
+Once every claims repo you intend to bootstrap is done and `check` is clean, delete the local `.pem` files and the passphrase files. Keep the bot's `~/.idp/apps/<org>-bot.pem` until the `idp-e2e` environment is set up: its [setup](../e2e.md#setting-up) reads it. The keys and the passphrase now live in GitHub secrets and your password manager.
 
 To bootstrap another claims repo later, generate a new private key in the App's settings page.
 
