@@ -44,4 +44,4 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
 - **The owner's token.** Rejected: an org owner's token in CI is a takeover of the org if it leaks. *(Amended in execution, 2026-10-16.)* The rejection holds for a classic or broadly scoped token. A fine-grained token limited to the test repo and these two permissions has the same exposure as a second account's token, so the decision uses it.
 - **A second account's fine-grained token.** The first choice; dropped in execution because no dedicated test account exists. Same exposure; it would tell the harness's approvals apart from the owner's in the audit log.
 - **Approving by hand.** Rejected by the owner: a nightly run must finish on its own.
-- **A custom deployment protection App.** Rejected: more machinery than a test account for one approval.
+- **A custom deployment protection App.** Rejected: more machinery than a scoped token for one approval.
