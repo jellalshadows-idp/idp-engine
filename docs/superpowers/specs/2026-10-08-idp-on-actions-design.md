@@ -476,7 +476,9 @@ button. Concurrency: group `idp-wet`, `cancel-in-progress: false`, `queue: max`.
       With no changes at all the gate decides **`auto`**: there is nothing to apply.
       The gate trusts only the newest `<!-- idp-plan -->` comment written by
       `github-actions[bot]` on the merged PR, and only when its marker `sha` equals
-      the PR's head SHA (ADR-0018). *(Amendment A3, 2026-10-10.)*
+      the PR's head SHA (ADR-0018). *(Amendment A3, 2026-10-10.)* It also ignores
+      that comment when anyone but the Actions bot made its last edit (ADR-0018).
+      *(Amendment A8, 2026-10-13.)*
       Example: A and B merge back to back. B's PR plan showed A+B. After A applies,
       B's plan shows only B, which is a subset, so it runs automatically.
 2. **approve** runs only when `gate == approval`. It references environment
@@ -589,6 +591,8 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 | `idp-writer` App key | Write, **including `Workflows`** (features write `.github/workflows/`; `Contents` alone is rejected) | **Only** in environment `idp-write` (deployment branch `main`, no reviewers): the applies and the `wet` commits, and also the reconcile and drift plans (ADR-0025) *(Amendment A7, 2026-10-12.)* |
 | State passphrase | — | Repo secret, needed to read state in plans |
 | Approval | — | Environment `idp-approval` (required reviewers, `main`, no secrets) |
+| `idp-bot` App key | Pull requests, contents and workflows on the engine and claims repos; members read | Only in `idp-engine` environments with deployment branch `main` (`idp-e2e`; the release and Renovate environments in Phase 1e); installed on `idp-engine`, `idp-claims` and `idp-claims-e2e` only (ADR-0026). *(Amendment A8.)* |
+| E2E approver token | Approves `idp-approval` deployments in `idp-claims-e2e` only | Only in `idp-engine` environment `idp-e2e` (ADR-0027). *(Amendment A8.)* |
 
 - `idp-reader` and `idp-writer` are **roles**. GitHub App names are unique across
   GitHub and limited to 34 characters, so the real Apps are named
@@ -689,6 +693,12 @@ candidate SHA. The harness:
 
 `idp-claims-e2e` uses `archiveOnDestroy: false`. The harness runs nightly and on
 engine release PRs, not on every PR, to protect the rate limit and CI minutes.
+The harness is `cmd/idp-e2e`, run by the engine workflow `e2e.yaml` in environment
+`idp-e2e`. Besides the steps above, it removes every topic, changes only the case of
+a member login (expecting no change) and runs drift. It approves the destructive
+reconcile with the token of a test account that is a second `idp-approval` reviewer
+in `idp-claims-e2e` only, because only a person can approve a deployment (ADR-0027).
+Release PRs join in Phase 1e. *(Amendment A8, 2026-10-13.)*
 
 **One org, isolated by repo and prefix (owner decision, 2026-10-09).** There is no
 separate sandbox org, so the isolation is enforced in three ways:
@@ -730,8 +740,10 @@ from a bash script: a Go implementation can be TDD'd locally, and the
 desired-vs-actual JSON comparison that `check` needs is natural in Go.
 - **`idp bootstrap app`:** runs GitHub's manifest flow through a local callback
   server. A person still confirms in the browser, as GitHub requires. The manifests
-  are versioned in `idp-engine/bootstrap/apps/{reader,writer}.json`, so the
-  permissions are reviewable code.
+  are versioned in `idp-engine/bootstrap/apps/{reader,writer,bot}.json`, so the
+  permissions are reviewable code. The `bot` App opens pull requests for releases,
+  Renovate and the E2E harness (ADR-0026). `apply` and `check` accept several
+  approvers. *(Amendment A8, 2026-10-13.)*
 - **`idp bootstrap apply`** (idempotent) creates:
   - the claims repo and its `wet` branch;
   - the rulesets;
@@ -784,7 +796,7 @@ use what that phase measured. Each phase ships an engine minor release.
 | 4 → `0.4.0` | Features: `idp-features` + the 3 features, managed and userManaged | Golden tests, plus E2E with one managed and one userManaged file |
 | 5 → `1.0.0` | Polish: complete docs, tested runbooks | An external person bootstraps a new org using only the README |
 
-Phase 1 is delivered as four plans, each shipping working software: **1a** claims → render (validation, the GitHub stack, the `github/group` and `github/component` modules); **1b** the pipeline subcommands (`diff`, `plan-summary`, `gate`, `comment`, `issue`, `wet-push`, `encryption-env`, drift-ready `bootstrap check`); **1c** the reusable workflows and a live smoke run in `idp-claims-e2e`; **1d** the E2E harness and the `v0.1.0` release. *(2026-10-09, re-split 2026-10-10.)*
+Phase 1 is delivered as five plans, each shipping working software: **1a** claims → render (validation, the GitHub stack, the `github/group` and `github/component` modules); **1b** the pipeline subcommands (`diff`, `plan-summary`, `gate`, `comment`, `issue`, `wet-push`, `encryption-env`, drift-ready `bootstrap check`); **1c** the reusable workflows and a live smoke run in `idp-claims-e2e`; **1d** the E2E harness, its credentials and the hardening carried from 1b and 1c; **1e** releases (release-please, GoReleaser, attestations), Renovate, the `v0.1.0` release and onboarding `idp-claims`. *(2026-10-09, re-split 2026-10-10 and 2026-10-13.)*
 
 ## 11. Risks (verified in Phase 0 or by E2E)
 

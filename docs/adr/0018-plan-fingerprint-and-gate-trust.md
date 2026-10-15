@@ -25,6 +25,7 @@ The guiding rule of spec §6 is "nothing is ever applied that nobody saw". Recon
   3. No trusted fingerprint → `approval`.
   4. A change missing from the same stack of the trusted fingerprint → `approval`.
   5. Otherwise → `auto`.
+- The comment is trusted only when it was never edited, or when the Actions bot itself made the last edit (GraphQL `editor` is null, or the Bot `github-actions`). *(Amended 2026-10-13, Phase 1d.)*
 
 ## Consequences
 
@@ -35,11 +36,11 @@ The guiding rule of spec §6 is "nothing is ever applied that nobody saw". Recon
 ### Negative / costs
 
 - A pull request whose last plan run failed or was cancelled ends in an approval prompt after merge. This is intended.
-- **Accepted risk**, alongside the passphrase risk of spec §7.3: the author check proves who wrote the comment, not that nobody edited it. (1) People with write access can edit the bot's comment, and the author stays `github-actions[bot]`. (2) Any workflow's `GITHUB_TOKEN` writes as `github-actions[bot]`, including a workflow added on a same-repo pull request branch. Both routes are open only to members who can already push branches (spec §7.1), and destructive changes always require approval regardless.
+- **Accepted risk**, alongside the passphrase risk of spec §7.3: the author check proves who wrote the comment, not that nobody edited it. (1) People with write access can edit the bot's comment, and the author stays `github-actions[bot]`; closed in Phase 1d by the editor check above. (2) Any workflow's `GITHUB_TOKEN` writes as `github-actions[bot]`, including a workflow added on a same-repo pull request branch. Both routes are open only to members who can already push branches (spec §7.1), and destructive changes always require approval regardless.
 
 ## Follow-up
 
-- Deferred to Phase 1d by the Phase 1c plan: rejecting comments edited by anyone other than the Actions bot (GraphQL `editor` / `lastEditedAt`). Anyone who can edit the bot's comment has write access and, while `idp-main` requires no approving review, can already merge; the check pays off once reviews are required.
+- Resolved in Phase 1d: the gate ignores a plan comment that anyone but the Actions bot last edited. The second route (a workflow on a same-repo pull request branch writing as `github-actions[bot]`) remains accepted.
 
 ## Alternatives considered
 
