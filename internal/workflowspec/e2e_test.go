@@ -65,37 +65,74 @@ func TestE2EBuildsTheHarnessWithoutSecrets(t *testing.T) {
 	}
 }
 
-func TestE2ETokensAreScoped(t *testing.T) {
+// e2eSecrets are the idp-e2e environment's secrets: only the harness step reads them.
+var e2eSecrets = []string{"secrets.IDP_BOT_PRIVATE_KEY", "secrets.IDP_E2E_APPROVER_TOKEN"}
+
+func TestE2EHarnessMintsTheBotToken(t *testing.T) {
 	j := mustJob(t, loadWorkflow(t, e2ePath), "e2e")
-	_, bot := mustStep(t, "e2e", j.Steps, "bot")
-	want := map[string]string{
-		"client-id":                "${{ vars.IDP_BOT_CLIENT_ID }}",
-		"private-key":              "${{ secrets.IDP_BOT_PRIVATE_KEY }}",
-		"owner":                    "${{ github.repository_owner }}",
-		"repositories":             "idp-claims-e2e",
-		"permission-actions":       "write",
-		"permission-checks":        "read",
-		"permission-contents":      "write",
-		"permission-issues":        "read",
-		"permission-members":       "read",
-		"permission-pull-requests": "write",
-		"permission-workflows":     "write",
-	}
-	if !maps.Equal(map[string]string(bot.With), want) {
-		t.Errorf("bot token inputs = %v, want %v", bot.With, want)
+	for _, s := range j.Steps {
+		if strings.Contains(s.Uses, "actions/create-github-app-token") {
+			t.Errorf("step %q mints a bot token: a token lives one hour and a run can last longer, so the harness mints and refreshes its own (ADR-0027)", s.label())
+		}
 	}
 	_, h := mustStep(t, "e2e", j.Steps, "harness")
-	wantEnv(t, "e2e harness", h, map[string]string{
-		"E2E_BOT_TOKEN":      "${{ steps.bot.outputs.token }}",
-		"E2E_APPROVER_TOKEN": "${{ secrets.IDP_E2E_APPROVER_TOKEN }}",
-	})
+	want := map[string]string{
+		"E2E_BOT_CLIENT_ID":   "${{ vars.IDP_BOT_CLIENT_ID }}",
+		"E2E_BOT_PRIVATE_KEY": "${{ secrets.IDP_BOT_PRIVATE_KEY }}",
+		"E2E_APPROVER_TOKEN":  "${{ secrets.IDP_E2E_APPROVER_TOKEN }}",
+	}
+	if !maps.Equal(map[string]string(h.Env), want) {
+		t.Errorf("harness env = %v, want exactly %v", h.Env, want)
+	}
 	wantRun(t, "e2e harness", h, `"$RUNNER_TEMP/idp-e2e" --repo "$GITHUB_REPOSITORY_OWNER/idp-claims-e2e" --engine-sha "$GITHUB_SHA" --run "$GITHUB_RUN_ID"`)
 	if strings.Contains(h.Run, "go ") {
 		t.Errorf("harness run = %q: it runs the binary built without secrets, never the go tool", h.Run)
 	}
-	for _, s := range j.Steps {
-		if s.ID != "harness" && s.ID != "config" && strings.Contains(s.Env["E2E_APPROVER_TOKEN"]+s.Run, "APPROVER") {
-			t.Errorf("step %q sees the approver token: only the harness step may", s.label())
+}
+
+// TestE2ESecretsReachOnlyTheHarness: the bot key and the approver token reach
+// the harness step and nothing else. The config step only checks they are set,
+// and sees a boolean, never the value. Expression contexts are case-insensitive,
+// so the match is too.
+func TestE2ESecretsReachOnlyTheHarness(t *testing.T) {
+	j := mustJob(t, loadWorkflow(t, e2ePath), "e2e")
+	refs := func(text string) []string {
+		var out []string
+		for _, s := range e2eSecrets {
+			if strings.Contains(strings.ToLower(text), strings.ToLower(s)) {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	for _, k := range slices.Sorted(maps.Keys(j.Env)) {
+		if r := refs(j.Env[k]); len(r) > 0 {
+			t.Errorf("job env %s reads %v: every step would see it; only the harness step may", k, r)
 		}
 	}
+	for _, s := range j.Steps {
+		if s.ID == "harness" {
+			continue
+		}
+		texts := map[string]string{"run": s.Run}
+		for k, v := range s.Env {
+			texts["env "+k] = v
+		}
+		for k, v := range s.With {
+			texts["with "+k] = v
+		}
+		for _, where := range slices.Sorted(maps.Keys(texts)) {
+			for _, r := range refs(texts[where]) {
+				if s.ID == "config" && texts[where] == "${{ "+r+" != '' }}" {
+					continue
+				}
+				t.Errorf("step %q %s reads %s: only the harness step may (the config step only as ${{ %s != '' }})", s.label(), where, r, r)
+			}
+		}
+	}
+	_, c := mustStep(t, "e2e", j.Steps, "config")
+	wantEnv(t, "e2e config", c, map[string]string{
+		"BOT_KEY_SET":  "${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}",
+		"APPROVER_SET": "${{ secrets.IDP_E2E_APPROVER_TOKEN != '' }}",
+	})
 }

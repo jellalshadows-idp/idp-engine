@@ -61,25 +61,14 @@ jobs:
             echo "::error::the idp-e2e environment is missing:${missing%,} (docs/e2e.md)"
             exit 1
           fi
-      - name: mint the bot token
-        id: bot
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.IDP_BOT_CLIENT_ID }}
-          private-key: ${{ secrets.IDP_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: idp-claims-e2e
-          permission-actions: write
-          permission-checks: read
-          permission-contents: write
-          permission-issues: read
-          permission-members: read
-          permission-pull-requests: write
-          permission-workflows: write
+      # The harness mints the bot's installation tokens from the App key and
+      # renews them before the hour runs out, each scoped to idp-claims-e2e and
+      # the permissions the forge calls. The key reaches only this step.
       - name: run the harness
         id: harness
         env:
-          E2E_BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          E2E_BOT_CLIENT_ID: ${{ vars.IDP_BOT_CLIENT_ID }}
+          E2E_BOT_PRIVATE_KEY: ${{ secrets.IDP_BOT_PRIVATE_KEY }}
           E2E_APPROVER_TOKEN: ${{ secrets.IDP_E2E_APPROVER_TOKEN }}
         run: |
           "$RUNNER_TEMP/idp-e2e" --repo "$GITHUB_REPOSITORY_OWNER/idp-claims-e2e" --engine-sha "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
