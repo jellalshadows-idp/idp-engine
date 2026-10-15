@@ -24,6 +24,10 @@ type fakeForge struct {
 	effects  map[string]func(*fakeForge)  // slug → what its reconcile does
 	approval map[string]bool              // slug → its reconcile waits for idp-approval
 	approved map[int64]bool
+	rejected map[int64]bool
+	failRun  map[string]bool // slug → its reconcile concludes failure
+	active   []Run
+	written  []string
 	drifts   int
 	head     int
 	log      []string
@@ -35,6 +39,7 @@ func newFakeForge() *fakeForge {
 		merged: map[string]string{}, paths: map[string]any{}, issues: map[string]int{},
 		gate: map[string]string{}, comments: map[string]string{}, effects: map[string]func(*fakeForge){},
 		approval: map[string]bool{}, approved: map[int64]bool{},
+		rejected: map[int64]bool{}, failRun: map[string]bool{},
 	}
 }
 
@@ -69,6 +74,7 @@ func (f *fakeForge) File(_ context.Context, ref, path string) ([]byte, bool, err
 
 func (f *fakeForge) PutFile(_ context.Context, branch, path string, content []byte, _ string) error {
 	f.branches[branch][path] = content
+	f.written = append(f.written, path)
 	return nil
 }
 
@@ -77,6 +83,7 @@ func (f *fakeForge) DeleteFile(_ context.Context, branch, path, _ string) error 
 		return fmt.Errorf("%s does not exist", path)
 	}
 	f.branches[branch][path] = nil
+	f.written = append(f.written, path)
 	return nil
 }
 
@@ -116,8 +123,8 @@ func (f *fakeForge) Merge(_ context.Context, pr int, _ string) (string, error) {
 	f.head++
 	sha := fakeSHA(f.head)
 	f.merged[sha] = slugOf(branch)
-	if eff := f.effects[slugOf(branch)]; eff != nil {
-		eff(f)
+	if fn := f.effects[slugOf(branch)]; fn != nil {
+		fn(f)
 	}
 	f.log = append(f.log, "merge "+slugOf(branch))
 	return sha, nil
@@ -131,6 +138,9 @@ func (f *fakeForge) Runs(_ context.Context, workflow, sha string) ([]Run, error)
 			return nil, nil
 		}
 		id := reconcileRun(sha)
+		if f.rejected[id] || f.failRun[slug] {
+			return []Run{{ID: id, Status: "completed", Conclusion: "failure"}}, nil
+		}
 		if f.approval[slug] && !f.approved[id] {
 			return []Run{{ID: id, Status: "waiting"}}, nil
 		}
@@ -172,6 +182,40 @@ func (f *fakeForge) Approve(_ context.Context, id, env int64, _ string) error {
 	}
 	f.approved[id] = true
 	f.log = append(f.log, fmt.Sprintf("approve %d", id))
+	return nil
+}
+
+func (f *fakeForge) ClaimFiles(_ context.Context) ([]string, error) {
+	var out []string
+	for p := range f.main {
+		if strings.HasPrefix(p, "claims/") {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeForge) OrgResources(_ context.Context, prefix string) ([]string, error) {
+	var out []string
+	for p := range f.paths {
+		for _, root := range []string{"/repos/acme/", "/orgs/acme/teams/"} {
+			name, ok := strings.CutPrefix(p, root)
+			if ok && !strings.Contains(name, "/") && strings.HasPrefix(name, prefix) {
+				out = append(out, name)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeForge) ActiveRuns(_ context.Context) ([]Run, error) { return f.active, nil }
+
+func (f *fakeForge) Reject(_ context.Context, id, env int64, _ string) error {
+	if env != 77 {
+		return errors.New("wrong environment")
+	}
+	f.rejected[id] = true
+	f.log = append(f.log, fmt.Sprintf("reject %d", id))
 	return nil
 }
 

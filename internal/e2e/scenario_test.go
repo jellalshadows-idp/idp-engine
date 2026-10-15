@@ -44,6 +44,7 @@ func world(t *testing.T) (*fakeForge, *Scenario) {
 		f.paths[repo] = map[string]any{"visibility": "public", "description": "End-to-end harness repository, updated", "topics": []string{}}
 	}
 	f.comments["case"] = "No infrastructure changes."
+	f.comments["pin"] = "No infrastructure changes."
 	f.comments["delete"] = "<code>github</code>: +0 ~0 -8 ±0\n> [!WARNING]"
 	f.approval["delete"] = true
 	f.effects["delete"] = func(f *fakeForge) {
@@ -97,11 +98,11 @@ func TestApproveOnlyTheDeleteRun(t *testing.T) {
 	f, s := world(t)
 	f.approval["update"] = true
 	err := s.Execute(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "unexpectedly waits for approval") {
+	if err == nil || !strings.Contains(err.Error(), "unexpectedly waits for approval; the harness rejected it") {
 		t.Fatalf("err = %v", err)
 	}
-	if f.approved[502] {
-		t.Error("the harness approved the update's reconcile: only its own delete may be approved")
+	if !f.rejected[502] || f.approved[502] {
+		t.Errorf("the update's reconcile must be rejected, never approved (rejected %v, approved %v)", f.rejected, f.approved)
 	}
 	if len(f.approved) != 1 {
 		t.Errorf("approved %v: only the cleanup's delete run", f.approved)
@@ -154,8 +155,8 @@ func TestScenarioRefusesAnUnrecoveredWetPush(t *testing.T) {
 
 func TestScenarioRefusesLeftovers(t *testing.T) {
 	f, s := world(t)
-	f.paths["/repos/acme/e2e-r42-app"] = map[string]any{}
-	if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "already exists") {
+	f.paths["/repos/acme/e2e-r7-app"] = map[string]any{}
+	if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "an earlier run left them behind") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -165,5 +166,108 @@ func TestScenarioRequiresTheDeleteToBeFlaggedDestructive(t *testing.T) {
 	f.comments["delete"] = "<code>github</code>: +0 ~0 -8 ±0"
 	if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "the delete plan must be flagged destructive") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestScenarioRefusesLeftoverClaims(t *testing.T) {
+	f, s := world(t)
+	f.main["claims/components/e2e-r7-app.yaml"] = []byte("x")
+	if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "an earlier run left its claims behind") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestScenarioRefusesActiveRuns(t *testing.T) {
+	f, s := world(t)
+	f.active = []Run{{ID: 9, Status: "waiting"}}
+	if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "still running or waiting (first: 9)") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestScenarioRequiresThePinToPlanNothing(t *testing.T) {
+	f, s := world(t)
+	s.EngineSHA = strings.Repeat("b", 40)
+	f.comments["pin"] = "<code>github</code>: +2 ~0 -0 ±0"
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "the pin PR must plan no infrastructure change") {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(f.log, "merge pin") {
+		t.Error("the pin PR must not be merged")
+	}
+}
+
+func TestDeleteRefusesForeignDestroys(t *testing.T) {
+	f, s := world(t)
+	f.comments["delete"] = "| ⚠️ delete | <code>module.group_e2e-r42-team.github_team.this</code> |\n| ⚠️ delete | <code>module.group_platform.github_team.this</code> |\n> [!WARNING]"
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "the delete would destroy something the harness does not own") {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(f.log, "merge delete") {
+		t.Error("a delete that destroys something else must not be merged")
+	}
+}
+
+func TestCleanupRemovesClaimsThatWereNeverApplied(t *testing.T) {
+	f, s := world(t)
+	f.effects["create"] = nil
+	f.failRun["create"] = true
+	f.comments["delete"] = "No infrastructure changes."
+	f.approval["delete"] = false
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "create: reconcile run 501 concluded failure") || strings.Contains(err.Error(), "cleanup:") {
+		t.Fatalf("err = %v: the cleanup must succeed for claims that were never applied", err)
+	}
+	if _, ok := f.main["claims/components/e2e-r42-app.yaml"]; ok {
+		t.Error("the cleanup must remove the claim files from main")
+	}
+}
+
+func TestCleanupFailureKeepsBothErrors(t *testing.T) {
+	f, s := world(t)
+	f.gate["update"] = "failure"
+	f.gate["delete"] = "failure"
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update: idp-gate on PR #2 concluded failure") || !strings.Contains(err.Error(), "cleanup: idp-gate on PR #3 concluded failure") {
+		t.Fatalf("err = %v: both causes must be kept", err)
+	}
+}
+
+func TestScenarioWritesOnlyItsOwnFiles(t *testing.T) {
+	f, s := world(t)
+	s.EngineSHA = strings.Repeat("b", 40)
+	f.main["claims/groups/platform.yaml"] = []byte("keep")
+	if err := s.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range f.written {
+		own := p == "claims/groups/e2e-r42-team.yaml" || p == "claims/components/e2e-r42-app.yaml" || strings.HasPrefix(p, ".github/workflows/")
+		if !own {
+			t.Errorf("the harness wrote %s", p)
+		}
+	}
+	if string(f.main["claims/groups/platform.yaml"]) != "keep" {
+		t.Error("the harness touched a claim it does not own")
+	}
+}
+
+func TestScenarioValidatesItsInputs(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		mutate func(*Scenario)
+		want   string
+	}{
+		{"no org", func(s *Scenario) { s.Org = "" }, "org is required"},
+		{"digit-only member", func(s *Scenario) { s.Member = "1234" }, "needs a letter"},
+		{"bad login", func(s *Scenario) { s.Owner = "a b" }, "must be GitHub logins"},
+		{"zero interval", func(s *Scenario) { s.Timeouts.Interval = 0 }, "poll interval must be positive"},
+	} {
+		_, s := world(t)
+		tt.mutate(s)
+		if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: err = %v, want %q", tt.name, err, tt.want)
+		}
 	}
 }

@@ -45,4 +45,14 @@ type Forge interface {
 	GetJSON(ctx context.Context, path string, out any) error
 	// OpenIssues counts open issues the Actions bot opened with a label and title.
 	OpenIssues(ctx context.Context, label, title string) (int, error)
+	// ClaimFiles lists the claim file paths on the default branch
+	// (claims/groups/*.yaml and claims/components/*.yaml).
+	ClaimFiles(ctx context.Context) ([]string, error)
+	// OrgResources lists the org's repository and team names that start with prefix.
+	OrgResources(ctx context.Context, prefix string) ([]string, error)
+	// ActiveRuns lists the claims repo's reconcile, drift and recover runs that
+	// have not completed.
+	ActiveRuns(ctx context.Context) ([]Run, error)
+	// Reject rejects a pending idp-approval deployment, so nothing is applied.
+	Reject(ctx context.Context, runID, envID int64, comment string) error
 }

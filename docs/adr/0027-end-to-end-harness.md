@@ -19,6 +19,7 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
   6. deletes the claims through a PR, expects the destructive warning, approves the `idp-approval` deployment of that reconcile run only, and asserts the repository and team are gone;
   7. runs the drift check again.
 - Names are unique per run and always start with `e2e-`. The harness refuses any other name, touches only its own claim files, and never deletes a GitHub resource directly: after a failure it deletes its claims through the platform and reports both errors.
+- Before a run, the harness refuses to start while any `e2e-` claim is on `main`, any `e2e-r` repository or team exists, or any reconcile, drift or recover run of the claims repo is unfinished. A reconcile of the harness's own merge that unexpectedly waits for approval is rejected (nothing is applied and the queue frees), never left waiting. *(Amended in execution, 2026-10-15.)*
 - It runs nightly at 03:41 UTC and on demand from `idp-engine` `main`, in environment `idp-e2e` (deployment branch `main`), one run at a time (concurrency group `idp-e2e`). Release PRs join in Phase 1e.
 - Credentials, both only in `idp-e2e`:
   - the bot App token (ADR-0026), minted for `idp-claims-e2e` only with actions write, checks read, contents write, issues read, members read, pull requests write and workflows write;
