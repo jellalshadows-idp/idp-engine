@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ import (
 
 func validConfig() Config {
 	return Config{
-		Org: "acme", ClaimsRepo: "idp-claims", ApproverID: 42,
+		Org: "acme", ClaimsRepo: "idp-claims", ApproverIDs: []int64{42},
 		Reader:     AppCredentials{ID: 1, ClientID: "Iv-reader", Slug: "acme-reader", PrivateKey: "reader-pem"},
 		Writer:     AppCredentials{ID: 2, ClientID: "Iv-writer", Slug: "acme-writer", PrivateKey: "writer-pem"},
 		Passphrase: "correct-horse-battery-staple",
@@ -32,7 +33,7 @@ func TestValidate(t *testing.T) {
 	}{
 		{name: "valid for apply", mutate: func(*Config) {}, apply: true},
 		{name: "check ignores keys and passphrase", mutate: func(c *Config) { c.Passphrase = ""; c.Reader.PrivateKey = "" }, apply: false},
-		{name: "every problem is reported", mutate: func(c *Config) { c.Org = ""; c.ApproverID = 0 }, apply: true, wantError: "org is required; approver id must be positive"},
+		{name: "every problem is reported", mutate: func(c *Config) { c.Org = ""; c.ApproverIDs = nil }, apply: true, wantError: "org is required; at least one approver is required"},
 		{name: "short passphrase", mutate: func(c *Config) { c.Passphrase = "short" }, apply: true, wantError: "passphrase must be at least 16 characters"},
 		{name: "missing writer key", mutate: func(c *Config) { c.Writer.PrivateKey = "" }, apply: true, wantError: "writer private key is missing"},
 		{name: "incomplete reader app", mutate: func(c *Config) { c.Reader.ClientID = "" }, apply: false, wantError: "reader app id, client id and slug are required"},
@@ -204,7 +205,7 @@ func TestValidatePassphrase(t *testing.T) {
 
 func TestParamsRoundTrip(t *testing.T) {
 	p := validConfig().Params()
-	want := `{"approverId":42,"reader":{"id":1,"clientId":"Iv-reader","slug":"acme-reader"},"writer":{"id":2,"clientId":"Iv-writer","slug":"acme-writer"}}`
+	want := `{"approverIds":[42],"reader":{"id":1,"clientId":"Iv-reader","slug":"acme-reader"},"writer":{"id":2,"clientId":"Iv-writer","slug":"acme-writer"}}`
 	if p.String() != want {
 		t.Errorf("String = %s, want %s", p.String(), want)
 	}
@@ -216,12 +217,54 @@ func TestParamsRoundTrip(t *testing.T) {
 	if err := cfg.ValidateCheck(); err != nil {
 		t.Errorf("config from params does not validate for check: %v", err)
 	}
-	if cfg.Writer.ID != 2 || cfg.Reader.Slug != "acme-reader" || cfg.ApproverID != 42 || cfg.Writer.PrivateKey != "" {
+	if cfg.Writer.ID != 2 || cfg.Reader.Slug != "acme-reader" || !slices.Equal(cfg.ApproverIDs, []int64{42}) || cfg.Writer.PrivateKey != "" {
 		t.Errorf("config = %+v", cfg)
 	}
 	for _, bad := range []string{"", "{", `{"approverId":1,"extra":true}`} {
 		if _, err := ParseParams(bad); err == nil {
 			t.Errorf("ParseParams(%q) succeeded, want an error", bad)
+		}
+	}
+}
+
+func TestParseParamsReadsTheSingleApproverOfOlderValues(t *testing.T) {
+	got, err := ParseParams(`{"approverId":42,"reader":{"id":1,"clientId":"Iv-reader","slug":"acme-reader"},"writer":{"id":2,"clientId":"Iv-writer","slug":"acme-writer"}}`)
+	if err != nil || !slices.Equal(got.ApproverIDs, []int64{42}) {
+		t.Fatalf("ParseParams = %+v, %v: a value written before approver lists must still be read", got, err)
+	}
+	if !strings.Contains(got.String(), `"approverIds":[42]`) || strings.Contains(got.String(), `"approverId":`) {
+		t.Errorf("String() = %s: the next apply writes the list form", got.String())
+	}
+}
+
+func TestParseParamsRejectsBothApproverFields(t *testing.T) {
+	if _, err := ParseParams(`{"approverId":1,"approverIds":[1],"reader":{"id":1,"clientId":"a","slug":"b"},"writer":{"id":2,"clientId":"c","slug":"d"}}`); err == nil {
+		t.Error("approverId and approverIds together must be rejected")
+	}
+}
+
+func TestApproverValidation(t *testing.T) {
+	base := Config{Org: "acme", ClaimsRepo: "idp-claims", Reader: AppCredentials{ID: 1, ClientID: "a", Slug: "b"}, Writer: AppCredentials{ID: 2, ClientID: "c", Slug: "d"}}
+	for _, tt := range []struct {
+		ids  []int64
+		want string
+	}{
+		{nil, "at least one approver is required"},
+		{[]int64{0}, "approver ids must be positive"},
+		{[]int64{42, 7, 42}, "approver 42 is listed twice"},
+	} {
+		c := base
+		c.ApproverIDs = tt.ids
+		if err := c.ValidateCheck(); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("ApproverIDs %v: err = %v, want %q", tt.ids, err, tt.want)
+		}
+	}
+}
+
+func TestEnvironmentsListEveryApproverSorted(t *testing.T) {
+	for _, e := range Environments(Config{ApproverIDs: []int64{42, 7}}) {
+		if e.Name == EnvApproval && !slices.Equal(e.ReviewerIDs, []int64{7, 42}) {
+			t.Errorf("idp-approval reviewers = %v, want [7 42]", e.ReviewerIDs)
 		}
 	}
 }

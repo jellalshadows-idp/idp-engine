@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -28,10 +29,11 @@ type AppCredentials struct {
 type Config struct {
 	Org        string
 	ClaimsRepo string
-	ApproverID int64 // GitHub user id of the platform admin who approves runs
-	Reader     AppCredentials
-	Writer     AppCredentials
-	Passphrase string // OpenTofu state passphrase (apply only)
+	// ApproverIDs are the GitHub user ids of the people who approve runs; sorted, unique, at least one.
+	ApproverIDs []int64
+	Reader      AppCredentials
+	Writer      AppCredentials
+	Passphrase  string // OpenTofu state passphrase (apply only)
 }
 
 // ValidateCheck reports what `check` needs: identities, no key material.
@@ -62,9 +64,7 @@ func (c Config) baseProblems() []string {
 	if c.ClaimsRepo == "" {
 		problems = append(problems, "claims repo is required")
 	}
-	if c.ApproverID <= 0 {
-		problems = append(problems, "approver id must be positive")
-	}
+	problems = append(problems, approverProblems(c.ApproverIDs)...)
 	for _, app := range []struct {
 		role  string
 		creds AppCredentials
@@ -72,6 +72,28 @@ func (c Config) baseProblems() []string {
 		if app.creds.ID <= 0 || app.creds.ClientID == "" || app.creds.Slug == "" {
 			problems = append(problems, app.role+" app id, client id and slug are required")
 		}
+	}
+	return problems
+}
+
+func approverProblems(ids []int64) []string {
+	if len(ids) == 0 {
+		return []string{"at least one approver is required"}
+	}
+	var problems []string
+	seen := map[int64]bool{}
+	positive := true
+	for _, id := range ids {
+		switch {
+		case id <= 0:
+			positive = false
+		case seen[id]:
+			problems = append(problems, fmt.Sprintf("approver %d is listed twice", id))
+		}
+		seen[id] = true
+	}
+	if !positive {
+		problems = append([]string{"approver ids must be positive"}, problems...)
 	}
 	return problems
 }
@@ -162,17 +184,24 @@ type AppIdentity struct {
 // claims repo as variable IDP_BOOTSTRAP, so the drift workflow can run check
 // without the local App files (ADR-0017).
 type Params struct {
-	ApproverID int64       `json:"approverId"`
-	Reader     AppIdentity `json:"reader"`
-	Writer     AppIdentity `json:"writer"`
+	ApproverIDs []int64     `json:"approverIds"`
+	Reader      AppIdentity `json:"reader"`
+	Writer      AppIdentity `json:"writer"`
+}
+
+// sortedIDs returns a sorted copy of ids.
+func sortedIDs(ids []int64) []int64 {
+	out := slices.Clone(ids)
+	slices.Sort(out)
+	return out
 }
 
 // Params returns the identity part of c.
 func (c Config) Params() Params {
 	return Params{
-		ApproverID: c.ApproverID,
-		Reader:     AppIdentity{ID: c.Reader.ID, ClientID: c.Reader.ClientID, Slug: c.Reader.Slug},
-		Writer:     AppIdentity{ID: c.Writer.ID, ClientID: c.Writer.ClientID, Slug: c.Writer.Slug},
+		ApproverIDs: sortedIDs(c.ApproverIDs),
+		Reader:      AppIdentity{ID: c.Reader.ID, ClientID: c.Reader.ClientID, Slug: c.Reader.Slug},
+		Writer:      AppIdentity{ID: c.Writer.ID, ClientID: c.Writer.ClientID, Slug: c.Writer.Slug},
 	}
 }
 
@@ -182,13 +211,25 @@ func (p Params) String() string {
 	return string(b)
 }
 
-// ParseParams reads an IDP_BOOTSTRAP value; unknown fields are rejected.
+// ParseParams reads an IDP_BOOTSTRAP value; unknown fields are rejected. A value
+// written before approver lists existed carries one "approverId": it is read as
+// a one-element list, and the next apply rewrites it.
 func ParseParams(s string) (Params, error) {
 	dec := json.NewDecoder(strings.NewReader(s))
 	dec.DisallowUnknownFields()
-	var p Params
-	if err := dec.Decode(&p); err != nil {
+	var raw struct {
+		Params
+		ApproverID int64 `json:"approverId"`
+	}
+	if err := dec.Decode(&raw); err != nil {
 		return Params{}, fmt.Errorf("parse %s: %w", VarParams, err)
+	}
+	p := raw.Params
+	if raw.ApproverID != 0 {
+		if len(p.ApproverIDs) > 0 {
+			return Params{}, fmt.Errorf("parse %s: approverId and approverIds are both set", VarParams)
+		}
+		p.ApproverIDs = []int64{raw.ApproverID}
 	}
 	return p, nil
 }
@@ -196,7 +237,7 @@ func ParseParams(s string) (Params, error) {
 // Config returns the check configuration these params describe (no keys).
 func (p Params) Config(org, repo string) Config {
 	return Config{
-		Org: org, ClaimsRepo: repo, ApproverID: p.ApproverID,
+		Org: org, ClaimsRepo: repo, ApproverIDs: slices.Clone(p.ApproverIDs),
 		Reader: AppCredentials{ID: p.Reader.ID, ClientID: p.Reader.ClientID, Slug: p.Reader.Slug},
 		Writer: AppCredentials{ID: p.Writer.ID, ClientID: p.Writer.ClientID, Slug: p.Writer.Slug},
 	}

@@ -29,6 +29,16 @@ On Windows, file modes such as 0600 are not enforced. `~/.idp/apps` lives in you
 
 Open each printed `https://github.com/apps/<slug>/installations/new` link, choose the org, and select **All repositories**. The writer creates repositories, so it needs org-wide access.
 
+## The bot App
+
+The bot opens and merges pull requests for releases, dependency updates and the end-to-end harness ([ADR-0026](../adr/0026-automation-app.md)). It is a third App, created the same way:
+
+```bash
+go run ./cmd/idp bootstrap app --org <org> --role bot
+```
+
+Confirm **Create GitHub App** in the browser, then open the printed install link and select **Only select repositories**: `idp-engine`, `idp-claims` and `idp-claims-e2e`, and nothing else. Unlike the reader and the writer, it must not have org-wide access. Rotate its key like the other keys (see "Rotating a secret").
+
 ## Create the passphrase file
 
 Generate the passphrase and save it in your password manager **first**. Then write it to a file outside any repo, as UTF-8 **without BOM**, on a single line. In Git Bash, this avoids leaving it in your shell history:
@@ -57,6 +67,8 @@ go run ./cmd/idp bootstrap apply `
   --reader "$HOME\.idp\apps\<org>-reader.json" --writer "$HOME\.idp\apps\<org>-writer.json" `
   --passphrase-file "$HOME\.idp\<name>.pass"
 ```
+
+Repeat `--approver` for each reviewer. `idp-claims-e2e` also lists the E2E approver account ([ADR-0027](../adr/0027-end-to-end-harness.md)).
 
 Running it again is safe. A second run prints only `kept existing secret …` lines and `bootstrap apply: done`.
 

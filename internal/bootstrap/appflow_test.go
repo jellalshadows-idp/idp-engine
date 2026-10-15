@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"html"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -56,6 +57,37 @@ func TestManifestReaderIsReadOnly(t *testing.T) {
 		if _, ok := perms[need]; !ok {
 			t.Errorf("reader manifest lacks permission %q that check needs", need)
 		}
+	}
+}
+
+// botManifestPermissions builds the bot manifest and decodes its default_permissions.
+func botManifestPermissions(t *testing.T) map[string]string {
+	t.Helper()
+	m, err := Manifest("acme", RoleBot, "http://127.0.0.1:1/cb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m["name"] != "acme-bot" {
+		t.Errorf("name = %v, want acme-bot", m["name"])
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		DefaultPermissions map[string]string `json:"default_permissions"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	return decoded.DefaultPermissions
+}
+
+func TestBotManifest(t *testing.T) {
+	want := map[string]string{"actions": "write", "checks": "read", "contents": "write", "issues": "write", "members": "read", "metadata": "read", "pull_requests": "write", "statuses": "read", "workflows": "write"}
+	got := botManifestPermissions(t)
+	if !maps.Equal(got, want) {
+		t.Errorf("bot permissions = %v, want %v (ADR-0026)", got, want)
 	}
 }
 

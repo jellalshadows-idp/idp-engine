@@ -112,7 +112,7 @@ type Environment struct {
 // (writer key, no reviewers), both restricted to main (spec §6.2, §7.3).
 func Environments(cfg Config) []Environment {
 	return []Environment{
-		{Name: EnvApproval, ReviewerIDs: []int64{cfg.ApproverID}, Branch: DefaultBranch},
+		{Name: EnvApproval, ReviewerIDs: sortedIDs(cfg.ApproverIDs), Branch: DefaultBranch},
 		{Name: EnvWrite, ReviewerIDs: []int64{}, Branch: DefaultBranch},
 	}
 }
