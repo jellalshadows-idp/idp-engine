@@ -37,7 +37,14 @@ The bot opens and merges pull requests for releases, dependency updates and the 
 go run ./cmd/idp bootstrap app --org <org> --role bot
 ```
 
-Confirm **Create GitHub App** in the browser, then open the printed install link and select **Only select repositories**: `idp-engine`, `idp-claims` and `idp-claims-e2e`, and nothing else. Unlike the reader and the writer, it must not have org-wide access. Rotate its key like the other keys (see "Rotating a secret").
+Confirm **Create GitHub App** in the browser, then open the printed install link and select **Only select repositories**: `idp-engine`, `idp-claims` and `idp-claims-e2e`, and nothing else. Unlike the reader and the writer, it must not have org-wide access.
+
+`apply` never writes the bot's key: it lives only in the `idp-engine` environment `idp-e2e` ([e2e harness](../e2e.md#credentials)), so "Rotating a secret" below does not apply to it. To rotate it:
+
+1. Generate a new private key in the App's settings (`https://github.com/organizations/<org>/settings/apps/<org>-bot`).
+2. `gh secret set IDP_BOT_PRIVATE_KEY --env idp-e2e --repo <org>/idp-engine < <new pem>`
+3. Run the e2e workflow once (`gh workflow run e2e.yaml --repo <org>/idp-engine --ref main`) and check it passes.
+4. Delete the old key in the App's settings.
 
 ## Create the passphrase file
 

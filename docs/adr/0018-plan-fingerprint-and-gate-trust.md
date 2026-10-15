@@ -36,7 +36,7 @@ The guiding rule of spec §6 is "nothing is ever applied that nobody saw". Recon
 ### Negative / costs
 
 - A pull request whose last plan run failed or was cancelled ends in an approval prompt after merge. This is intended.
-- **Accepted risk**, alongside the passphrase risk of spec §7.3: the author check proves who wrote the comment, not that nobody edited it. (1) People with write access can edit the bot's comment, and the author stays `github-actions[bot]`; closed in Phase 1d by the editor check above. (2) Any workflow's `GITHUB_TOKEN` writes as `github-actions[bot]`, including a workflow added on a same-repo pull request branch. Both routes are open only to members who can already push branches (spec §7.1), and destructive changes always require approval regardless.
+- **Accepted risk**, alongside the passphrase risk of spec §7.3: the author check proves who wrote the comment, not that nobody edited it. (1) People with write access can edit the bot's comment, and the author stays `github-actions[bot]`; closed in Phase 1d by the editor check above. (2) Any workflow's `GITHUB_TOKEN` writes as `github-actions[bot]`, including a workflow added on a same-repo pull request branch. Both routes are open only to members who can already push branches (spec §7.1), and destructive changes always require approval regardless. The same route (a same-repo pull request branch workflow posting as `github-actions[bot]`) can also open a "Wet push failed" issue, which holds every reconcile until a maintainer closes it, or a "Drift detected" issue, a false alarm until a maintainer or the next clean drift run closes it; neither applies a change. *(Amended in Phase 1d execution, 2026-10-15.)*
 
 ## Follow-up
 
