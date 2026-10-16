@@ -219,17 +219,32 @@ func workflowFiles(t *testing.T) []string {
 	return files
 }
 
-// reusableWorkflows lists the engine workflows that claims repos call: every
-// workflow except ci.yaml (ADR-0021).
+// reusableNames are the engine workflows claims repos call (ADR-0021);
+// internalWorkflows run only in idp-engine.
+var (
+	reusableNames     = []string{"drift.yaml", "pr.yaml", "reconcile.yaml", "recover.yaml"}
+	internalWorkflows = []string{"ci.yaml", "e2e.yaml"}
+)
+
 func reusableWorkflows(t *testing.T) []string {
 	t.Helper()
-	var out []string
-	for _, f := range glob(t, ".github/workflows/*.yaml") {
-		if f != ".github/workflows/ci.yaml" {
-			out = append(out, f)
-		}
+	out := make([]string, 0, len(reusableNames))
+	for _, n := range reusableNames {
+		out = append(out, ".github/workflows/"+n)
 	}
 	return out
+}
+
+// anchors returns the line of every YAML anchor or alias under n.
+func anchors(n *yaml.Node) []int {
+	var lines []int
+	if n.Anchor != "" || n.Kind == yaml.AliasNode {
+		lines = append(lines, n.Line)
+	}
+	for _, c := range n.Content {
+		lines = append(lines, anchors(c)...)
+	}
+	return lines
 }
 
 func actionFiles(t *testing.T) []string {

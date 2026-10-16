@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -41,6 +43,68 @@ func TestPostSendsHeadersAndBodyAndDecodes(t *testing.T) {
 	}
 	if out.ID != 7 {
 		t.Errorf("ID = %d, want 7", out.ID)
+	}
+}
+
+func TestNewWithTokensAsksATokenPerRequest(t *testing.T) {
+	var mu sync.Mutex
+	var auth []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		auth = append(auth, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	errMint := errors.New("mint failed")
+	answers := []struct {
+		token string
+		err   error
+	}{{"t1", nil}, {"t2", nil}, {"", errMint}}
+	calls := 0
+	c := NewWithTokens(srv.URL, func(context.Context) (string, error) {
+		a := answers[calls]
+		calls++
+		return a.token, a.err
+	})
+	ctx := context.Background()
+	for range 2 {
+		if err := c.Get(ctx, "/x", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := c.Get(ctx, "/x", nil)
+	if !errors.Is(err, errMint) || err.Error() != "token for GET /x: mint failed" {
+		t.Errorf("err = %v, want %q wrapping the function's error", err, "token for GET /x: mint failed")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{"Bearer t1", "Bearer t2"}; !slices.Equal(auth, want) {
+		t.Errorf("Authorization headers = %q, want %q: one token per request, and no request after the token error", auth, want)
+	}
+}
+
+func TestNewWithTokensRefusesAnEmptyToken(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := NewWithTokens(srv.URL, func(context.Context) (string, error) { return "", nil })
+	err := c.Post(context.Background(), "/x", map[string]string{"a": "b"}, nil)
+	if err == nil || err.Error() != "token for POST /x: empty token" {
+		t.Errorf("err = %v, want %q", err, "token for POST /x: empty token")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 0 {
+		t.Errorf("requests = %d, want none: a request without a token would go out unauthenticated", requests)
 	}
 }
 

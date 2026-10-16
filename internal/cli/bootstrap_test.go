@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/jellalshadows-idp/idp-engine/internal/bootstrap"
 	"github.com/jellalshadows-idp/idp-engine/internal/fakegithub"
 )
 
@@ -26,7 +28,7 @@ func TestBootstrapUsageErrors(t *testing.T) {
 		{name: "token is required", args: []string{"bootstrap", "check", "--org", "o", "--claims-repo", "r", "--approver", "a", "--reader", "r.json", "--writer", "w.json"}, wantStderr: "set GH_TOKEN"},
 		{name: "app needs an org", args: []string{"bootstrap", "app", "--role", "reader"}, wantStderr: "idp bootstrap app: --org is required\n"},
 		{name: "app rejects an invalid org before listening", args: []string{"bootstrap", "app", "--org", "-bad", "--role", "reader"}, wantStderr: "idp bootstrap app: --org must be a valid GitHub organization name\n"},
-		{name: "app needs a valid role", args: []string{"bootstrap", "app", "--org", "o", "--role", "admin"}, wantStderr: "idp bootstrap app: --role must be reader or writer\n"},
+		{name: "app needs a valid role", args: []string{"bootstrap", "app", "--org", "o", "--role", "admin"}, wantStderr: "idp bootstrap app: --role must be reader, writer or bot\n"},
 		{name: "app listen 0.0.0.0:8080 is rejected", args: []string{"bootstrap", "app", "--org", "o", "--role", "reader", "--listen", "0.0.0.0:8080"}, wantStderr: "idp bootstrap app: --listen must be a loopback address (e.g. 127.0.0.1:0)\n"},
 		{name: "app listen :8080 is rejected", args: []string{"bootstrap", "app", "--org", "o", "--role", "reader", "--listen", ":8080"}, wantStderr: "idp bootstrap app: --listen must be a loopback address (e.g. 127.0.0.1:0)\n"},
 		{name: "app listen not-an-address is rejected", args: []string{"bootstrap", "app", "--org", "o", "--role", "reader", "--listen", "not-an-address"}, wantStderr: "idp bootstrap app: --listen must be a loopback address (e.g. 127.0.0.1:0)\n"},
@@ -165,6 +167,56 @@ func TestApplyThenCheckEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "bootstrap check: no drift") {
 		t.Errorf("check stdout = %q, want %q", stdout, "bootstrap check: no drift")
+	}
+}
+
+func TestApplyWithSeveralApprovers(t *testing.T) {
+	f := newE2E(t)
+	f.fake.Objects["/users/Adrian-Manuel"] = map[string]any{"login": "Adrian-Manuel", "id": 7}
+
+	// newE2E already passes --approver jellalshadows; repeating the flag adds one.
+	code, _, stderr := f.run(f.env(nil), "apply", "--passphrase-file", f.pass, "--approver", "Adrian-Manuel")
+	if code != 0 {
+		t.Fatalf("apply exit code = %d, want 0 (stderr %q)", code, stderr)
+	}
+	approval := f.fake.Objects["/repos/acme/idp-claims/environments/idp-approval"].(map[string]any)
+	rules := approval["protection_rules"].([]any)
+	if len(rules) != 1 {
+		t.Fatalf("idp-approval protection rules = %v, want one required_reviewers rule", rules)
+	}
+	var ids []int64
+	for _, r := range rules[0].(map[string]any)["reviewers"].([]any) {
+		ids = append(ids, int64(r.(map[string]any)["reviewer"].(map[string]any)["id"].(float64)))
+	}
+	if !slices.Equal(ids, []int64{7, 42}) && !slices.Equal(ids, []int64{42, 7}) {
+		t.Errorf("idp-approval reviewers = %v, want 7 and 42", ids)
+	}
+	vars := f.fake.Objects["/repos/acme/idp-claims/actions/variables/IDP_BOOTSTRAP"].(map[string]any)["value"].(string)
+	if !strings.HasPrefix(vars, `{"approverIds":[7,42],`) {
+		t.Errorf("IDP_BOOTSTRAP = %s, want the sorted approverIds list", vars)
+	}
+}
+
+func TestBootstrapAppRoleValidation(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	// A bad --listen stops the command right after the role check, before any network use.
+	code := Run([]string{"bootstrap", "app", "--org", "o", "--role", "bot", "--listen", "0.0.0.0:1"}, &stdout, &stderr, noEnv)
+	if code != 2 || strings.Contains(stderr.String(), "--role") {
+		t.Errorf("--role bot: exit %d, stderr %q: the role must be accepted", code, stderr.String())
+	}
+	stderr.Reset()
+	code = Run([]string{"bootstrap", "app", "--org", "o", "--role", "admin"}, &stdout, &stderr, noEnv)
+	if code != 2 || !strings.Contains(stderr.String(), "--role must be reader, writer or bot") {
+		t.Errorf("--role admin: exit %d, stderr %q", code, stderr.String())
+	}
+}
+
+func TestInstallAdvice(t *testing.T) {
+	if got := installAdvice(bootstrap.RoleBot); !strings.Contains(got, "ONLY these repositories: idp-engine, idp-claims, idp-claims-e2e") {
+		t.Errorf("bot advice = %q", got)
+	}
+	if got := installAdvice(bootstrap.RoleWriter); !strings.Contains(got, "all repositories") {
+		t.Errorf("writer advice = %q", got)
 	}
 }
 

@@ -44,6 +44,10 @@ type Issue struct {
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+	User struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"user"`
 	PullRequest *json.RawMessage `json:"pull_request"`
 }
 
@@ -57,7 +61,8 @@ func (i Issue) hasLabel(label string) bool {
 }
 
 // FindOpenIssue returns the open issue (never a pull request) with label and
-// title, or nil.
+// title, or nil. Only issues the Actions bot opened count: a person's issue
+// with the same label and title is never edited, closed or counted.
 func (r Repo) FindOpenIssue(ctx context.Context, label, title string) (*Issue, error) {
 	issues, err := ghapi.List[Issue](ctx, r.API, r.base()+"/issues?state=open&labels="+url.QueryEscape(label))
 	if err != nil {
@@ -65,7 +70,7 @@ func (r Repo) FindOpenIssue(ctx context.Context, label, title string) (*Issue, e
 	}
 	for i := range issues {
 		is := issues[i]
-		if is.PullRequest == nil && is.State == "open" && is.Title == title && is.hasLabel(label) {
+		if is.PullRequest == nil && is.User.Login == ActionsBot && is.User.Type == "Bot" && is.State == "open" && is.Title == title && is.hasLabel(label) {
 			return &is, nil
 		}
 	}

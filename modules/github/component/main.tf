@@ -5,7 +5,13 @@ resource "github_repository" "this" {
   auto_init              = true
   delete_branch_on_merge = true
   archive_on_destroy     = var.archive_on_destroy
-  topics                 = var.topics
+}
+
+# Topics have their own resource: github_repository's topics is Optional and
+# Computed, so an empty list would leave the old topics in place.
+resource "github_repository_topics" "this" {
+  repository = github_repository.this.name
+  topics     = var.topics
 }
 
 resource "github_repository_vulnerability_alerts" "this" {

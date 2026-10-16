@@ -214,6 +214,9 @@ func TestReconcilePlansWithTheWriterToken(t *testing.T) {
 		t.Errorf("plan-token must come before the plan")
 	}
 	wantEnv(t, "plan plan", p, map[string]string{"GITHUB_TOKEN": "${{ steps.plan-token.outputs.token }}"})
+	if strings.Contains(p.Run, "-refresh") {
+		t.Errorf("the reconcile plan must refresh (ADR-0025): no -refresh flag")
+	}
 	wantRun(t, "plan plan", p, `tofu plan -input=false -lock=false -out="$RUNNER_TEMP/idp/out/github.tfplan"`)
 }
 

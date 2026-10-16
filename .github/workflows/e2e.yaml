@@ -1,0 +1,74 @@
+name: idp-e2e
+
+# End-to-end harness (spec §8.5, ADR-0027): drives idp-claims-e2e through the
+# real pipelines at this commit, nightly and on demand from main.
+
+on:
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: idp-e2e
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: e2e
+    runs-on: ubuntu-24.04
+    # Outlasts the harness's bounded waits (DefaultTimeouts, about 300 minutes
+    # in the worst case), so its cleanup always gets to run.
+    timeout-minutes: 330
+    environment: idp-e2e
+    permissions:
+      contents: read
+    steps:
+      - name: run once
+        id: guard
+        run: |
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::re-running idp-e2e reuses its run id and collides with the first attempt's branches; dispatch a new run (docs/e2e.md)"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: build the harness
+        id: build
+        run: go build -o "$RUNNER_TEMP/idp-e2e" ./cmd/idp-e2e
+      - name: check the environment
+        id: config
+        env:
+          BOT_CLIENT_ID: ${{ vars.IDP_BOT_CLIENT_ID }}
+          BOT_KEY_SET: ${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}
+          APPROVER_SET: ${{ secrets.IDP_E2E_APPROVER_TOKEN != '' }}
+        run: |
+          missing=""
+          [ -n "$BOT_CLIENT_ID" ] || missing="$missing variable IDP_BOT_CLIENT_ID,"
+          [ "$BOT_KEY_SET" = true ] || missing="$missing secret IDP_BOT_PRIVATE_KEY,"
+          [ "$APPROVER_SET" = true ] || missing="$missing secret IDP_E2E_APPROVER_TOKEN,"
+          if [ -n "$missing" ]; then
+            echo "::error::the idp-e2e environment is missing:${missing%,} (docs/e2e.md)"
+            exit 1
+          fi
+      # The harness mints the bot's installation tokens from the App key and
+      # renews them before the hour runs out, each scoped to idp-claims-e2e and
+      # the permissions the forge calls. The key reaches only this step.
+      - name: run the harness
+        id: harness
+        env:
+          E2E_BOT_CLIENT_ID: ${{ vars.IDP_BOT_CLIENT_ID }}
+          E2E_BOT_PRIVATE_KEY: ${{ secrets.IDP_BOT_PRIVATE_KEY }}
+          E2E_APPROVER_TOKEN: ${{ secrets.IDP_E2E_APPROVER_TOKEN }}
+        run: |
+          "$RUNNER_TEMP/idp-e2e" --repo "$GITHUB_REPOSITORY_OWNER/idp-claims-e2e" --engine-sha "$GITHUB_SHA" --run "$GITHUB_RUN_ID"

@@ -36,16 +36,26 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("github %s %s: %d %s", e.Method, e.Path, e.Status, e.Body)
 }
 
-// Client talks to the GitHub REST API. Build it with New.
+// Client talks to the GitHub REST API. Build it with New or NewWithTokens.
 type Client struct {
 	baseURL string
 	token   string
+	tokens  func(context.Context) (string, error) // when set, replaces token
 	http    *http.Client
 }
 
 // New returns a client. An empty token sends unauthenticated requests.
 func New(baseURL, token string) *Client {
 	return &Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: &http.Client{Timeout: 30 * time.Second}}
+}
+
+// NewWithTokens returns a client that asks tokens for the token of every
+// request, so a token that expires can be refreshed between requests. An empty
+// token fails the request instead of sending it unauthenticated.
+func NewWithTokens(baseURL string, tokens func(context.Context) (string, error)) *Client {
+	c := New(baseURL, "")
+	c.tokens = tokens
+	return c
 }
 
 // Get decodes the JSON answer of GET path into out (out may be nil).
@@ -82,6 +92,17 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 
 // do is Do, and also returns the response headers.
 func (c *Client) do(ctx context.Context, method, path string, in, out any) (http.Header, error) {
+	token := c.token
+	if c.tokens != nil {
+		t, err := c.tokens(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("token for %s %s: %w", method, path, err)
+		}
+		if t == "" {
+			return nil, fmt.Errorf("token for %s %s: empty token", method, path)
+		}
+		token = t
+	}
 	var body io.Reader
 	if in != nil {
 		buf, err := json.Marshal(in)
@@ -99,8 +120,8 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (http
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

@@ -29,6 +29,24 @@ On Windows, file modes such as 0600 are not enforced. `~/.idp/apps` lives in you
 
 Open each printed `https://github.com/apps/<slug>/installations/new` link, choose the org, and select **All repositories**. The writer creates repositories, so it needs org-wide access.
 
+## The bot App
+
+The bot opens and merges pull requests for releases, dependency updates and the end-to-end harness ([ADR-0026](../adr/0026-automation-app.md)). It is a third App, created the same way:
+
+```bash
+go run ./cmd/idp bootstrap app --org <org> --role bot
+```
+
+Confirm **Create GitHub App** in the browser, then open the printed install link and select **Only select repositories**: `idp-engine`, `idp-claims` and `idp-claims-e2e`, and nothing else. Unlike the reader and the writer, it must not have org-wide access.
+
+`apply` never writes the bot's key: it lives only in the `idp-engine` environment `idp-e2e` ([e2e harness](../e2e.md#credentials)), so "Rotating a secret" below does not apply to it. To rotate it:
+
+1. Generate a new private key in the App's settings (`https://github.com/organizations/<org>/settings/apps/<org>-bot`).
+2. `gh secret set IDP_BOT_PRIVATE_KEY --env idp-e2e --repo <org>/idp-engine < <new pem>`
+3. Save the new key as `~/.idp/apps/<org>-bot.pem`, replacing the old one: the [e2e setup](../e2e.md#setting-up) command reads it.
+4. Run the e2e workflow once (`gh workflow run e2e.yaml --repo <org>/idp-engine --ref main`) and check it passes.
+5. Delete the old key in the App's settings.
+
 ## Create the passphrase file
 
 Generate the passphrase and save it in your password manager **first**. Then write it to a file outside any repo, as UTF-8 **without BOM**, on a single line. In Git Bash, this avoids leaving it in your shell history:
@@ -57,6 +75,8 @@ go run ./cmd/idp bootstrap apply `
   --reader "$HOME\.idp\apps\<org>-reader.json" --writer "$HOME\.idp\apps\<org>-writer.json" `
   --passphrase-file "$HOME\.idp\<name>.pass"
 ```
+
+Repeat `--approver` for each reviewer. `idp-claims-e2e` also lists the E2E approver account ([ADR-0027](../adr/0027-end-to-end-harness.md)).
 
 Running it again is safe. A second run prints only `kept existing secret …` lines and `bootstrap apply: done`.
 
@@ -98,7 +118,7 @@ IDP_BOOTSTRAP='<the variable value>' GH_TOKEN=<reader token> go run ./cmd/idp bo
 
 ## After bootstrapping
 
-Once every claims repo you intend to bootstrap is done and `check` is clean, delete the local `.pem` files and the passphrase files. The keys and the passphrase now live in GitHub secrets and your password manager.
+Once every claims repo you intend to bootstrap is done and `check` is clean, delete the local `.pem` files and the passphrase files. Keep the bot's `~/.idp/apps/<org>-bot.pem` until the `idp-e2e` environment is set up: its [setup](../e2e.md#setting-up) reads it. The keys and the passphrase now live in GitHub secrets and your password manager.
 
 To bootstrap another claims repo later, generate a new private key in the App's settings page.
 

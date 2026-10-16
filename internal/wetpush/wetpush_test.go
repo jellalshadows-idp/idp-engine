@@ -158,6 +158,20 @@ func TestSyncRejectsTruncatedTrees(t *testing.T) {
 	}
 }
 
+func TestSyncRejectsInvalidBranchNames(t *testing.T) {
+	for _, b := range []string{"", "/wet", "wet/", "a..b", "a b", "a%2Fb", "x.lock", "a//b", "-x", ".x"} {
+		p := Pusher{API: ghapi.New("http://127.0.0.1:1", "t"), Owner: "acme", Repo: "idp-claims", Branch: b}
+		if _, err := p.Sync(context.Background(), t.TempDir(), []string{"tfstate"}, "m"); err == nil || !strings.Contains(err.Error(), "invalid branch name") {
+			t.Errorf("Sync with branch %q: err = %v, want an invalid branch name error before any API call", b, err)
+		}
+	}
+	for _, b := range []string{"wet", "feat/x", "e2e/38314547633/pin", "release-please--branches--main"} {
+		if err := validateBranch(b); err != nil {
+			t.Errorf("validateBranch(%q) = %v", b, err)
+		}
+	}
+}
+
 func TestSyncValidatesPaths(t *testing.T) {
 	_, p := setup(t, nil)
 	for _, bad := range [][]string{nil, {""}, {"../x"}, {"/abs"}, {"a/../b"}, {"a\\b"}, {"rendered/github/.terraform"}, {".terraform"}} {

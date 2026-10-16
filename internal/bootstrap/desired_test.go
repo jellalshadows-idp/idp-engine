@@ -12,7 +12,7 @@ import (
 var update = flag.Bool("update", false, "rewrite golden files")
 
 func TestDesiredGolden(t *testing.T) {
-	cfg := Config{ApproverID: 42, Writer: AppCredentials{ID: 2}}
+	cfg := Config{ApproverIDs: []int64{42}, Writer: AppCredentials{ID: 2}}
 	envs := Environments(cfg)
 	cases := []struct {
 		name  string
@@ -51,7 +51,7 @@ func TestDesiredGolden(t *testing.T) {
 }
 
 func TestEnvironmentsOrderAndReviewers(t *testing.T) {
-	envs := Environments(Config{ApproverID: 42})
+	envs := Environments(Config{ApproverIDs: []int64{42}})
 	if len(envs) != 2 || envs[0].Name != EnvApproval || envs[1].Name != EnvWrite {
 		t.Fatalf("Environments = %+v, want [idp-approval idp-write]", envs)
 	}

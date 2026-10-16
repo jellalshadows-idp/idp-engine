@@ -1,0 +1,16 @@
+{
+  "description": "IDP bot: opens and merges pull requests for releases, dependency updates and the end-to-end harness. Install it only on idp-engine, idp-claims and idp-claims-e2e.",
+  "public": false,
+  "default_permissions": {
+    "actions": "write",
+    "checks": "read",
+    "contents": "write",
+    "issues": "write",
+    "members": "read",
+    "metadata": "read",
+    "pull_requests": "write",
+    "statuses": "read",
+    "workflows": "write"
+  },
+  "default_events": []
+}

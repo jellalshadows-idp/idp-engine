@@ -135,7 +135,7 @@ The rules, in order ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)):
 4. A change missing from the same stack of the trusted fingerprint: `approval`.
 5. Otherwise: `auto`.
 
-A fingerprint is trusted only when it is in the newest comment written by `github-actions[bot]` (type `Bot`) that contains `<!-- idp-plan -->`, on the pull request whose merge commit is `--sha`, and only when the marker's SHA equals that pull request's head SHA. Comments by anyone else are ignored, so a stranger cannot even force an approval prompt.
+A fingerprint is trusted only when it is in the newest comment written by `github-actions[bot]` (type `Bot`) that contains `<!-- idp-plan -->`, on the pull request whose merge commit is `--sha`, and only when the marker's SHA equals that pull request's head SHA. Comments by anyone else are ignored, so a stranger cannot even force an approval prompt. A comment that anyone but the Actions bot last edited is not trusted either; the gate reads its last editor through the GraphQL API ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)).
 
 The gate reports its answer through the output. It exits 0 for both decisions.
 
@@ -237,23 +237,23 @@ Exit codes: 0 `TF_ENCRYPTION` set; 1 the passphrase is missing or invalid; 2 usa
 Creates or verifies the protections an org needs before the IDP runs. These run outside the IDP, on purpose ([ADR-0011](adr/0011-bootstrap-outside-the-idp.md)).
 
 ```text
-idp bootstrap app   --org ORG --role reader|writer [--out-dir DIR] [--listen ADDR]
-idp bootstrap apply --org ORG --claims-repo REPO --approver LOGIN --reader FILE --writer FILE --passphrase-file FILE
-idp bootstrap check --org ORG --claims-repo REPO (--approver LOGIN --reader FILE --writer FILE | --params-env NAME) [--allow-hidden-bypass]
+idp bootstrap app   --org ORG --role reader|writer|bot [--out-dir DIR] [--listen ADDR]
+idp bootstrap apply --org ORG --claims-repo REPO --approver LOGIN [--approver LOGIN]... --reader FILE --writer FILE --passphrase-file FILE
+idp bootstrap check --org ORG --claims-repo REPO (--approver LOGIN [--approver LOGIN]... --reader FILE --writer FILE | --params-env NAME) [--allow-hidden-bypass]
 ```
 
 `FILE` for `--reader` and `--writer` is the `<slug>.json` written by `bootstrap app`.
 
 ### bootstrap app
 
-Creates a GitHub App (reader or writer) for the org through the App manifest flow.
+Creates a GitHub App (reader, writer or bot) for the org through the App manifest flow.
 
 - `--org`: the organization that will own the App.
-- `--role`: `reader` or `writer`.
+- `--role`: `reader`, `writer` or `bot`. `bot` creates the automation App of [ADR-0026](adr/0026-automation-app.md); install it on only the engine and claims repos.
 - `--out-dir`: where to write `<slug>.json` and `<slug>.pem` (default `~/.idp/apps`).
 - `--listen`: the local address of the callback server (default `127.0.0.1:0`). It must be a loopback address, because the server receives the App credentials.
 
-Writes: the two credential files, and a link to install the App on the org with access to all repositories. It does not call GitHub with a token.
+Writes: the two credential files, and a link to install the App on the org (all repositories for the reader and the writer; only the engine and claims repos for the bot). It does not call GitHub with a token.
 
 Exit codes: 0 created; 1 the flow failed; 2 usage error.
 
@@ -262,7 +262,7 @@ Exit codes: 0 created; 1 the flow failed; 2 usage error.
 Makes the org match the desired state. It is safe to run any number of times: a second run against an unchanged org performs no writes.
 
 - `--org`, `--claims-repo`: the organization and the claims repository name.
-- `--approver`: the login of the platform admin who approves runs.
+- `--approver`: a person who approves runs; repeat it for several (each becomes an `idp-approval` reviewer).
 - `--reader`, `--writer`: the App files from `bootstrap app`. `apply` also reads the private keys they point to.
 - `--passphrase-file`: a file with the OpenTofu state passphrase.
 

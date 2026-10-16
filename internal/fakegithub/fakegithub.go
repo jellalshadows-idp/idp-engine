@@ -89,6 +89,9 @@ type Server struct {
 	Actor map[string]any
 	// RejectRefUpdates lists ref paths whose PATCH answers 422 (not a fast forward).
 	RejectRefUpdates map[string]bool
+	// CommentEditors maps a comment node id to the GraphQL editor of its last
+	// edit; a missing or nil entry means the comment was never edited.
+	CommentEditors map[string]map[string]any
 
 	t      testing.TB
 	mu     sync.Mutex
@@ -133,6 +136,10 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if r.Method == http.MethodPost && r.URL.Path == "/graphql" {
+		f.serveGraphQL(w, body)
+		return
+	}
 	if r.Method != http.MethodGet {
 		f.Writes = append(f.Writes, r.Method+" "+r.URL.Path)
 		f.Requests = append(f.Requests, Request{Method: r.Method, Path: r.URL.Path, Body: body})
@@ -151,6 +158,19 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// serveGraphQL answers the one query the idp commands run: the last editor of
+// a comment node. A query is a read, so it is not recorded as a write.
+func (f *Server) serveGraphQL(w http.ResponseWriter, body map[string]any) {
+	vars, _ := body["variables"].(map[string]any)
+	id, _ := vars["id"].(string)
+	var editor any
+	if e := f.CommentEditors[id]; e != nil {
+		editor = e
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"editor": editor}}})
 }
 
 // isListPath reports whether path is a list endpoint the idp commands read.
@@ -312,7 +332,7 @@ func (f *Server) route(method, path string, body map[string]any) (int, any) {
 		for _, l := range asList(body["labels"]) {
 			labels = append(labels, map[string]any{"name": l})
 		}
-		issue := map[string]any{"number": len(f.Lists[path]) + 1, "title": body["title"], "body": body["body"], "state": "open", "labels": labels}
+		issue := map[string]any{"number": len(f.Lists[path]) + 1, "title": body["title"], "body": body["body"], "state": "open", "labels": labels, "user": f.Actor}
 		f.Lists[path] = append(f.Lists[path], issue)
 		return http.StatusCreated, issue
 	case method == http.MethodPatch && reIssue.MatchString(path):

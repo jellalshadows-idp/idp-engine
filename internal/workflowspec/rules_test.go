@@ -26,7 +26,7 @@ func checkUses(value, comment string) error {
 	if !pinnedRef.MatchString(value) {
 		return fmt.Errorf("%q is not pinned to a full commit SHA", value)
 	}
-	if strings.Contains(value, "/.github/workflows/") && unreleased.MatchString(comment) {
+	if strings.Contains(value, "/idp-engine/.github/workflows/") && unreleased.MatchString(comment) {
 		return nil
 	}
 	if !versionNote.MatchString(comment) {
@@ -108,6 +108,7 @@ func TestCheckUses(t *testing.T) {
 		{"local action", "./.idp/engine/.github/actions/setup-idp", "", true},
 		{"reusable workflow, unreleased", "acme/idp-engine/.github/workflows/pr.yaml@" + sha, "# unreleased", true},
 		{"reusable workflow, released", "acme/idp-engine/.github/workflows/pr.yaml@" + sha, "# v0.1.0", true},
+		{"another repo's workflow marked unreleased", "acme/other/.github/workflows/x.yaml@" + sha, "# unreleased", false},
 		{"tag", "actions/checkout@v7", "# v7", false},
 		{"short sha", "actions/checkout@" + sha[:12], "# v7.0.1", false},
 		{"uppercase sha", "actions/checkout@" + strings.Repeat("A", 40), "# v7.0.1", false},

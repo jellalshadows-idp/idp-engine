@@ -29,6 +29,7 @@ type AppRole string
 const (
 	RoleReader AppRole = "reader"
 	RoleWriter AppRole = "writer"
+	RoleBot    AppRole = "bot"
 )
 
 // maxAppName is GitHub's limit for App names, which must also be unique across GitHub.
@@ -42,8 +43,8 @@ func ValidOrgName(org string) bool { return orgNameRE.MatchString(org) }
 
 // Manifest returns the GitHub App manifest for org and role, named <org>-<role>.
 func Manifest(org string, role AppRole, callback string) (map[string]any, error) {
-	if role != RoleReader && role != RoleWriter {
-		return nil, fmt.Errorf("unknown app role %q (want reader or writer)", role)
+	if role != RoleReader && role != RoleWriter && role != RoleBot {
+		return nil, fmt.Errorf("unknown app role %q (want reader, writer or bot)", role)
 	}
 	if !ValidOrgName(org) {
 		return nil, fmt.Errorf("invalid org name %q", org)

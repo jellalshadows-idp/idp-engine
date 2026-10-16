@@ -3,6 +3,7 @@ package workflowspec
 import (
 	"fmt"
 	"maps"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -16,6 +17,33 @@ func TestWorkflowFilesUseTheYamlExtension(t *testing.T) {
 		if got := glob(t, pattern); len(got) != 0 {
 			t.Errorf("rename %v to .yaml: the contract tests read only .yaml files", got)
 		}
+	}
+}
+
+func TestEveryEngineWorkflowIsClassified(t *testing.T) {
+	known := append(slices.Clone(reusableNames), internalWorkflows...)
+	for _, f := range glob(t, ".github/workflows/*.yaml") {
+		if !slices.Contains(known, path.Base(f)) {
+			t.Errorf("%s is neither a reusable workflow nor an internal one: add it to reusableNames or internalWorkflows", f)
+		}
+	}
+}
+
+func TestWorkflowsUseNoAnchors(t *testing.T) {
+	for _, f := range append(workflowFiles(t), actionFiles(t)...) {
+		if lines := anchors(readYAML(t, f, &struct{}{})); len(lines) > 0 {
+			t.Errorf("%s: YAML anchors or aliases at lines %v; the contract rules read node values and cannot follow an alias", f, lines)
+		}
+	}
+}
+
+func TestAnchors(t *testing.T) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte("a: &x 1\nb: *x\nc: 2\n"), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if got := anchors(&doc); !slices.Equal(got, []int{1, 2}) {
+		t.Errorf("anchors = %v, want [1 2]", got)
 	}
 }
 

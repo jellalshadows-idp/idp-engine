@@ -16,9 +16,9 @@ import (
 )
 
 const bootstrapUsage = `Usage:
-  idp bootstrap app   --org ORG --role reader|writer [--out-dir DIR] [--listen ADDR]
-  idp bootstrap apply --org ORG --claims-repo REPO --approver LOGIN --reader FILE --writer FILE --passphrase-file FILE
-  idp bootstrap check --org ORG --claims-repo REPO (--approver LOGIN --reader FILE --writer FILE | --params-env NAME) [--allow-hidden-bypass]
+  idp bootstrap app   --org ORG --role reader|writer|bot [--out-dir DIR] [--listen ADDR]
+  idp bootstrap apply --org ORG --claims-repo REPO --approver LOGIN [--approver LOGIN]... --reader FILE --writer FILE --passphrase-file FILE
+  idp bootstrap check --org ORG --claims-repo REPO (--approver LOGIN [--approver LOGIN]... --reader FILE --writer FILE | --params-env NAME) [--allow-hidden-bypass]
 
 FILE for --reader/--writer is the <slug>.json written by "idp bootstrap app".
 apply and check read a token from GH_TOKEN or GITHUB_TOKEN (e.g. GH_TOKEN=$(gh auth token)).
@@ -61,12 +61,29 @@ func fail(stderr io.Writer, err error) int {
 	return exitError
 }
 
+// loginList collects a repeatable --approver flag.
+type loginList []string
+
+func (l *loginList) String() string     { return strings.Join(*l, ",") }
+func (l *loginList) Set(v string) error { *l = append(*l, v); return nil }
+
+// installAdvice tells the owner how to install a new App: the reader and the
+// writer need every repository; the bot only the engine and the claims repos
+// (ADR-0026).
+func installAdvice(role bootstrap.AppRole) string {
+	if role == bootstrap.RoleBot {
+		return "Install it on ONLY these repositories: idp-engine, idp-claims, idp-claims-e2e."
+	}
+	return "Install it on all repositories."
+}
+
 func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env Env) int {
 	fs := flag.NewFlagSet("idp bootstrap "+mode, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	org := fs.String("org", "", "GitHub organization")
 	repo := fs.String("claims-repo", "", "claims repository name")
-	approver := fs.String("approver", "", "login of the platform admin who approves runs")
+	var approvers loginList
+	fs.Var(&approvers, "approver", "login of a person who approves runs (repeat for several)")
 	readerFile := fs.String("reader", "", "reader app <slug>.json")
 	writerFile := fs.String("writer", "", "writer app <slug>.json")
 	passFile := fs.String("passphrase-file", "", "file with the OpenTofu state passphrase (apply only)")
@@ -79,14 +96,14 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 		fmt.Fprintf(stderr, "idp bootstrap %s: --params-env and --allow-hidden-bypass are check-only flags\n", mode)
 		return exitUsage
 	}
-	if *paramsEnv != "" && (*approver != "" || *readerFile != "" || *writerFile != "") {
+	if *paramsEnv != "" && (len(approvers) > 0 || *readerFile != "" || *writerFile != "") {
 		fmt.Fprintln(stderr, "idp bootstrap check: use either --params-env or --approver/--reader/--writer")
 		return exitUsage
 	}
 	required := []struct{ flag, value string }{{"--org", *org}, {"--claims-repo", *repo}}
 	if *paramsEnv == "" {
 		required = append(required,
-			struct{ flag, value string }{"--approver", *approver},
+			struct{ flag, value string }{"--approver", strings.Join(approvers, ",")},
 			struct{ flag, value string }{"--reader", *readerFile},
 			struct{ flag, value string }{"--writer", *writerFile})
 	}
@@ -138,8 +155,12 @@ func runBootstrapRepo(mode string, args []string, stdout, stderr io.Writer, env 
 			}
 		}
 		// Local inputs are validated above; only now is it worth a network call.
-		if cfg.ApproverID, err = bootstrap.UserID(ctx, api, *approver); err != nil {
-			return fail(stderr, err)
+		for _, login := range approvers {
+			id, err := bootstrap.UserID(ctx, api, login)
+			if err != nil {
+				return fail(stderr, err)
+			}
+			cfg.ApproverIDs = append(cfg.ApproverIDs, id)
 		}
 	}
 
@@ -201,7 +222,7 @@ func runBootstrapApp(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := flag.NewFlagSet("idp bootstrap app", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	org := fs.String("org", "", "GitHub organization that will own the App")
-	role := fs.String("role", "", "reader or writer")
+	role := fs.String("role", "", "reader, writer or bot")
 	outDir := fs.String("out-dir", "", "where to write <slug>.json and <slug>.pem (default ~/.idp/apps)")
 	listen := fs.String("listen", "127.0.0.1:0", "local address for the callback server")
 	if err := fs.Parse(args); err != nil {
@@ -215,8 +236,8 @@ func runBootstrapApp(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintln(stderr, "idp bootstrap app: --org must be a valid GitHub organization name")
 		return exitUsage
 	}
-	if *role != string(bootstrap.RoleReader) && *role != string(bootstrap.RoleWriter) {
-		fmt.Fprintln(stderr, "idp bootstrap app: --role must be reader or writer")
+	if r := bootstrap.AppRole(*role); r != bootstrap.RoleReader && r != bootstrap.RoleWriter && r != bootstrap.RoleBot {
+		fmt.Fprintln(stderr, "idp bootstrap app: --role must be reader, writer or bot")
 		return exitUsage
 	}
 	if !isLoopback(*listen) {
@@ -246,6 +267,6 @@ func runBootstrapApp(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(stderr, err)
 	}
 	fmt.Fprintf(stdout, "Created %s (id %d). Credentials in %s\n", creds.Slug, creds.ID, dir)
-	fmt.Fprintf(stdout, "Now install it on %s with access to All repositories: https://github.com/apps/%s/installations/new\n", *org, creds.Slug)
+	fmt.Fprintf(stdout, "Now install it on %s. %s https://github.com/apps/%s/installations/new\n", *org, installAdvice(flow.Role), creds.Slug)
 	return exitOK
 }
