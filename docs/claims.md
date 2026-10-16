@@ -81,6 +81,7 @@ github:
 
 A Component renders:
 - a public repository (auto-init, delete branch on merge, vulnerability alerts on);
+- the repository's topics, from `github.topics`. Removing the last topic deletes the topics resource, because the GitHub provider clears topics only when that resource is destroyed. That reconcile waits for approval in `idp-approval`, like every delete;
 - `maintain` access for the owner team;
 - a default-branch ruleset that requires PRs, blocks force pushes and deletion, and lets only the writer App bypass;
 - one environment per entry, each deploying only from `main`. Protected environments require the owner team.

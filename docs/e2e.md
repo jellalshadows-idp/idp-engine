@@ -8,21 +8,21 @@ Before step 1 it checks that the approver token can still read the runs of `idp-
 
 1. Pins the four caller workflows of `idp-claims-e2e` to the commit under test (a PR, when they differ). That PR must plan `No infrastructure changes.`: anything else means claims the platform has not applied are on `main`.
 2. Creates `e2e-r<run>-team` and `e2e-r<run>-app` through a PR, merges it after `idp-gate`, waits for the automatic reconcile, and checks the repository, its active `idp-default-branch` ruleset, the team, its memberships, its `maintain` (not `admin`) grant on the repository, and the environment. The component's files are checked from Phase 4, when component templates exist.
-3. Updates the description and removes every topic.
+3. Updates the description and removes every topic. Its plan deletes the topics resource, because the GitHub provider clears topics only when that resource is destroyed. The harness requires that to be the only delete, and approves it under the same checks as step 6.
 4. Changes only the case of a member login and expects `No infrastructure changes.`.
 5. Runs the drift check and expects no drift issue.
 6. Deletes the claims through a PR, approves that reconcile's `idp-approval` deployment, and checks the repository and team are gone.
 7. Runs the drift check again.
 
-Only steps 6 and the cleanup approve anything, and only the reconcile of their own merge commit. A reconcile of steps 1 to 4 that waits for `idp-approval` is rejected: nothing is applied, the queue frees, and the step fails.
+Only steps 3 and 6 and the cleanup approve anything, and only the reconcile of their own merge commit, so a run has two approvals: the topics delete and the final delete. A reconcile of steps 1, 2 and 4 that waits for `idp-approval` is rejected: nothing is applied, the queue frees, and the step fails.
 
 The harness trusts what it approves only as far as it checked it:
 
 - The plan comment must be the bot's own: a comment anyone else edited is refused, as the gate refuses it ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)).
-- The comment's fingerprint must be for the PR's head, and a delete's fingerprint may destroy only `e2e-r<run>-*` resources.
+- The comment's fingerprint must be for the PR's head, and a delete's fingerprint may destroy only `e2e-r<run>-*` resources. The update's fingerprint must destroy exactly the component's topics resource and nothing else.
 - Every merge is pinned to that head: GitHub refuses it if someone pushed to the branch.
-- Step 6 starts only from the `main` its last merge left, which reconciled and then showed no drift.
-- After a delete merges, its merge commit's first parent must be the `main` head the PR branched from. Otherwise someone else's commit reconciles with it: the harness rejects that reconcile if it waits for approval, and fails.
+- Steps 3 and 6 start only from the `main` their last merge left, which reconciled and then showed no drift.
+- After the update or a delete merges, its merge commit's first parent must be the `main` head the PR branched from. Otherwise someone else's commit reconciles with it: the harness rejects that reconcile if it waits for approval, and fails.
 
 Each PR branch `e2e/<run>/<step>` is deleted by the harness right after its merge. After a failure, the harness closes the PRs it opened and did not merge; their branches stay as evidence.
 
