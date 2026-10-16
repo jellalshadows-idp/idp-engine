@@ -215,7 +215,7 @@ func (s *Scenario) pin(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.waitReconcile(ctx, sha, rejectApproval)
+	_, err = s.waitReconcile(ctx, sha, rejectApproval, "")
 	return err
 }
 
@@ -234,10 +234,54 @@ func (s *Scenario) create(ctx context.Context) error {
 func (s *Scenario) update(ctx context.Context) error {
 	n := s.names
 	put := map[string][]byte{n.ComponentPath(): ComponentClaim(n.Component, "End-to-end harness repository, updated", n.Group, nil)}
-	if err := s.change(ctx, "update", "feat: update "+n.Component+" and remove its topics", put); err != nil {
+	if err := s.removeTopics(ctx, "feat: update "+n.Component+" and remove its topics", put); err != nil {
 		return err
 	}
 	return s.assertResources(ctx, "End-to-end harness repository, updated", nil)
+}
+
+// removeTopics opens a pull request that removes the component's last topics.
+// The provider clears topics only when their resource is destroyed, so its plan
+// must delete exactly that resource and the reconcile waits for approval. Like
+// deleteClaims, it starts only from the main the harness's last merge left,
+// approves only the reconcile of its own merge, and approves nothing when main
+// moved while the PR was open.
+func (s *Scenario) removeTopics(ctx context.Context, title string, put map[string][]byte) error {
+	base, err := s.baseOfLastMerge(ctx)
+	if err != nil {
+		return err
+	}
+	pr, err := s.openPRFrom(ctx, base, "update", title, put, nil)
+	if err != nil {
+		return err
+	}
+	comment, err := s.waitChecks(ctx, pr)
+	if err != nil {
+		return err
+	}
+	fp, err := fingerprintOf(comment, pr)
+	if err != nil {
+		return err
+	}
+	want := []string{"github: delete module.component_" + s.names.Component + ".github_repository_topics.this[0]"}
+	if got := fp.Destructive(); !strings.Contains(comment, warning) || !slices.Equal(got, want) {
+		return fmt.Errorf("the update plan must destroy exactly %v, got %v", want, got)
+	}
+	sha, err := s.merge(ctx, pr, title)
+	if err != nil {
+		return err
+	}
+	if err := s.requireParentIsBase(ctx, sha, pr); err != nil {
+		return err
+	}
+	jobs, err := s.waitReconcile(ctx, sha, requireApproval, "remove the topics of "+s.names.Component)
+	if err != nil {
+		return err
+	}
+	if jobs["reconcile / apply-github"] != "success" {
+		return fmt.Errorf("apply-github: %s", jobs["reconcile / apply-github"])
+	}
+	return nil
 }
 
 func (s *Scenario) caseOnly(ctx context.Context) error {
@@ -259,7 +303,7 @@ func (s *Scenario) caseOnly(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.waitReconcile(ctx, sha, rejectApproval)
+	_, err = s.waitReconcile(ctx, sha, rejectApproval, "")
 	return err
 }
 
@@ -321,14 +365,15 @@ func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup boo
 	if err := s.names.guard(); err != nil {
 		return err
 	}
-	base, err := s.F.HeadSHA(ctx, "main")
+	var base string
+	var err error
+	if cleanup {
+		base, err = s.F.HeadSHA(ctx, "main")
+	} else {
+		base, err = s.baseOfLastMerge(ctx)
+	}
 	if err != nil {
 		return err
-	}
-	// The last merge reconciled and a drift run then found nothing to change, so
-	// a delete from that main can destroy only this run's resources.
-	if !cleanup && base != s.lastMerge {
-		return fmt.Errorf("main moved since the harness's last merge (now %s, expected %s): someone changed the claims repo during the run; see docs/e2e.md", short(base), short(s.lastMerge))
 	}
 	title := "feat: delete the e2e harness claims " + s.names.Component
 	pr, err := s.openPRFrom(ctx, base, "delete", title, nil, paths)
@@ -349,23 +394,14 @@ func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup boo
 	if err != nil {
 		return err
 	}
-	parent, err := s.F.Parent(ctx, sha)
-	if err != nil {
+	if err := s.requireParentIsBase(ctx, sha, pr); err != nil {
 		return err
-	}
-	if parent != pr.BaseSHA {
-		// Someone else's commit reconciles with this merge: its plan is not the
-		// one the harness checked, so a wait for approval is rejected.
-		if _, err := s.waitReconcile(ctx, sha, rejectApproval); err != nil {
-			s.logf("e2e: the reconcile of %s: %v", short(sha), err)
-		}
-		return fmt.Errorf("main moved while PR #%d was open: nothing was approved", pr.Number)
 	}
 	mode := requireApproval
 	if cleanup {
 		mode = allowApproval
 	}
-	if _, err := s.waitReconcile(ctx, sha, mode); err != nil {
+	if _, err := s.waitReconcile(ctx, sha, mode, "delete "+s.names.Component+" and "+s.names.Group); err != nil {
 		return err
 	}
 	for _, p := range []string{s.repoPath(), s.teamPath()} {
@@ -381,19 +417,62 @@ func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup boo
 	return nil
 }
 
+// baseOfLastMerge returns the main head a destructive step may start from: the
+// merge the harness made last. The last merge reconciled and a drift run then
+// found nothing to change, so a destructive plan from that main can touch only
+// this run's resources.
+func (s *Scenario) baseOfLastMerge(ctx context.Context) (string, error) {
+	base, err := s.F.HeadSHA(ctx, "main")
+	if err != nil {
+		return "", err
+	}
+	if base != s.lastMerge {
+		return "", fmt.Errorf("main moved since the harness's last merge (now %s, expected %s): someone changed the claims repo during the run; see docs/e2e.md", short(base), short(s.lastMerge))
+	}
+	return base, nil
+}
+
+// requireParentIsBase checks the merge commit sits directly on the main the
+// plan was made from. If not, someone else's commit reconciles with this merge:
+// its plan is not the one the harness checked, so a wait for approval is
+// rejected and the step fails.
+func (s *Scenario) requireParentIsBase(ctx context.Context, sha string, pr PR) error {
+	parent, err := s.F.Parent(ctx, sha)
+	if err != nil {
+		return err
+	}
+	if parent == pr.BaseSHA {
+		return nil
+	}
+	if _, err := s.waitReconcile(ctx, sha, rejectApproval, ""); err != nil {
+		s.logf("e2e: the reconcile of %s: %v", short(sha), err)
+	}
+	return fmt.Errorf("main moved while PR #%d was open: nothing was approved", pr.Number)
+}
+
+// fingerprintOf returns the fingerprint the plan comment carries, which must
+// have been planned for the PR's head.
+func fingerprintOf(comment string, pr PR) (plan.Fingerprint, error) {
+	head, fp, ok, err := plan.DecodeMarker(comment)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("the plan comment carries no fingerprint")
+	}
+	if head != pr.HeadSHA {
+		return nil, fmt.Errorf("the fingerprint on PR #%d was planned for %s, not its head %s", pr.Number, short(head), short(pr.HeadSHA))
+	}
+	return fp, nil
+}
+
 // destroysOnlyOwnNames checks the plan comment's fingerprint was planned for
 // the PR's head, and that every delete or replace in it (complete even when
 // the rendered rows are truncated) belongs to one of this run's modules.
 func (s *Scenario) destroysOnlyOwnNames(comment string, pr PR) error {
-	head, fp, ok, err := plan.DecodeMarker(comment)
+	fp, err := fingerprintOf(comment, pr)
 	if err != nil {
 		return err
-	}
-	if !ok {
-		return errors.New("the plan comment carries no fingerprint")
-	}
-	if head != pr.HeadSHA {
-		return fmt.Errorf("the fingerprint on PR #%d was planned for %s, not its head %s", pr.Number, short(head), short(pr.HeadSHA))
 	}
 	own := []string{"module.group_" + s.names.Group + ".", "module.component_" + s.names.Component + "."}
 	for _, entry := range fp.Destructive() {
@@ -449,7 +528,7 @@ func (s *Scenario) change(ctx context.Context, slug, title string, put map[strin
 	if err != nil {
 		return err
 	}
-	jobs, err := s.waitReconcile(ctx, sha, rejectApproval)
+	jobs, err := s.waitReconcile(ctx, sha, rejectApproval, "")
 	if err != nil {
 		return err
 	}
@@ -560,9 +639,10 @@ func (s *Scenario) waitChecks(ctx context.Context, pr PR) (string, error) {
 
 // waitReconcile waits for the reconcile of a merge commit and returns its job
 // conclusions. mode says what to do when it waits on idp-approval (Review
-// Focus 2): reject it, require and approve it, or approve it if it asks. Only
-// the run of this merge commit is ever approved or rejected.
-func (s *Scenario) waitReconcile(ctx context.Context, sha string, mode approval) (map[string]string, error) {
+// Focus 2): reject it, require and approve it, or approve it if it asks; approves
+// completes the approval comment. Only the run of this merge commit is ever
+// approved or rejected.
+func (s *Scenario) waitReconcile(ctx context.Context, sha string, mode approval, approves string) (map[string]string, error) {
 	var run Run
 	approved := false
 	err := poll(ctx, s.Clock, s.Timeouts.Interval, s.Timeouts.Reconcile, "the reconcile of "+short(sha), func() (bool, error) {
@@ -582,7 +662,7 @@ func (s *Scenario) waitReconcile(ctx context.Context, sha string, mode approval)
 				}
 				return false, fmt.Errorf("reconcile run %d unexpectedly waits for approval; the harness rejected it", run.ID)
 			}
-			if err := s.F.Approve(ctx, run.ID, env, "idp end-to-end harness run "+s.Run+": delete "+s.names.Component+" and "+s.names.Group); err != nil {
+			if err := s.F.Approve(ctx, run.ID, env, "idp end-to-end harness run "+s.Run+": "+approves); err != nil {
 				return false, err
 			}
 			approved = true

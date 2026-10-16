@@ -49,6 +49,12 @@ func world(t *testing.T) (*fakeForge, *Scenario) {
 	f.effects["update"] = func(f *fakeForge) {
 		f.paths[repo] = map[string]any{"visibility": "public", "description": "End-to-end harness repository, updated", "topics": []string{}}
 	}
+	f.comments["update"] = "<code>github</code>: +0 ~1 -1 ±0\n> [!WARNING]"
+	f.fps["update"] = plan.Fingerprint{"github": {
+		{Address: "module.component_e2e-r42-app.github_repository.this", Action: plan.Update},
+		{Address: "module.component_e2e-r42-app.github_repository_topics.this[0]", Action: plan.Delete},
+	}}
+	f.approval["update"] = true
 	f.comments["case"] = "No infrastructure changes."
 	f.comments["pin"] = "No infrastructure changes."
 	f.comments["delete"] = "<code>github</code>: +0 ~0 -8 ±0\n> [!WARNING]"
@@ -79,7 +85,7 @@ func TestScenarioPassesAgainstWorkingPipelines(t *testing.T) {
 	}
 	want := []string{
 		"branch e2e/42/create", "pr create", "merge create", "delete branch e2e/42/create",
-		"branch e2e/42/update", "pr update", "merge update", "delete branch e2e/42/update",
+		"branch e2e/42/update", "pr update", "merge update", "delete branch e2e/42/update", "approve 502",
 		"branch e2e/42/case", "pr case", "merge case", "delete branch e2e/42/case",
 		"drift",
 		"branch e2e/42/delete", "pr delete", "merge delete", "delete branch e2e/42/delete", "approve 504",
@@ -106,16 +112,16 @@ func TestScenarioPinsTheCallersFirst(t *testing.T) {
 
 func TestApproveOnlyTheDeleteRun(t *testing.T) {
 	f, s := world(t)
-	f.approval["update"] = true
+	f.approval["case"] = true
 	err := s.Execute(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "unexpectedly waits for approval; the harness rejected it") {
 		t.Fatalf("err = %v", err)
 	}
-	if !f.rejected[502] || f.approved[502] {
-		t.Errorf("the update's reconcile must be rejected, never approved (rejected %v, approved %v)", f.rejected, f.approved)
+	if !f.rejected[503] || f.approved[503] {
+		t.Errorf("the case-only edit's reconcile must be rejected, never approved (rejected %v, approved %v)", f.rejected, f.approved)
 	}
-	if len(f.approved) != 1 {
-		t.Errorf("approved %v: only the cleanup's delete run", f.approved)
+	if len(f.approved) != 2 || !f.approved[502] || !f.approved[504] {
+		t.Errorf("approved %v: only the update's topics delete and the cleanup's delete run", f.approved)
 	}
 }
 
@@ -337,8 +343,8 @@ func TestDeleteRefusesWhenMainMovedSinceTheLastMerge(t *testing.T) {
 	if slices.Contains(f.log, "pr delete") {
 		t.Errorf("steps = %v: no delete PR may be opened on a main the harness did not verify", f.log)
 	}
-	if len(f.approved) != 0 {
-		t.Errorf("approved %v: nothing may be approved", f.approved)
+	if f.approved[504] || len(f.approved) != 1 {
+		t.Errorf("approved %v: only the update's topics delete may be approved", f.approved)
 	}
 }
 
@@ -349,7 +355,7 @@ func TestDeleteRejectsWhenMainMovedWhileItsPRWasOpen(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "delete: main moved while PR #4 was open: nothing was approved") {
 		t.Fatalf("err = %v", err)
 	}
-	if !f.rejected[504] || len(f.approved) != 0 {
+	if !f.rejected[504] || f.approved[504] {
 		t.Errorf("the delete's reconcile must be rejected, never approved (rejected %v, approved %v)", f.rejected, f.approved)
 	}
 }
@@ -499,5 +505,91 @@ func TestScenarioRequiresTheTeamToMaintainTheRepository(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "create: team e2e-r42-team must maintain e2e-r42-app without admin") {
 			t.Errorf("repos %v: err = %v", repos, err)
 		}
+	}
+}
+
+func TestUpdateApprovesExactlyTheTopicsDelete(t *testing.T) {
+	f, s := world(t)
+	if err := s.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.approved) != 2 || !f.approved[502] || !f.approved[504] {
+		t.Errorf("approved %v: want the update's and the delete's runs", f.approved)
+	}
+	if got := f.notes[502]; got != "idp end-to-end harness run 42: remove the topics of e2e-r42-app" {
+		t.Errorf("update approval comment = %q", got)
+	}
+	if got := f.notes[504]; got != "idp end-to-end harness run 42: delete e2e-r42-app and e2e-r42-team" {
+		t.Errorf("delete approval comment = %q", got)
+	}
+}
+
+func TestUpdateRefusesAPlanThatDestroysAnythingElse(t *testing.T) {
+	f, s := world(t)
+	f.fps["update"] = plan.Fingerprint{"github": {
+		{Address: "module.component_e2e-r42-app.github_repository.this", Action: plan.Replace},
+		{Address: "module.component_e2e-r42-app.github_repository_topics.this[0]", Action: plan.Delete},
+	}}
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update: the update plan must destroy exactly [github: delete module.component_e2e-r42-app.github_repository_topics.this[0]], got [github: delete module.component_e2e-r42-app.github_repository_topics.this[0] github: replace module.component_e2e-r42-app.github_repository.this]") {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(f.log, "merge update") || strings.Contains(f.notes[502], "topics") {
+		t.Errorf("steps = %v, approvals %v: the update must be neither merged nor approved", f.log, f.notes)
+	}
+}
+
+func TestUpdateRefusesAPlanThatIsNotDestructive(t *testing.T) {
+	f, s := world(t)
+	f.comments["update"] = "<code>github</code>: +0 ~1 -0 ±0"
+	f.fps["update"] = nil
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update: the update plan must destroy exactly [") || !strings.Contains(err.Error(), "], got []") {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(f.log, "merge update") {
+		t.Error("an update that does not delete the topics must not be merged")
+	}
+}
+
+func TestUpdateRequiresTheFingerprintOfThePRHead(t *testing.T) {
+	f, s := world(t)
+	marker, err := plan.EncodeMarker(strings.Repeat("a", 40), plan.Fingerprint{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.raw["update"] = planMarker + "\n<code>github</code>: +0 ~1 -1 ±0\n> [!WARNING]\n" + marker
+	err = s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update: PR #2 has no plan comment for its head") {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(f.log, "merge update") {
+		t.Error("a PR whose plan is for another head must not be merged")
+	}
+}
+
+func TestUpdateRefusesWhenMainMovedSinceTheLastMerge(t *testing.T) {
+	f, s := world(t)
+	create := f.effects["create"]
+	f.effects["create"] = func(f *fakeForge) { create(f); f.head++ } // someone else pushes to main after the create merge
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update: main moved since the harness's last merge (now ") ||
+		!strings.Contains(err.Error(), "someone changed the claims repo during the run; see docs/e2e.md") {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(f.log, "pr update") || f.approved[502] {
+		t.Errorf("steps = %v, approved %v: no update PR may be opened on a main the harness did not verify", f.log, f.approved)
+	}
+}
+
+func TestUpdateRejectsWhenMainMovedWhileItsPRWasOpen(t *testing.T) {
+	f, s := world(t)
+	f.parent["update"] = fakeSHA(99) // someone else's commit landed on main before the update merged
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update: main moved while PR #2 was open: nothing was approved") {
+		t.Fatalf("err = %v", err)
+	}
+	if !f.rejected[502] || f.approved[502] {
+		t.Errorf("the update's reconcile must be rejected, never approved (rejected %v, approved %v)", f.rejected, f.approved)
 	}
 }
