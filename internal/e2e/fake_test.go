@@ -26,6 +26,7 @@ type fakeForge struct {
 	effects  map[string]func(*fakeForge)  // slug → what its reconcile does
 	approval map[string]bool              // slug → its reconcile waits for idp-approval
 	approved map[int64]bool
+	notes    map[int64]string // reconcile run → the comment its approval carried
 	rejected map[int64]bool
 	raw      map[string]string           // slug → whole plan comment, verbatim
 	fps      map[string]plan.Fingerprint // slug → fingerprint its plan comment carries
@@ -45,7 +46,7 @@ func newFakeForge() *fakeForge {
 		main: map[string][]byte{}, branches: map[string]map[string][]byte{}, prs: map[int]string{},
 		merged: map[string]string{}, paths: map[string]any{}, issues: map[string]int{},
 		gate: map[string]string{}, comments: map[string]string{}, effects: map[string]func(*fakeForge){},
-		approval: map[string]bool{}, approved: map[int64]bool{},
+		approval: map[string]bool{}, approved: map[int64]bool{}, notes: map[int64]string{},
 		rejected: map[int64]bool{}, raw: map[string]string{}, fps: map[string]plan.Fingerprint{}, failRun: map[string]bool{},
 		parent: map[string]string{},
 	}
@@ -199,11 +200,12 @@ func (f *fakeForge) PendingApproval(_ context.Context, id int64) (int64, bool, e
 	return 77, f.approval[f.merged[fakeSHA(int(id-500))]] && !f.approved[id], nil
 }
 
-func (f *fakeForge) Approve(_ context.Context, id, env int64, _ string) error {
+func (f *fakeForge) Approve(_ context.Context, id, env int64, comment string) error {
 	if env != 77 {
 		return errors.New("wrong environment")
 	}
 	f.approved[id] = true
+	f.notes[id] = comment
 	f.log = append(f.log, fmt.Sprintf("approve %d", id))
 	return nil
 }

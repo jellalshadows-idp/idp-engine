@@ -13,7 +13,7 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
 - `cmd/idp-e2e` (over `internal/e2e`, not part of the released CLI) drives `idp-claims-e2e` through the real pipelines at the engine commit under test:
   1. pins the four caller workflows to that commit, through a PR;
   2. creates a Group `e2e-r<run>-team` and a Component `e2e-r<run>-app` through a PR, checks the plan comment, merges, waits for the automatic reconcile and asserts the repository, team, memberships and environment through the API;
-  3. updates the description and removes every topic, and asserts them;
+  3. updates the description and removes every topic, approves the update's reconcile for exactly the delete of the topics resource, and asserts them; *(Amended in Phase 1d execution, 2026-10-16.)*
   4. changes only the case of a member login, and expects `No infrastructure changes.`;
   5. runs the drift check and expects no drift issue;
   6. deletes the claims through a PR, expects the destructive warning, approves the `idp-approval` deployment of that reconcile run only, and asserts the repository and team are gone;

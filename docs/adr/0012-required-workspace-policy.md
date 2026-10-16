@@ -24,7 +24,7 @@ Workspace claims carry a **required** `policy` field, with no default. Validatio
 
 - `idp plan-summary` enforces the table on `tofu show -json` (§6.1).
 - On deletion of the claim file, the policy comes from the last render in `wet`: `full-control` plans a destroy and requires approval; `apply` fails the PR, so deleting takes two PRs (change the policy, then delete the claim); `observe` removes its render from `wet` with no destroy (§6.3).
-- Any delete or replace goes through `idp-approval` (§6.3), and `observe` Workspaces are never applied: a successful plan counts as success (§6.2).
+- Any delete or replace goes through `idp-approval` (§6.3), and `observe` Workspaces are never applied: a successful plan counts as success (§6.2). *(Amended in Phase 1d execution, 2026-10-16.)* Removing a component's last topic is such a delete, because the GitHub provider clears topics only when their resource is destroyed.
 
 ## Consequences
 
