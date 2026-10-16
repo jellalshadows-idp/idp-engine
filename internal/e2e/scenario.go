@@ -265,7 +265,7 @@ func (s *Scenario) removeTopics(ctx context.Context, title string, put map[strin
 	}
 	want := []string{"github: delete module.component_" + s.names.Component + ".github_repository_topics.this[0]"}
 	if got := fp.Destructive(); !strings.Contains(comment, warning) || !slices.Equal(got, want) {
-		return fmt.Errorf("the update plan must destroy exactly %v, got %v", want, got)
+		return fmt.Errorf("the update plan must destroy exactly [%s], got [%s]", strings.Join(want, "; "), strings.Join(got, "; "))
 	}
 	sha, err := s.merge(ctx, pr, title)
 	if err != nil {
@@ -418,9 +418,10 @@ func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup boo
 }
 
 // baseOfLastMerge returns the main head a destructive step may start from: the
-// merge the harness made last. The last merge reconciled and a drift run then
-// found nothing to change, so a destructive plan from that main can touch only
-// this run's resources.
+// merge the harness made last, which reconciled (the update starts from the
+// create merge; the delete from the main the drift step checked). A main that
+// moved is refused. What gets approved is bounded by the check of the plan at
+// the PR's head, which allows only this run's destroys.
 func (s *Scenario) baseOfLastMerge(ctx context.Context) (string, error) {
 	base, err := s.F.HeadSHA(ctx, "main")
 	if err != nil {

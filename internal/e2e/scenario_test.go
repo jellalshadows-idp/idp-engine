@@ -110,7 +110,7 @@ func TestScenarioPinsTheCallersFirst(t *testing.T) {
 	}
 }
 
-func TestApproveOnlyTheDeleteRun(t *testing.T) {
+func TestApproveOnlyTheExpectedRuns(t *testing.T) {
 	f, s := world(t)
 	f.approval["case"] = true
 	err := s.Execute(context.Background())
@@ -531,9 +531,10 @@ func TestUpdateRefusesAPlanThatDestroysAnythingElse(t *testing.T) {
 		{Address: "module.component_e2e-r42-app.github_repository_topics.this[0]", Action: plan.Delete},
 	}}
 	err := s.Execute(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "update: the update plan must destroy exactly [github: delete module.component_e2e-r42-app.github_repository_topics.this[0]], got [github: delete module.component_e2e-r42-app.github_repository_topics.this[0] github: replace module.component_e2e-r42-app.github_repository.this]") {
+	if err == nil || !strings.Contains(err.Error(), "update: the update plan must destroy exactly [github: delete module.component_e2e-r42-app.github_repository_topics.this[0]], got [github: delete module.component_e2e-r42-app.github_repository_topics.this[0]; github: replace module.component_e2e-r42-app.github_repository.this]") {
 		t.Fatalf("err = %v", err)
 	}
+	// Run 502 is reused by the cleanup's delete, so a topics note there would mean the update was approved.
 	if slices.Contains(f.log, "merge update") || strings.Contains(f.notes[502], "topics") {
 		t.Errorf("steps = %v, approvals %v: the update must be neither merged nor approved", f.log, f.notes)
 	}
@@ -591,5 +592,26 @@ func TestUpdateRejectsWhenMainMovedWhileItsPRWasOpen(t *testing.T) {
 	}
 	if !f.rejected[502] || f.approved[502] {
 		t.Errorf("the update's reconcile must be rejected, never approved (rejected %v, approved %v)", f.rejected, f.approved)
+	}
+}
+
+func TestUpdateRequiresTheDestructiveWarning(t *testing.T) {
+	f, s := world(t)
+	f.comments["update"] = "<code>github</code>: +0 ~1 -1 ±0" // the right fingerprint, but no warning
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update: the update plan must destroy exactly [") {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(f.log, "merge update") || strings.Contains(f.notes[502], "topics") {
+		t.Errorf("steps = %v, approvals %v: the update must be neither merged nor approved", f.log, f.notes)
+	}
+}
+
+func TestUpdateRequiresTheReconcileToAskForApproval(t *testing.T) {
+	f, s := world(t)
+	f.approval["update"] = false
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update: reconcile run 502 finished without asking for approval") {
+		t.Fatalf("err = %v", err)
 	}
 }
