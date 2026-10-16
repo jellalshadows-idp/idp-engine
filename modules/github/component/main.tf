@@ -8,8 +8,14 @@ resource "github_repository" "this" {
 }
 
 # Topics have their own resource: github_repository's topics is Optional and
-# Computed, so an empty list would leave the old topics in place.
+# Computed, so an empty list would leave the old topics in place. This resource
+# does not clear them either: its create and update skip the API call for an
+# empty set, and only a destroy clears the topics. So it exists only while the
+# claim has topics, and removing the last topic is a delete, which the gate
+# sends to approval.
 resource "github_repository_topics" "this" {
+  count = length(var.topics) > 0 ? 1 : 0
+
   repository = github_repository.this.name
   topics     = var.topics
 }

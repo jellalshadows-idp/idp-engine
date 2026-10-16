@@ -27,8 +27,12 @@ run "repository_is_public_and_follows_the_claim" {
     error_message = "archive_on_destroy must follow the platform config"
   }
   assert {
-    condition     = tolist(github_repository_topics.this.topics) == tolist(["java", "orders"])
+    condition     = tolist(github_repository_topics.this[0].topics) == tolist(["java", "orders"])
     error_message = "topics must follow the claim, through github_repository_topics"
+  }
+  assert {
+    condition     = github_repository_topics.this[0].repository == "api"
+    error_message = "the topics resource must target the component's repository"
   }
 }
 
@@ -40,12 +44,8 @@ run "topics_can_be_cleared" {
   }
 
   assert {
-    condition     = length(github_repository_topics.this.topics) == 0
-    error_message = "an empty topic list must be sent as [], which clears the topics; github_repository's Optional+Computed topics would keep the old ones (phase 1a minor #3)"
-  }
-  assert {
-    condition     = github_repository_topics.this.repository == "api"
-    error_message = "the topics resource must target the component's repository"
+    condition     = length(github_repository_topics.this) == 0
+    error_message = "an empty topic list must remove the topics resource: the provider skips the API call for an empty set, and only a destroy clears the topics"
   }
 }
 
