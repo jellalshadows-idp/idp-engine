@@ -21,7 +21,7 @@ The harness trusts what it approves only as far as it checked it:
 - The plan comment must be the bot's own: a comment anyone else edited is refused, as the gate refuses it ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)).
 - The comment's fingerprint must be for the PR's head, and a delete's fingerprint may destroy only `e2e-r<run>-*` resources. The update's fingerprint must destroy exactly the component's topics resource and nothing else.
 - Every merge is pinned to that head: GitHub refuses it if someone pushed to the branch.
-- Steps 3 and 6 start only from the `main` their last merge left, which reconciled and then showed no drift.
+- Step 3 (the update) starts only from the `main` the create merge left, which reconciled with `apply-github` successful. Step 6 (the delete) starts only from the `main` its last merge left, which reconciled and then showed no drift. In both, the exact destroy-set check at the PR head bounds what gets approved.
 - After the update or a delete merges, its merge commit's first parent must be the `main` head the PR branched from. Otherwise someone else's commit reconciles with it: the harness rejects that reconcile if it waits for approval, and fails.
 
 Each PR branch `e2e/<run>/<step>` is deleted by the harness right after its merge. After a failure, the harness closes the PRs it opened and did not merge; their branches stay as evidence.
