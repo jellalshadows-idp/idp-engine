@@ -28,7 +28,7 @@ CI evidence on idp-engine, all green (`go`, `workflows`, `modules (github/compon
 - run 38784074334 at `8e63304`, after the final fix wave;
 - run 38821994114 at `fbbb471`, after the account swap, the last commit before the merge.
 
-For PR #9 the ledger records "CI green at `0947f0a`" without a run id.
+PR #9 (the topics fix) passed CI at `0947f0a` (run 38833958777) before its merge.
 
 Live harness evidence. Run 1 failed at the update step and exposed the topics defect; after the fix, run 2 (dispatched) and two nightly runs passed (see "The live harness runs").
 
@@ -120,7 +120,7 @@ Repository under test: `jellalshadows-idp/idp-claims-e2e`. The harness workflow 
 
 | Run | Trigger | Result | PRs | Duration |
 |---|---|---|---|---|
-| [38827460953](https://github.com/jellalshadows-idp/idp-engine/actions/runs/38827460953) | dispatch | **Failed** at the update step; cleanup worked | #10 to #13 | not recorded |
+| [38827460953](https://github.com/jellalshadows-idp/idp-engine/actions/runs/38827460953) | dispatch | **Failed** at the update step; cleanup worked | #10 to #13 | about 17 min (00:05 to 00:22 UTC, 2026-10-16) |
 | [38834099590](https://github.com/jellalshadows-idp/idp-engine/actions/runs/38834099590) | dispatch | Passed | #14 to #18 | about 24 min (01:15 to 01:38 UTC, 2026-10-16) |
 | [38874029988](https://github.com/jellalshadows-idp/idp-engine/actions/runs/38874029988) | nightly | Passed | #19 to #22 | about 20 min (08:29 to 08:49 UTC, 2026-10-16) |
 | [39015815202](https://github.com/jellalshadows-idp/idp-engine/actions/runs/39015815202) | nightly | Passed | #23 to #26 | about 20 min (08:01 to 08:21 UTC, 2026-10-17) |
@@ -131,9 +131,9 @@ Repository under test: `jellalshadows-idp/idp-claims-e2e`. The harness workflow 
 
 *Evidence for the fix.* The module test now asserts `github_repository_topics.this[0].topics` for a non-empty list and `length(github_repository_topics.this) == 0` for an empty one; `tofu test` passed 9/9. The harness update step is covered by `TestUpdateApprovesExactlyTheTopicsDelete`, `TestUpdateRefusesAPlanThatDestroysAnythingElse`, `TestUpdateRefusesAPlanThatIsNotDestructive`, `TestUpdateRequiresTheFingerprintOfThePRHead`, `TestUpdateRefusesWhenMainMovedSinceTheLastMerge`, `TestUpdateRejectsWhenMainMovedWhileItsPRWasOpen`, and in round 1 `TestUpdateRequiresTheDestructiveWarning` and `TestUpdateRequiresTheReconcileToAskForApproval`.
 
-**Runs 2 to 4.** Each run did the same sequence: pin the callers (PR #14 in run 2; on the nightlies the pin was a no-op, "the callers already pin 344f55d"), create (`+` the Group and the Component, resources match the claims), update and remove the topics (approved reconcile), change only the case of a member login (no drift), delete the claims (approved reconcile, resources gone), and a final drift run with no drift. Two approvals per run. The approved reconcile runs were 38835074665 and 38835989021 (run 2), 38874834589 and 38875925001 (run 3), and 39016273879 and 39016856478 (run 4).
+**Runs 2 to 4.** Each run did the same sequence: pin the callers (PR #14 in run 2; on the nightlies the pin was a no-op, "the callers already pin 344f55d"), create the Group and the Component (resources match the claims), update and remove the topics (approved reconcile), change only the case of a member login (it planned no change), a drift run with no drift, delete the claims (approved reconcile, resources gone), and a final drift run with no drift. Two approvals per run. The approved reconcile runs were 38835074665 and 38835989021 (run 2), 38874834589 and 38875925001 (run 3), and 39016273879 and 39016856478 (run 4).
 
-The schedule in `e2e.yaml` says 03:41 UTC, but GitHub started the nightly runs at about 08:00 to 08:30 UTC. That is GitHub's usual delay for scheduled runs; the ledger records the times and does not record a cause beyond that.
+The schedule in `e2e.yaml` says 03:41 UTC, but GitHub started the nightly runs at about 08:00 to 08:30 UTC. GitHub delays scheduled runs under load; the times above are the observed ones.
 
 ### Watch items from Task 11
 
@@ -242,6 +242,6 @@ The reasons below are the plan's ruling D-13 (the remainder is over-strict match
 
 ## Status
 
-**Phase 1d is complete.** The harness, the gate and topics hardening and the contract-test closures shipped, verified by green CI runs (38778842886, 38784074334, 38821994114), by live run 2 and by the two nightly runs (see "The live harness runs"). Every finding has a final disposition above.
+**Phase 1d is complete.** The harness, the gate and topics hardening and the contract-test closures shipped, verified by green CI runs (38778842886, 38784074334, 38821994114, and 38833958777 for PR #9), by live run 2 and by the two nightly runs (see "The live harness runs"). Every finding has a final disposition above.
 
 Next: Phase 1e (releases, Renovate, `v0.1.0`, onboarding `idp-claims`).
