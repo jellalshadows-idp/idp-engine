@@ -9,10 +9,14 @@ import (
 
 const e2ePath = ".github/workflows/e2e.yaml"
 
+// releasePRInput is the e2e.yaml input release.yaml fills with the release PR's
+// head commit (ADR-0028).
+const releasePRInput = "release-pr-sha"
+
 func TestE2EWorkflow(t *testing.T) {
 	w := loadWorkflow(t, e2ePath)
 	if got := w.triggerNames(); !slices.Equal(got, []string{"schedule", "workflow_dispatch"}) {
-		t.Errorf("triggers = %v, want schedule and workflow_dispatch (release PRs join in Phase 1e)", got)
+		t.Errorf("triggers = %v, want schedule and workflow_dispatch: release PRs reach the harness through a dispatch from release.yaml (ADR-0028)", got)
 	}
 	n, ok := w.trigger("schedule")
 	if !ok {
@@ -31,7 +35,7 @@ func TestE2EWorkflow(t *testing.T) {
 	if j.Environment != "idp-e2e" {
 		t.Errorf("environment = %q, want idp-e2e: the bot key and the approver token live only there (ADR-0027)", j.Environment)
 	}
-	wantPerms(t, "e2e", j.Permissions, map[string]string{"contents": "read"})
+	wantPerms(t, "e2e", j.Permissions, map[string]string{"contents": "read", "statuses": "write"})
 	// The harness's waits are bounded (DefaultTimeouts, about 300 minutes in
 	// the worst case), so the job must outlast them and the cleanup.
 	if j.TimeoutMinutes != 330 {
@@ -66,7 +70,7 @@ func TestE2EBuildsTheHarnessWithoutSecrets(t *testing.T) {
 }
 
 // e2eSecrets are the idp-e2e environment's secrets: only the harness step reads them.
-var e2eSecrets = []string{"secrets.IDP_BOT_PRIVATE_KEY", "secrets.IDP_E2E_APPROVER_TOKEN"}
+var e2eSecrets = []string{"IDP_BOT_PRIVATE_KEY", "IDP_E2E_APPROVER_TOKEN"}
 
 func TestE2EHarnessMintsTheBotToken(t *testing.T) {
 	j := mustJob(t, loadWorkflow(t, e2ePath), "e2e")
@@ -92,42 +96,12 @@ func TestE2EHarnessMintsTheBotToken(t *testing.T) {
 
 // TestE2ESecretsReachOnlyTheHarness: the bot key and the approver token reach
 // the harness step and nothing else. The config step only checks they are set,
-// and sees a boolean, never the value. Expression contexts are case-insensitive,
-// so the match is too.
+// and sees a boolean, never the value (secretReaders does not count that).
 func TestE2ESecretsReachOnlyTheHarness(t *testing.T) {
 	j := mustJob(t, loadWorkflow(t, e2ePath), "e2e")
-	refs := func(text string) []string {
-		var out []string
-		for _, s := range e2eSecrets {
-			if strings.Contains(strings.ToLower(text), strings.ToLower(s)) {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	for _, k := range slices.Sorted(maps.Keys(j.Env)) {
-		if r := refs(j.Env[k]); len(r) > 0 {
-			t.Errorf("job env %s reads %v: every step would see it; only the harness step may", k, r)
-		}
-	}
-	for _, s := range j.Steps {
-		if s.ID == "harness" {
-			continue
-		}
-		texts := map[string]string{"run": s.Run}
-		for k, v := range s.Env {
-			texts["env "+k] = v
-		}
-		for k, v := range s.With {
-			texts["with "+k] = v
-		}
-		for _, where := range slices.Sorted(maps.Keys(texts)) {
-			for _, r := range refs(texts[where]) {
-				if s.ID == "config" && texts[where] == "${{ "+r+" != '' }}" {
-					continue
-				}
-				t.Errorf("step %q %s reads %s: only the harness step may (the config step only as ${{ %s != '' }})", s.label(), where, r, r)
-			}
+	for _, secret := range e2eSecrets {
+		if got := secretReaders(j, secret); !slices.Equal(got, []string{"harness"}) {
+			t.Errorf("%s is read by %v, want only the harness step: a job env would show it to every step", secret, got)
 		}
 	}
 	_, c := mustStep(t, "e2e", j.Steps, "config")
@@ -135,4 +109,78 @@ func TestE2ESecretsReachOnlyTheHarness(t *testing.T) {
 		"BOT_KEY_SET":  "${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}",
 		"APPROVER_SET": "${{ secrets.IDP_E2E_APPROVER_TOKEN != '' }}",
 	})
+}
+
+func TestE2ETakesTheReleasePRHead(t *testing.T) {
+	n, ok := loadWorkflow(t, e2ePath).trigger("workflow_dispatch")
+	if !ok {
+		t.Fatal("no workflow_dispatch trigger")
+	}
+	var d struct {
+		Inputs map[string]struct {
+			Required bool   `yaml:"required"`
+			Type     string `yaml:"type"`
+			Default  string `yaml:"default"`
+		} `yaml:"inputs"`
+	}
+	if err := n.Decode(&d); err != nil {
+		t.Fatal(err)
+	}
+	in, ok := d.Inputs[releasePRInput]
+	if !ok || len(d.Inputs) != 1 || in.Required || in.Type != "string" || in.Default != "" {
+		t.Errorf("inputs = %+v, want exactly an optional string %s that defaults to empty, so the nightly and a plain dispatch report nothing", d.Inputs, releasePRInput)
+	}
+}
+
+func TestE2EReportsEveryOutcomeOnTheReleasePR(t *testing.T) {
+	j := mustJob(t, loadWorkflow(t, e2ePath), "e2e")
+	if len(j.Steps) < 3 || j.Steps[1].ID != "pending" {
+		t.Fatal("the step right after the guard must post pending on the release PR, before anything can fail")
+	}
+	// post is the gh call that sets the status: state is the -f state=... value,
+	// description the -f description=... value.
+	post := func(state, description string) []string {
+		return []string{
+			`gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$RELEASE_PR_SHA" -f ` + state + ` -f context=idp-e2e \`,
+			`-f description="` + description + `" \`,
+			`-f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null`,
+		}
+	}
+	statusEnv := map[string]string{"GH_TOKEN": "${{ github.token }}", "RELEASE_PR_SHA": "${{ inputs.release-pr-sha }}"}
+
+	p := j.Steps[1]
+	if p.If != "inputs.release-pr-sha != ''" {
+		t.Errorf("pending if = %q, want inputs.release-pr-sha != '': the nightly and a plain dispatch report nothing", p.If)
+	}
+	if !maps.Equal(map[string]string(p.Env), statusEnv) {
+		t.Errorf("pending env = %v, want %v", p.Env, statusEnv)
+	}
+	// The SHA check must stop the step: the input reaches an API path.
+	wantLines(t, "e2e pending", p.Run, []string{
+		`if ! [[ "$RELEASE_PR_SHA" =~ ^[0-9a-f]{40}$ ]]; then`,
+		`echo "::error::release-pr-sha must be a full 40-character commit SHA"`,
+		"exit 1",
+		"fi",
+	})
+	wantLines(t, "e2e pending", p.Run, post("state=pending", "the end-to-end harness is running on main"))
+
+	r := j.Steps[len(j.Steps)-1]
+	if r.ID != "result" {
+		t.Fatalf("the last step must post the result, got %q", r.label())
+	}
+	if r.If != "always() && steps.pending.outcome == 'success'" {
+		t.Errorf("result if = %q: a failure anywhere after pending, preflight included, must still post failure; a run that never posted pending posts nothing", r.If)
+	}
+	resultEnv := maps.Clone(statusEnv)
+	resultEnv["JOB_STATUS"] = "${{ job.status }}"
+	if !maps.Equal(map[string]string(r.Env), resultEnv) {
+		t.Errorf("result env = %v, want %v", r.Env, resultEnv)
+	}
+	wantLines(t, "e2e result", r.Run, append([]string{
+		"state=failure",
+		`if [ "$JOB_STATUS" = success ]; then state=success; fi`,
+	}, post(`state="$state"`, "the end-to-end harness on main: $JOB_STATUS")...))
+	if h, _ := mustStep(t, "e2e", j.Steps, "harness"); h >= len(j.Steps)-1 {
+		t.Error("the result step must come after the harness")
+	}
 }

@@ -1,12 +1,20 @@
 name: idp-e2e
 
 # End-to-end harness (spec §8.5, ADR-0027): drives idp-claims-e2e through the
-# real pipelines at this commit, nightly and on demand from main.
+# real pipelines at this commit, nightly and on demand from main. release.yaml
+# dispatches it for each release PR head (release-pr-sha), and the run reports
+# its result on that commit as the status idp-e2e (ADR-0028).
 
 on:
   schedule:
     - cron: '41 3 * * *'
   workflow_dispatch:
+    inputs:
+      release-pr-sha:
+        description: Head commit of an engine release PR. The run reports its result there as the commit status idp-e2e.
+        required: false
+        type: string
+        default: ''
 
 permissions: {}
 
@@ -28,6 +36,7 @@ jobs:
     environment: idp-e2e
     permissions:
       contents: read
+      statuses: write
     steps:
       - name: run once
         id: guard
@@ -36,6 +45,20 @@ jobs:
             echo "::error::re-running idp-e2e reuses its run id and collides with the first attempt's branches; dispatch a new run (docs/e2e.md)"
             exit 1
           fi
+      - name: report pending on the release PR
+        id: pending
+        if: inputs.release-pr-sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_SHA: ${{ inputs.release-pr-sha }}
+        run: |
+          if ! [[ "$RELEASE_PR_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::release-pr-sha must be a full 40-character commit SHA"
+            exit 1
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$RELEASE_PR_SHA" -f state=pending -f context=idp-e2e \
+            -f description="the end-to-end harness is running on main" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -72,3 +95,17 @@ jobs:
           E2E_APPROVER_TOKEN: ${{ secrets.IDP_E2E_APPROVER_TOKEN }}
         run: |
           "$RUNNER_TEMP/idp-e2e" --repo "$GITHUB_REPOSITORY_OWNER/idp-claims-e2e" --engine-sha "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
+      # Runs whenever pending was posted, whatever failed in between.
+      - name: report the result on the release PR
+        id: result
+        if: always() && steps.pending.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_SHA: ${{ inputs.release-pr-sha }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          state=failure
+          if [ "$JOB_STATUS" = success ]; then state=success; fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$RELEASE_PR_SHA" -f state="$state" -f context=idp-e2e \
+            -f description="the end-to-end harness on main: $JOB_STATUS" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null
