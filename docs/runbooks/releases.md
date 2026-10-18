@@ -59,6 +59,7 @@ The tag and the release exist, but assets or the attestation are missing. Every 
 
 - **A step of `publish` failed** (GoReleaser, the version check, the attestation). Open the run and use **Re-run failed jobs**: the re-run keeps the run's commit and the `release-please` outputs, so it publishes the same tag. If GoReleaser had already uploaded some assets, delete those first, one per name: `gh release delete-asset vX.Y.Z <asset> --repo jellalshadows-idp/idp-engine --yes`.
 - **`release vX.Y.Z tags <sha>, but this run is for <sha>`.** The release was created by the run of a later commit, so the attestation would name the wrong commit. Do not move or delete the tag (the ruleset forbids it). Cut the next patch with `Release-As: X.Y.<Z+1>` as above, and say in the broken release's notes that it has no assets.
+- **The release exists but `publish` was skipped** (the `release-please` job failed after creating the release, so `release_created` never reached `publish`). Re-running the failed job does not help: the release is already there. Cut the next patch with `Release-As: X.Y.<Z+1>` as above, and say in the broken release's notes that it has no assets.
 - **The `release-please` job failed before tagging.** If `main` has not moved since the merge, dispatch `release.yaml` on `main`: `gh workflow run release.yaml --repo jellalshadows-idp/idp-engine --ref main`. If it has moved, the next run tags the merged release PR and `publish` refuses it as above; cut the next patch.
 
 ## Tags never move

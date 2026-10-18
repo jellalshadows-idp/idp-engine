@@ -73,9 +73,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      attestations: write
-      contents: write
-      id-token: write
+      attestations: write # store the build provenance of the assets
+      contents: write # upload the assets into the release
+      id-token: write # sign the provenance with the run's OIDC identity
     steps:
       - name: check the release
         id: guard
