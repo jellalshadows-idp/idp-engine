@@ -117,6 +117,7 @@ type step struct {
 	ID               string `yaml:"id"`
 	Name             string `yaml:"name"`
 	If               string `yaml:"if"`
+	ContinueOnError  string `yaml:"continue-on-error"`
 	Uses             string `yaml:"uses"`
 	Run              string `yaml:"run"`
 	Shell            string `yaml:"shell"`
@@ -567,34 +568,4 @@ func wantBotToken(t *testing.T, where string, s step, repositories string, perms
 	if !strings.HasPrefix(s.Uses, "actions/create-github-app-token@") || !maps.Equal(map[string]string(s.With), want) {
 		t.Errorf("%s: %q %v, want create-github-app-token with %v", where, s.Uses, s.With, want)
 	}
-}
-
-// releaseAssets lists the files a release of the given version uploads, from
-// .goreleaser.yaml: one archive per OS and architecture, then the checksums.
-func releaseAssets(t *testing.T, ver string) []string {
-	t.Helper()
-	c := loadGoreleaser(t)
-	b, a := c.Builds[0], c.Archives[0]
-	var out []string
-	for _, goos := range b.Goos {
-		format := a.Formats[0]
-		for _, o := range a.FormatOverrides {
-			if o.Goos == goos {
-				format = o.Formats[0]
-			}
-		}
-		for _, goarch := range b.Goarch {
-			name := strings.NewReplacer("{{ .Version }}", ver, "{{ .Os }}", goos, "{{ .Arch }}", goarch).Replace(a.NameTemplate)
-			out = append(out, name+"."+format)
-		}
-	}
-	return append(out, c.Checksum.NameTemplate)
-}
-
-// ciGoreleaserVersion is the GoReleaser version CI pins; the release workflow
-// must run the same one.
-func ciGoreleaserVersion(t *testing.T) string {
-	t.Helper()
-	_, check := mustStep(t, "ci release-snapshot", mustJob(t, loadWorkflow(t, ".github/workflows/ci.yaml"), "release-snapshot").Steps, "check")
-	return check.With["version"]
 }

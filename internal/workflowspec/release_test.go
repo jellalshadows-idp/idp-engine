@@ -63,11 +63,9 @@ func TestReleaseWorkflow(t *testing.T) {
 	if !ok {
 		t.Fatal("no push trigger")
 	}
-	var push struct {
-		Branches []string `yaml:"branches"`
-	}
-	if err := n.Decode(&push); err != nil || !slices.Equal(push.Branches, []string{"main"}) {
-		t.Errorf("push branches = %v (%v), want [main]", push.Branches, err)
+	var push map[string][]string
+	if err := n.Decode(&push); err != nil || len(push) != 1 || !slices.Equal(push["branches"], []string{"main"}) {
+		t.Errorf("push = %v (%v), want exactly branches: [main]: a paths or tags filter would skip some pushes, and a skipped push drops its release", push, err)
 	}
 	if w.Concurrency == nil || *w.Concurrency != (concurrency{Group: "idp-release", Queue: "max"}) {
 		t.Errorf("concurrency = %+v, want group idp-release, no cancellation, queue max: a dropped run of the release merge would leave its release to the run of another commit", w.Concurrency)
@@ -147,7 +145,20 @@ func TestReleasePublishesOnlyACreatedRelease(t *testing.T) {
 		"TAG":         "${{ needs.release-please.outputs.tag_name }}",
 		"RELEASE_SHA": "${{ needs.release-please.outputs.sha }}",
 	})
-	wantRun(t, "publish guard", guard, `if [ "$RELEASE_SHA" != "$GITHUB_SHA" ]; then`, `echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"`)
+	// The whole guard script, so that no fail-stop can be dropped unseen. The
+	// tag test and its error are pinned by TestReleasePublishRefusesANonSemverTag.
+	wantLines(t, "publish guard", guard.Run, []string{
+		`if [ "$RELEASE_SHA" != "$GITHUB_SHA" ]; then`,
+		`echo "::error::release $TAG tags $RELEASE_SHA, but this run is for $GITHUB_SHA: its attestation would name the wrong commit (docs/runbooks/releases.md#publishing-failed)"`,
+		"exit 1",
+		"fi",
+		`echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"`,
+	})
+	for _, s := range []step{guard, check, att} {
+		if s.If != "" || s.ContinueOnError != "" {
+			t.Errorf("publish %s: if %q, continue-on-error %q; a publish step must run, and stop the job when it fails", s.ID, s.If, s.ContinueOnError)
+		}
+	}
 	wantWith(t, "publish checkout", co, map[string]string{"ref": "${{ needs.release-please.outputs.sha }}", "fetch-depth": "0", "persist-credentials": "false"})
 	wantWith(t, "publish setup-go", gs, map[string]string{"go-version-file": "go.mod", "cache": "false"})
 	if !strings.HasPrefix(rel.Uses, "goreleaser/goreleaser-action@") {
@@ -163,8 +174,13 @@ func TestReleasePublishesOnlyACreatedRelease(t *testing.T) {
 	})
 	wantRun(t, "publish version", check,
 		`tar -xzf "dist/idp_${VERSION}_linux_amd64.tar.gz" -C "$RUNNER_TEMP/idp-check"`,
-		`got="$("$RUNNER_TEMP/idp-check/idp" version)"`,
-		`if [ "$got" != "$TAG" ]; then`)
+		`got="$("$RUNNER_TEMP/idp-check/idp" version)"`)
+	wantLines(t, "publish version", check.Run, []string{
+		`if [ "$got" != "$TAG" ]; then`,
+		`echo "::error::the linux/amd64 binary of $TAG prints $got: the version ldflag must use {{.Tag}} (.goreleaser.yaml)"`,
+		"exit 1",
+		"fi",
+	})
 	if !strings.HasPrefix(att.Uses, "actions/attest-build-provenance@") {
 		t.Errorf("attest step uses %q", att.Uses)
 	}
@@ -212,9 +228,27 @@ func TestReleasePRGetsTheHarness(t *testing.T) {
 		`head="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"`,
 		`gh workflow run e2e.yaml --repo "$GITHUB_REPOSITORY" --ref main -f release-pr-sha="$head"`)
 	re := bashMatch(t, "e2e-release-pr dispatch", d.Run, "head")
-	if !re.MatchString(strings.Repeat("a", 40)) || re.MatchString(strings.Repeat("a", 39)) || re.MatchString("") {
-		t.Errorf("head pattern %q must accept only a full commit SHA", re)
+	if !re.MatchString(strings.Repeat("a", 40)) || !re.MatchString("0123456789abcdef0123456789abcdef01234567") {
+		t.Errorf("head pattern %q must accept a full commit SHA", re)
 	}
+	for _, bad := range []string{"", strings.Repeat("a", 39), strings.Repeat("a", 41), strings.Repeat("A", 40), strings.Repeat("g", 40)} {
+		if re.MatchString(bad) {
+			t.Errorf("head pattern %q accepts %q, want only a full lowercase commit SHA", re, bad)
+		}
+	}
+	// Each check must stop the job: a dispatch with a bad ref would run the harness on nothing.
+	wantLines(t, "e2e-release-pr dispatch", d.Run, []string{
+		`if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then`,
+		`echo "::error::release-please reported a release PR without a number"`,
+		"exit 1",
+		"fi",
+	})
+	wantLines(t, "e2e-release-pr dispatch", d.Run, []string{
+		`if ! [[ "$head" =~ ^[0-9a-f]{40}$ ]]; then`,
+		`echo "::error::could not read the head commit of release PR #$PR_NUMBER"`,
+		"exit 1",
+		"fi",
+	})
 }
 
 func TestReleasePleaseConfig(t *testing.T) {
@@ -248,13 +282,18 @@ func TestReleasePleaseConfig(t *testing.T) {
 	if p.IncludeComponentInTag == nil || *p.IncludeComponentInTag || p.IncludeVInTag == nil || !*p.IncludeVInTag {
 		t.Error("tags must be vX.Y.Z: include-component-in-tag false, include-v-in-tag true")
 	}
-	var visible, hidden []string
+	var visible, hidden, titles []string
 	for _, s := range p.ChangelogSections {
+		titles = append(titles, s.Type+"="+s.Section)
 		if s.Hidden {
 			hidden = append(hidden, s.Type)
 		} else {
 			visible = append(visible, s.Type)
 		}
+	}
+	wantTitles := []string{"feat=Features", "fix=Bug Fixes", "perf=Performance Improvements", "refactor=Code Refactoring", "docs=Documentation", "revert=Reverts", "chore=Miscellaneous Chores", "test=Tests"}
+	if !slices.Equal(titles, wantTitles) {
+		t.Errorf("changelog sections (type=title) = %q, want %q", titles, wantTitles)
 	}
 	if !slices.Equal(visible, []string{"feat", "fix", "perf", "refactor", "docs", "revert"}) || !slices.Equal(hidden, []string{"chore", "test"}) {
 		t.Errorf("changelog sections: visible %v hidden %v", visible, hidden)
@@ -264,6 +303,19 @@ func TestReleasePleaseConfig(t *testing.T) {
 	if len(m) != 1 || !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(m["."]) {
 		t.Errorf("manifest = %v, want only the root package at an X.Y.Z version", m)
 	}
+}
+
+// wantLines checks that the block lines of a script contain want, in order and
+// with nothing between them: a fail-stop is the test, its error, exit 1 and fi.
+func wantLines(t *testing.T, where, run string, want []string) {
+	t.Helper()
+	got := blockLines(run)
+	for i := 0; i+len(want) <= len(got); i++ {
+		if slices.Equal(got[i:i+len(want)], want) {
+			return
+		}
+	}
+	t.Errorf("%s: the script lacks the consecutive lines %q", where, want)
 }
 
 // strictJSON decodes a repo-relative JSON file into out, refusing unknown keys.
