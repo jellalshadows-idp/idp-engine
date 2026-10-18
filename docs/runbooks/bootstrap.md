@@ -31,7 +31,7 @@ Open each printed `https://github.com/apps/<slug>/installations/new` link, choos
 
 ## The bot App
 
-The bot opens and merges pull requests for releases, dependency updates and the end-to-end harness ([ADR-0026](../adr/0026-automation-app.md)). It is a third App, created the same way:
+The bot opens pull requests for releases and dependency updates, and the end-to-end harness opens and merges its own pull requests in `idp-claims-e2e` as the bot ([ADR-0026](../adr/0026-automation-app.md)). It is a third App, created the same way:
 
 ```bash
 go run ./cmd/idp bootstrap app --org <org> --role bot

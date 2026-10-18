@@ -26,7 +26,7 @@ gh workflow run renovate.yaml --repo jellalshadows-idp/idp-engine --ref main
 | actionlint, zizmor | `ci.yaml` | one each |
 | Renovate | `renovate.yaml` and the validator image in `ci.yaml` | one |
 
-Runner images (`runs-on`) are not updated. Every update waits 14 days after its release; engine releases do not wait. Pending updates are listed in the "Dependency Dashboard" issue of each repository.
+Runner images (`runs-on`) are not updated. Every update waits 14 days after its release; engine releases do not wait. Renovate opens every pending update in the run, with no hourly limit on pull requests (`prHourlyLimit: 0`). Pending updates are listed in the "Dependency Dashboard" issue of each repository.
 
 ## Reviewing and merging
 
@@ -46,7 +46,7 @@ gh variable set IDP_BOT_CLIENT_ID --env idp-renovate --repo jellalshadows-idp/id
 
 ## A GitHub provider update (`needs-lockfile`)
 
-Renovate moves the provider pins but not the shipped lock file, so the PR's `go` and `modules` jobs fail (`TestGitHubLockPinsTheProvider`, `tofu init -lockfile=readonly`). Regenerate the lock on the PR branch, in Git Bash, with OpenTofu at the pinned version (here 1.12.6):
+Renovate moves the provider pins but not the shipped lock file, so the PR's `go` and `modules` jobs fail (`TestRenderCopiesTheLockFile`, `tofu init -lockfile=readonly`). Regenerate the lock on the PR branch, in Git Bash, with OpenTofu at the pinned version (here 1.12.6):
 
 ```bash
 gh pr checkout <number> --repo jellalshadows-idp/idp-engine

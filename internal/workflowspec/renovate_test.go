@@ -33,6 +33,7 @@ type renovateConfig struct {
 	DependencyDashboard  *bool              `json:"dependencyDashboard"`
 	Automerge            *bool              `json:"automerge"`
 	MinimumReleaseAge    string             `json:"minimumReleaseAge"`
+	PRHourlyLimit        *int               `json:"prHourlyLimit"`
 	InternalChecksFilter string             `json:"internalChecksFilter"`
 	StatusCheckNames     map[string]*string `json:"statusCheckNames"`
 	EnabledManagers      []string           `json:"enabledManagers"`
@@ -49,6 +50,7 @@ type renovateRule struct {
 	MatchDatasources  []string        `json:"matchDatasources"`
 	MatchUpdateTypes  []string        `json:"matchUpdateTypes"`
 	GroupName         string          `json:"groupName"`
+	ExtractVersion    string          `json:"extractVersion"`
 	Labels            []string        `json:"labels"`
 	RegistryURLs      []string        `json:"registryUrls"`
 	PostUpdateOptions []string        `json:"postUpdateOptions"`
@@ -58,16 +60,15 @@ type renovateRule struct {
 }
 
 type customManager struct {
-	CustomType             string   `json:"customType"`
-	Description            string   `json:"description"`
-	ManagerFilePatterns    []string `json:"managerFilePatterns"`
-	MatchStrings           []string `json:"matchStrings"`
-	DatasourceTemplate     string   `json:"datasourceTemplate"`
-	DepNameTemplate        string   `json:"depNameTemplate"`
-	PackageNameTemplate    string   `json:"packageNameTemplate"`
-	VersioningTemplate     string   `json:"versioningTemplate"`
-	ExtractVersionTemplate string   `json:"extractVersionTemplate"`
-	RegistryURLTemplate    string   `json:"registryUrlTemplate"`
+	CustomType          string   `json:"customType"`
+	Description         string   `json:"description"`
+	ManagerFilePatterns []string `json:"managerFilePatterns"`
+	MatchStrings        []string `json:"matchStrings"`
+	DatasourceTemplate  string   `json:"datasourceTemplate"`
+	DepNameTemplate     string   `json:"depNameTemplate"`
+	PackageNameTemplate string   `json:"packageNameTemplate"`
+	VersioningTemplate  string   `json:"versioningTemplate"`
+	RegistryURLTemplate string   `json:"registryUrlTemplate"`
 }
 
 func loadRenovateConfig(t *testing.T) renovateConfig {
@@ -187,6 +188,9 @@ func TestRenovateGlobalConfig(t *testing.T) {
 	if c.Onboarding == nil || *c.Onboarding || c.DependencyDashboard == nil || !*c.DependencyDashboard {
 		t.Error("onboarding must be false and dependencyDashboard true")
 	}
+	if c.PRHourlyLimit == nil || *c.PRHourlyLimit != 0 {
+		t.Errorf("prHourlyLimit = %v, want 0: the weekly run opens every update, and engine bumps do not wait", c.PRHourlyLimit)
+	}
 	if c.GitAuthor != botGitAuthor {
 		t.Errorf("gitAuthor = %q, want %q", c.GitAuthor, botGitAuthor)
 	}
@@ -251,9 +255,7 @@ func TestRenovateMovesTheEnginePinsTogether(t *testing.T) {
 				continue
 			}
 			n++
-			// The package name Renovate extracts from owner/repo/path@ref is owner/repo.
-			pkg, _, _ := strings.Cut(strings.TrimPrefix(u.value, "jellalshadows-idp/"), "/")
-			pkg = "jellalshadows-idp/" + pkg
+			const pkg = "jellalshadows-idp/idp-engine" // what Renovate extracts from owner/repo/path@ref
 			var groups []string
 			for _, r := range rules {
 				if slices.Contains(r.MatchPackageNames, pkg) {
@@ -274,7 +276,7 @@ func TestRenovateRules(t *testing.T) {
 	f := false
 	want := []renovateRule{
 		{MatchPackageNames: []string{"jellalshadows-idp/idp-engine"}, GroupName: "idp engine", MinimumReleaseAge: json.RawMessage("null")},
-		{MatchPackageNames: []string{"opentofu/opentofu"}, GroupName: "opentofu"},
+		{MatchPackageNames: []string{"opentofu/opentofu"}, GroupName: "opentofu", ExtractVersion: "^v(?<version>.+)$"},
 		{MatchPackageNames: []string{"integrations/github"}, GroupName: "github provider", Labels: []string{"needs-lockfile"}},
 		{MatchDatasources: []string{"terraform-provider"}, RegistryURLs: []string{"https://registry.opentofu.org"}},
 		{MatchManagers: []string{"terraform"}, MatchDepTypes: []string{"required_version"}, Enabled: &f},
@@ -282,6 +284,7 @@ func TestRenovateRules(t *testing.T) {
 		{MatchManagers: []string{"gomod"}, MatchDepTypes: []string{"golang"}, MatchDepNames: []string{"go"}, RangeStrategy: "bump"},
 		{MatchManagers: []string{"gomod"}, MatchDepTypes: []string{"golang"}, MatchDepNames: []string{"go"}, MatchUpdateTypes: []string{"minor", "major"}, Enabled: &f},
 		{MatchDatasources: []string{"github-runners"}, Enabled: &f},
+		{MatchManagers: []string{"github-actions"}, MatchDatasources: []string{"docker"}, MatchPackageNames: []string{"ghcr.io/renovatebot/renovate"}, Enabled: &f},
 	}
 	got := slices.Clone(loadRenovateConfig(t).PackageRules)
 	for i := range got {

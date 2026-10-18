@@ -52,7 +52,7 @@ jobs:
         id: renovate-config
         # The Renovate image at renovate.yaml's version: Renovate needs a newer
         # Node than the runner's, and the run and the check stay one version.
-        run: docker run --rm -v "$GITHUB_WORKSPACE/.github/renovate-global.json:/tmp/renovate-global.json:ro" ghcr.io/renovatebot/renovate:44.133.0 renovate-config-validator --strict /tmp/renovate-global.json
+        run: docker run --rm -v "$GITHUB_WORKSPACE/.github/renovate-global.json:/tmp/renovate-global.json:ro" ghcr.io/renovatebot/renovate:44.132.5 renovate-config-validator --strict /tmp/renovate-global.json
 
   modules:
     runs-on: ubuntu-24.04
