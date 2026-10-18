@@ -1,0 +1,171 @@
+name: idp-release
+
+# Releases idp-engine (spec §9.1, ADR-0028). release-please keeps one release PR
+# up to date and, when it merges, tags the release; the same run then builds
+# the CLI with GoReleaser, uploads it into that release and attests its
+# provenance. Every push to main gets its own run, in order (queue: max).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: idp-release
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: idp-release
+    permissions: {}
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
+      prs_created: ${{ steps.release.outputs.prs_created }}
+      pr: ${{ steps.release.outputs.pr }}
+    steps:
+      - name: check the environment
+        id: config
+        env:
+          BOT_CLIENT_ID: ${{ vars.IDP_BOT_CLIENT_ID }}
+          BOT_KEY_SET: ${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}
+        run: |
+          missing=""
+          [ -n "$BOT_CLIENT_ID" ] || missing="$missing variable IDP_BOT_CLIENT_ID,"
+          [ "$BOT_KEY_SET" = true ] || missing="$missing secret IDP_BOT_PRIVATE_KEY,"
+          if [ -n "$missing" ]; then
+            echo "::error::the idp-release environment is missing:${missing%,} (docs/runbooks/releases.md)"
+            exit 1
+          fi
+      # A pull request opened with GITHUB_TOKEN would get no CI (ADR-0026).
+      - name: mint the bot token
+        id: bot
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.IDP_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_BOT_PRIVATE_KEY }}
+          owner: jellalshadows-idp
+          repositories: idp-engine
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+      - name: release-please
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.bot.outputs.token }}
+
+  publish:
+    name: publish
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: check the release
+        id: guard
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::refusing to publish $TAG: an engine release tag is vX.Y.Z, because rendered module sources pin it"
+            exit 1
+          fi
+          if [ "$RELEASE_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::release $TAG tags $RELEASE_SHA, but this run is for $GITHUB_SHA: its attestation would name the wrong commit (docs/runbooks/releases.md#publishing-failed)"
+            exit 1
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: build and upload with GoReleaser
+        id: goreleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GORELEASER_CURRENT_TAG: ${{ needs.release-please.outputs.tag_name }}
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: release --clean
+      - name: the released binary reports its tag
+        id: version
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          VERSION: ${{ steps.guard.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/idp-check"
+          tar -xzf "dist/idp_${VERSION}_linux_amd64.tar.gz" -C "$RUNNER_TEMP/idp-check"
+          got="$("$RUNNER_TEMP/idp-check/idp" version)"
+          if [ "$got" != "$TAG" ]; then
+            echo "::error::the linux/amd64 binary of $TAG prints $got: the version ldflag must use {{.Tag}} (.goreleaser.yaml)"
+            exit 1
+          fi
+          echo "idp version: $got"
+      - name: attest the build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/idp_${{ steps.guard.outputs.version }}_darwin_amd64.tar.gz
+            dist/idp_${{ steps.guard.outputs.version }}_darwin_arm64.tar.gz
+            dist/idp_${{ steps.guard.outputs.version }}_linux_amd64.tar.gz
+            dist/idp_${{ steps.guard.outputs.version }}_linux_arm64.tar.gz
+            dist/idp_${{ steps.guard.outputs.version }}_windows_amd64.zip
+            dist/idp_${{ steps.guard.outputs.version }}_windows_arm64.zip
+            dist/checksums.txt
+
+  e2e-release-pr:
+    name: e2e on the release PR
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      # A workflow_dispatch made with GITHUB_TOKEN does start a run. The harness
+      # runs on main, the release PR's base, and reports idp-e2e on its head.
+      - name: dispatch the harness for the release PR head
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ fromJSON(needs.release-please.outputs.pr).number }}
+        run: |
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::release-please reported a release PR without a number"
+            exit 1
+          fi
+          head="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+          if ! [[ "$head" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::could not read the head commit of release PR #$PR_NUMBER"
+            exit 1
+          fi
+          gh workflow run e2e.yaml --repo "$GITHUB_REPOSITORY" --ref main -f release-pr-sha="$head"
+          echo "dispatched idp-e2e on main for release PR #$PR_NUMBER at $head"

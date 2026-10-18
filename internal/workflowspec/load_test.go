@@ -224,7 +224,7 @@ func workflowFiles(t *testing.T) []string {
 // internalWorkflows run only in idp-engine.
 var (
 	reusableNames     = []string{"drift.yaml", "pr.yaml", "reconcile.yaml", "recover.yaml"}
-	internalWorkflows = []string{"ci.yaml", "e2e.yaml"}
+	internalWorkflows = []string{"ci.yaml", "e2e.yaml", "release.yaml"}
 )
 
 func reusableWorkflows(t *testing.T) []string {
@@ -547,4 +547,54 @@ func invokes(run, sub string) bool {
 		}
 	}
 	return false
+}
+
+// wantBotToken checks a create-github-app-token step: the bot App's credentials
+// from the environment, the idp-engine owner, exactly these repositories and
+// exactly these permissions (permission-<scope>: <level>), nothing else. perms
+// is keyed by scope without the permission- prefix.
+func wantBotToken(t *testing.T, where string, s step, repositories string, perms map[string]string) {
+	t.Helper()
+	want := map[string]string{
+		"client-id":    "${{ vars.IDP_BOT_CLIENT_ID }}",
+		"private-key":  "${{ secrets.IDP_BOT_PRIVATE_KEY }}",
+		"owner":        "jellalshadows-idp",
+		"repositories": repositories,
+	}
+	for scope, level := range perms {
+		want["permission-"+scope] = level
+	}
+	if !strings.HasPrefix(s.Uses, "actions/create-github-app-token@") || !maps.Equal(map[string]string(s.With), want) {
+		t.Errorf("%s: %q %v, want create-github-app-token with %v", where, s.Uses, s.With, want)
+	}
+}
+
+// releaseAssets lists the files a release of the given version uploads, from
+// .goreleaser.yaml: one archive per OS and architecture, then the checksums.
+func releaseAssets(t *testing.T, ver string) []string {
+	t.Helper()
+	c := loadGoreleaser(t)
+	b, a := c.Builds[0], c.Archives[0]
+	var out []string
+	for _, goos := range b.Goos {
+		format := a.Formats[0]
+		for _, o := range a.FormatOverrides {
+			if o.Goos == goos {
+				format = o.Formats[0]
+			}
+		}
+		for _, goarch := range b.Goarch {
+			name := strings.NewReplacer("{{ .Version }}", ver, "{{ .Os }}", goos, "{{ .Arch }}", goarch).Replace(a.NameTemplate)
+			out = append(out, name+"."+format)
+		}
+	}
+	return append(out, c.Checksum.NameTemplate)
+}
+
+// ciGoreleaserVersion is the GoReleaser version CI pins; the release workflow
+// must run the same one.
+func ciGoreleaserVersion(t *testing.T) string {
+	t.Helper()
+	_, check := mustStep(t, "ci release-snapshot", mustJob(t, loadWorkflow(t, ".github/workflows/ci.yaml"), "release-snapshot").Steps, "check")
+	return check.With["version"]
 }
