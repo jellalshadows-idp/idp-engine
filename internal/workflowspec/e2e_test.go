@@ -105,10 +105,37 @@ func TestE2ESecretsReachOnlyTheHarness(t *testing.T) {
 		}
 	}
 	_, c := mustStep(t, "e2e", j.Steps, "config")
-	wantEnv(t, "e2e config", c, map[string]string{
-		"BOT_KEY_SET":  "${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}",
-		"APPROVER_SET": "${{ secrets.IDP_E2E_APPROVER_TOKEN != '' }}",
-	})
+	wantConfig := map[string]string{
+		"BOT_CLIENT_ID": "${{ vars.IDP_BOT_CLIENT_ID }}",
+		"BOT_KEY_SET":   "${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}",
+		"APPROVER_SET":  "${{ secrets.IDP_E2E_APPROVER_TOKEN != '' }}",
+	}
+	if !maps.Equal(map[string]string(c.Env), wantConfig) {
+		t.Errorf("config env = %v, want exactly %v", c.Env, wantConfig)
+	}
+}
+
+// TestE2EStatusTokenIsStepScoped: the job token carries statuses: write, so
+// only the two steps that post idp-e2e set it. A job-level env would hand it to
+// every step, the harness included.
+func TestE2EStatusTokenIsStepScoped(t *testing.T) {
+	j := mustJob(t, loadWorkflow(t, e2ePath), "e2e")
+	if len(j.Env) != 0 {
+		t.Errorf("job env = %v, want none: every step would see it", j.Env)
+	}
+	for _, s := range j.Steps {
+		if s.ID == "pending" || s.ID == "result" {
+			continue
+		}
+		texts := []string{s.Run}
+		texts = append(texts, slices.Collect(maps.Values(s.Env))...)
+		texts = append(texts, slices.Collect(maps.Values(s.With))...)
+		for _, txt := range texts {
+			if l := strings.ToLower(txt); strings.Contains(l, "github.token") || strings.Contains(l, "secrets.github_token") {
+				t.Errorf("step %q reads the job token (%q): only the pending and result steps set it", s.label(), txt)
+			}
+		}
+	}
 }
 
 func TestE2ETakesTheReleasePRHead(t *testing.T) {
@@ -155,14 +182,14 @@ func TestE2EReportsEveryOutcomeOnTheReleasePR(t *testing.T) {
 	if !maps.Equal(map[string]string(p.Env), statusEnv) {
 		t.Errorf("pending env = %v, want %v", p.Env, statusEnv)
 	}
-	// The SHA check must stop the step: the input reaches an API path.
-	wantLines(t, "e2e pending", p.Run, []string{
+	// The SHA check must stop the step, and come before the post: the input
+	// reaches an API path.
+	wantLines(t, "e2e pending", p.Run, append([]string{
 		`if ! [[ "$RELEASE_PR_SHA" =~ ^[0-9a-f]{40}$ ]]; then`,
 		`echo "::error::release-pr-sha must be a full 40-character commit SHA"`,
 		"exit 1",
 		"fi",
-	})
-	wantLines(t, "e2e pending", p.Run, post("state=pending", "the end-to-end harness is running on main"))
+	}, post("state=pending", "the end-to-end harness is running on main")...))
 
 	r := j.Steps[len(j.Steps)-1]
 	if r.ID != "result" {

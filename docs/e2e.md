@@ -40,7 +40,7 @@ The job's timeout (330 minutes) outlasts the harness's own bounded waits (about 
 
 When release-please creates or updates the engine's release PR, `release.yaml` dispatches this workflow on `main` with `release-pr-sha` set to the PR's head commit ([ADR-0028](adr/0028-releases-and-how-the-workflows-get-idp.md)). `main` is the release PR's base: the same code without the changelog. Right after the re-run guard, the run posts the commit status `idp-e2e` as `pending` on that commit; its last step posts `success` or `failure`, also when an earlier step failed. Merge a release PR only when its `idp-e2e` status is green ([releases runbook](runbooks/releases.md)).
 
-A dispatch waits in the `idp-e2e` concurrency group while another run is in progress, and GitHub keeps only the newest waiting run of a group: a nightly run or a newer dispatch can replace it. The replaced run never starts, so the release PR shows no `idp-e2e` status. Dispatch it again for the current head:
+A dispatch waits in the `idp-e2e` concurrency group while another run is in progress, and GitHub keeps only the newest waiting run of a group: a nightly run or a newer dispatch can replace it. The replaced run never starts, so the release PR shows no `idp-e2e` status. A run killed by the runner or by its timeout can also leave `pending` set, because its last step never ran. Either way, dispatch it again for the current head (the next push that updates the release PR does the same, and the new status replaces the old one):
 
 ```bash
 head="$(gh pr view <number> --repo jellalshadows-idp/idp-engine --json headRefOid --jq .headRefOid)"
@@ -58,7 +58,7 @@ Both live only in the `idp-engine` environment `idp-e2e` (deployment branch `mai
 
 An installation token lives one hour and a run can last longer, so the harness mints the bot's tokens from the App key rather than receiving one. The key is passed only to the `run the harness` step, and the binary is built in an earlier step that sees no secret.
 
-The run's own `GITHUB_TOKEN` has `statuses: write`, used only by the two steps that post `idp-e2e` on a release PR head; the harness step never sees it.
+The run's own `GITHUB_TOKEN` has `statuses: write`. The workflow sets it explicitly only on the two steps that post `idp-e2e` on a release PR head, and it never reaches the harness step's environment. Actions that default their `token` input to the job token (`actions/checkout`, `actions/setup-go`) receive it as usual.
 
 ### Setting up
 
