@@ -9,9 +9,11 @@ import (
 	"github.com/jellalshadows-idp/idp-engine/internal/version"
 )
 
-// notInstalled is the condition of the steps that build idp from source: they
-// run only when the download step installed no release (ADR-0028).
-const notInstalled = "steps.download.outputs.installed != 'true'"
+// buildsFromSource is the condition of the steps that build idp from source:
+// they run only on the download step's explicit "not a release" decision. An
+// output that was never written must not build, so the job fails closed at its
+// first idp call (ADR-0028).
+const buildsFromSource = "steps.download.outputs.installed == 'false'"
 
 func TestSetupIDPInterface(t *testing.T) {
 	a := loadAction(t, setupIDPPath)
@@ -29,9 +31,6 @@ func TestSetupIDPInstallsTheToolchain(t *testing.T) {
 	_, tofuStep := mustStep(t, setupIDPPath, a.Runs.Steps, "tofu")
 	if !strings.HasPrefix(goStep.Uses, "actions/setup-go@") || !strings.HasPrefix(tofuStep.Uses, "opentofu/setup-opentofu@") {
 		t.Fatalf("steps go and tofu must use setup-go and setup-opentofu, got %q and %q", goStep.Uses, tofuStep.Uses)
-	}
-	if goStep.If != notInstalled {
-		t.Errorf("setup-go if = %q, want %q: Go is needed only for a source build", goStep.If, notInstalled)
 	}
 	if tofuStep.If != "" {
 		t.Errorf("setup-opentofu if = %q: every pipeline runs tofu, whatever installed idp", tofuStep.If)
@@ -66,9 +65,6 @@ func ciTofuVersion(t *testing.T) string {
 func TestSetupIDPBuildsTheGivenCommit(t *testing.T) {
 	a := loadAction(t, setupIDPPath)
 	_, build := mustStep(t, setupIDPPath, a.Runs.Steps, "build")
-	if build.If != notInstalled {
-		t.Errorf("build if = %q, want %q", build.If, notInstalled)
-	}
 	if build.Shell != "bash" {
 		t.Errorf("build shell = %q, want bash", build.Shell)
 	}
@@ -120,12 +116,6 @@ func TestSetupIDPDownloadsAndVerifiesTheRelease(t *testing.T) {
 		t.Errorf("GoReleaser uploads %q; the download needs checksums.txt", assets)
 	}
 	wantLines(t, "setup-idp download", dl.Run, []string{`archive="idp_${tag#v}_linux_${arch}.tar.gz"`})
-	wantLines(t, "setup-idp download", dl.Run, []string{
-		`if ! gh release download "$tag" --repo ` + engineRepo + ` --pattern "$archive" --pattern checksums.txt --dir "$dl" || [ ! -f "$dl/$archive" ] || [ ! -f "$dl/checksums.txt" ]; then`,
-		`echo "::error::setup-idp: $IDP_VERSION is release $tag, but $archive and checksums.txt could not be downloaded from it. A release commit never falls back to a source build: finish the release's publish job or pin another release (docs/runbooks/releases.md)"`,
-		"exit 1",
-		"fi",
-	})
 	wantLines(t, "setup-idp download", dl.Run, []string{
 		`if ! verified="$(cd "$dl" && sha256sum --check --ignore-missing checksums.txt)" || [ "$verified" != "$archive: OK" ]; then`,
 		`echo "::error::setup-idp: $archive does not match the checksums.txt of release $tag"`,
@@ -179,15 +169,15 @@ func TestSetupIDPFailsWhenTheTagListingFails(t *testing.T) {
 		t.Error("installed=false may be decided only after the listing succeeded")
 	}
 	// A failed download step must not let the build steps run: their if is exactly
-	// notInstalled, with no always() or failure() to override the failure.
+	// buildsFromSource, with no always() or failure() to override the failure.
 	a := loadAction(t, setupIDPPath)
 	for _, id := range []string{"download", "go", "build"} {
 		_, s := mustStep(t, setupIDPPath, a.Runs.Steps, id)
 		if s.ContinueOnError != "" {
 			t.Errorf("step %s continue-on-error = %q: a failed download must fail the job", id, s.ContinueOnError)
 		}
-		if id != "download" && s.If != notInstalled {
-			t.Errorf("step %s if = %q, want %q", id, s.If, notInstalled)
+		if id != "download" && s.If != buildsFromSource {
+			t.Errorf("step %s if = %q, want %q: only the explicit not-a-release decision builds", id, s.If, buildsFromSource)
 		}
 	}
 }
@@ -204,11 +194,13 @@ func TestSetupIDPNeverBuildsATaggedCommit(t *testing.T) {
 	if strings.Contains(dl.Run[i:], "installed=false") {
 		t.Error("once a release tag is found, the step may only install or fail")
 	}
-	// The failure of a release without its assets names the rule and the runbook;
-	// TestSetupIDPDownloadsAndVerifiesTheRelease pins the whole block.
-	if !strings.Contains(dl.Run, "never falls back to a source build") || !strings.Contains(dl.Run, "docs/runbooks/releases.md") {
-		t.Error("a release without its assets must fail with a message that says it never falls back to a build and points to docs/runbooks/releases.md")
-	}
+	// A release without its assets fails, naming the rule and the runbook.
+	wantLines(t, "setup-idp download", dl.Run, []string{
+		`if ! gh release download "$tag" --repo ` + engineRepo + ` --pattern "$archive" --pattern checksums.txt --dir "$dl" || [ ! -f "$dl/$archive" ] || [ ! -f "$dl/checksums.txt" ]; then`,
+		`echo "::error::setup-idp: $IDP_VERSION is release $tag, but $archive and checksums.txt could not be downloaded from it. A release commit never falls back to a source build: finish the release's publish job or pin another release (docs/runbooks/releases.md)"`,
+		"exit 1",
+		"fi",
+	})
 }
 
 func TestSetupIDPIgnoresNonReleaseTags(t *testing.T) {
@@ -260,7 +252,7 @@ func TestSetupIDPHoldsTheTokenOnlyInTheDownload(t *testing.T) {
 		texts = append(texts, slices.Collect(maps.Values(s.With))...)
 		for _, txt := range texts {
 			if l := strings.ToLower(txt); strings.Contains(l, "github.token") || strings.Contains(l, "gh_token") {
-				t.Errorf("step %s reads the job token (%q): only the download step may hold it (ADR-0023)", s.label(), txt)
+				t.Errorf("step %s reads the job token (%q): only the download step sets the job token explicitly (ADR-0023); setup-go's token input defaults to it implicitly", s.label(), txt)
 			}
 		}
 	}

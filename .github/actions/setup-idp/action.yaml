@@ -74,7 +74,7 @@ runs:
         echo "installed=true" >> "$GITHUB_OUTPUT"
         echo "setup-idp: installed idp $tag, verified against $IDP_VERSION"
     - id: go
-      if: steps.download.outputs.installed != 'true'
+      if: steps.download.outputs.installed == 'false'
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: ${{ inputs.engine-dir }}/go.mod
@@ -86,7 +86,7 @@ runs:
         tofu_wrapper: false
     - id: build
       name: build idp
-      if: steps.download.outputs.installed != 'true'
+      if: steps.download.outputs.installed == 'false'
       shell: bash
       working-directory: ${{ inputs.engine-dir }}
       env:
