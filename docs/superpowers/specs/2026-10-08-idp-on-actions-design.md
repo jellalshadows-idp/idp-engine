@@ -593,7 +593,7 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 | `idp-writer` App key | Write, **including `Workflows`** (features write `.github/workflows/`; `Contents` alone is rejected) | **Only** in environment `idp-write` (deployment branch `main`, no reviewers): the applies and the `wet` commits, and also the reconcile and drift plans (ADR-0025) *(Amendment A7, 2026-10-12.)* |
 | State passphrase | — | Repo secret, needed to read state in plans |
 | Approval | — | Environment `idp-approval` (required reviewers, `main`, no secrets) |
-| `idp-bot` App key | Pull requests, contents and workflows on the engine and claims repos; members read | Only in `idp-engine` environments with deployment branch `main` `idp-e2e`, `idp-release` and `idp-renovate`; installed on `idp-engine`, `idp-claims` and `idp-claims-e2e` only (ADR-0026). *(Amendment A8; environments named in A9.)* |
+| `idp-bot` App key | Pull requests, contents and workflows on the engine and claims repos; members read | Only in `idp-engine` environments with deployment branch `main`: `idp-e2e`, `idp-release` and `idp-renovate`; installed on `idp-engine`, `idp-claims` and `idp-claims-e2e` only (ADR-0026). *(Amendment A8; environments named in A9.)* |
 | E2E approver token | Approves `idp-approval` deployments in `idp-claims-e2e` only | Only in `idp-engine` environment `idp-e2e` (ADR-0027). *(Amendment A8.)* |
 
 - `idp-reader`, `idp-writer` and `idp-bot` are **roles**. GitHub App names are unique

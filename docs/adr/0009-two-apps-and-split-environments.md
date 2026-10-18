@@ -14,7 +14,7 @@ Apps also need the right permission set: to write `.github/workflows/` they need
 
 ## Decision
 
-There are **two GitHub Apps** and **two environments**, with three secret scopes (spec §7.3):
+There are **two GitHub Apps** and **two environments**, with three secret scopes (spec §7.3): *(Amended in Phase 1e, 2026-10-18.)* A third App, `<org>-bot`, was added by ADR-0026.
 
 | Credential | Permissions | Where it lives |
 |---|---|---|
