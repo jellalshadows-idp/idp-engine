@@ -31,3 +31,5 @@ An ADR records one decision that shapes this platform: the context that forced i
 | 0025 | [Plans refresh with the writer token on main](0025-plans-refresh-with-the-writer-on-main.md) | Accepted |
 | 0026 | [An automation App for releases, dependency updates and the end-to-end harness](0026-automation-app.md) | Accepted |
 | 0027 | [The end-to-end harness](0027-end-to-end-harness.md) | Accepted |
+| 0028 | [Releases, and how the workflows get idp](0028-releases-and-how-the-workflows-get-idp.md) | Accepted |
+| 0029 | [Self-hosted Renovate with the bot App](0029-self-hosted-renovate.md) | Accepted |

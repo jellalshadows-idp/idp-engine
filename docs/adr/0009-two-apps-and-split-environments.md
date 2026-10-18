@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-08
-- Spec: [§7.3](../superpowers/specs/2026-10-08-idp-on-actions-design.md#73-two-github-apps-and-three-secret-scopes)
+- Spec: [§7.3](../superpowers/specs/2026-10-08-idp-on-actions-design.md#73-three-github-apps-and-their-secret-scopes)
 
 ## Context
 
