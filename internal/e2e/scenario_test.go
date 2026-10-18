@@ -18,7 +18,7 @@ const testSHA = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
 func testTemplates() map[string][]byte {
 	t := map[string][]byte{}
 	for _, n := range []string{"drift.yaml", "pr.yaml", "reconcile.yaml", "recover.yaml"} {
-		t[n] = []byte("jobs:\n  x:\n    uses: jellalshadows-idp/idp-engine/.github/workflows/" + n + "@" + strings.Repeat("0", 40) + " # unreleased\n")
+		t[n] = []byte("jobs:\n  x:\n    uses: jellalshadows-idp/idp-engine/.github/workflows/" + n + "@" + strings.Repeat("0", 40) + " # v0.1.0\n")
 	}
 	return t
 }

@@ -6,7 +6,7 @@ The harness drives `idp-claims-e2e` through the real pipelines at an engine comm
 
 Before step 1 it checks that the approver token can still read the runs of `idp-claims-e2e`, and refuses to start while claims, repositories or teams named `e2e-r<id>-app` or `e2e-r<id>-team` from an earlier run exist, while a reconcile, drift or recover run of `idp-claims-e2e` is unfinished (they share the `idp-wet` queue), or while a "Wet push failed" issue is open.
 
-1. Pins the four caller workflows of `idp-claims-e2e` to the commit under test (a PR, when they differ). That PR must plan `No infrastructure changes.`: anything else means claims the platform has not applied are on `main`.
+1. Pins the four caller workflows of `idp-claims-e2e` to the commit under test, marked `# unreleased` because that commit is usually not a release (a PR, when they differ). That PR must plan `No infrastructure changes.`: anything else means claims the platform has not applied are on `main`.
 2. Creates `e2e-r<run>-team` and `e2e-r<run>-app` through a PR, merges it after `idp-gate`, waits for the automatic reconcile, and checks the repository, its active `idp-default-branch` ruleset, the team, its memberships, its `maintain` (not `admin`) grant on the repository, and the environment. The component's files are checked from Phase 4, when component templates exist.
 3. Updates the description and removes every topic. Its plan deletes the topics resource, because the GitHub provider clears topics only when that resource is destroyed. The harness requires that to be the only delete, and approves it under the same checks as step 6.
 4. Changes only the case of a member login and expects `No infrastructure changes.`.

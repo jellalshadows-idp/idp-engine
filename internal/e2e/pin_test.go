@@ -7,14 +7,22 @@ import (
 
 func TestPinTemplates(t *testing.T) {
 	sha := strings.Repeat("b", 40)
-	in := map[string][]byte{"pr.yaml": []byte("    uses: jellalshadows-idp/idp-engine/.github/workflows/pr.yaml@" + strings.Repeat("0", 40) + " # unreleased\n")}
-	out, err := PinTemplates(in, sha)
-	if err != nil {
-		t.Fatal(err)
+	ref := "    uses: jellalshadows-idp/idp-engine/.github/workflows/pr.yaml@"
+	want := ref + sha + " # unreleased\n"
+	for name, in := range map[string]string{
+		"a release pin":     ref + strings.Repeat("0", 40) + " # v0.1.0\n",
+		"an unreleased pin": ref + strings.Repeat("0", 40) + " # unreleased\n",
+		"no comment":        ref + strings.Repeat("0", 40) + "\n",
+	} {
+		out, err := PinTemplates(map[string][]byte{"pr.yaml": []byte(in)}, sha)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := string(out["pr.yaml"]); got != want {
+			t.Errorf("%s: pinned = %q, want %q: the commit under test is usually not a release", name, got, want)
+		}
 	}
-	if want := "    uses: jellalshadows-idp/idp-engine/.github/workflows/pr.yaml@" + sha + " # unreleased\n"; string(out["pr.yaml"]) != want {
-		t.Errorf("pinned = %q, want %q", out["pr.yaml"], want)
-	}
+	in := map[string][]byte{"pr.yaml": []byte(ref + strings.Repeat("0", 40) + " # v0.1.0\n")}
 	if _, err := PinTemplates(in, "abc"); err == nil {
 		t.Error("a short SHA must be rejected")
 	}

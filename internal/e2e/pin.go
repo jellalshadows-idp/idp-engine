@@ -7,11 +7,13 @@ import (
 
 var (
 	shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	enginePin  = regexp.MustCompile(`(idp-engine/\.github/workflows/[a-z]+\.yaml@)[0-9a-f]{40}`)
+	// enginePin is an engine workflow ref and its trailing comment, if any.
+	enginePin = regexp.MustCompile(`(idp-engine/\.github/workflows/[a-z]+\.yaml@)[0-9a-f]{40}(?: #[^\n]*)?`)
 )
 
 // PinTemplates returns the caller templates with every engine workflow ref
-// pinned to sha.
+// pinned to sha and marked "# unreleased": the harness pins the commit under
+// test, which is usually not a release, whatever release the templates pin.
 func PinTemplates(templates map[string][]byte, sha string) (map[string][]byte, error) {
 	if !shaPattern.MatchString(sha) {
 		return nil, fmt.Errorf("engine sha %q is not a 40-character commit SHA", sha)
@@ -21,7 +23,7 @@ func PinTemplates(templates map[string][]byte, sha string) (map[string][]byte, e
 		if !enginePin.Match(b) {
 			return nil, fmt.Errorf("template %s has no engine workflow ref", name)
 		}
-		out[name] = enginePin.ReplaceAll(b, []byte("${1}"+sha))
+		out[name] = enginePin.ReplaceAll(b, []byte("${1}"+sha+" # unreleased"))
 	}
 	return out, nil
 }
