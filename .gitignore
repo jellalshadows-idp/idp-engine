@@ -9,3 +9,5 @@ modules/**/.terraform.lock.hcl
 *.tfstate.*
 *.tfplan
 crash.log
+# GoReleaser output (CI only)
+/dist/

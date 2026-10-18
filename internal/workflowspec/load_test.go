@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -459,6 +460,29 @@ func wantRun(t *testing.T, where string, s step, subs ...string) {
 			t.Errorf("%s: run lacks %q", where, sub)
 		}
 	}
+}
+
+// bashMatch returns the extended regular expression a run script tests
+// variable against ([[ "$variable" =~ pattern ]]), compiled with Go's regexp:
+// for the anchored character-class patterns the workflows use, bash and RE2
+// agree. It reads the first such test.
+func bashMatch(t *testing.T, where, run, variable string) *regexp.Regexp {
+	t.Helper()
+	marker := `"$` + variable + `" =~ `
+	i := strings.Index(run, marker)
+	if i < 0 {
+		t.Fatalf("%s: the run script never tests $%s with =~", where, variable)
+	}
+	rest := run[i+len(marker):]
+	j := strings.Index(rest, " ]]")
+	if j < 0 {
+		t.Fatalf("%s: unterminated [[ ... =~ ... ]] for $%s", where, variable)
+	}
+	re, err := regexp.Compile(rest[:j])
+	if err != nil {
+		t.Fatalf("%s: the pattern for $%s does not compile: %v", where, variable, err)
+	}
+	return re
 }
 
 // wantOptionalSecrets checks that a reusable workflow declares exactly these

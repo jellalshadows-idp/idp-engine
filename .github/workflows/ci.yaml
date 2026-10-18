@@ -109,3 +109,49 @@ jobs:
         run: |
           tofu init -backend=false -input=false
           tofu validate
+
+  release-snapshot:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: goreleaser check
+        id: check
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: check
+      - name: goreleaser snapshot
+        id: snapshot
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: release --snapshot --clean --skip=publish
+      - name: the snapshot binary reports a v-tag
+        id: tag-check
+        run: |
+          archives=(dist/idp_*_linux_amd64.tar.gz)
+          if [ "${#archives[@]}" -ne 1 ] || [ ! -f "${archives[0]}" ]; then
+            echo "::error::want exactly one linux/amd64 archive in dist/, got ${archives[*]}"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/idp-check"
+          tar -xzf "${archives[0]}" -C "$RUNNER_TEMP/idp-check"
+          got="$("$RUNNER_TEMP/idp-check/idp" version)"
+          if ! [[ "$got" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the snapshot binary prints $got: the version ldflag must use {{.Tag}}, so rendered module sources keep the v (.goreleaser.yaml)"
+            exit 1
+          fi
+          echo "snapshot idp version: $got"
