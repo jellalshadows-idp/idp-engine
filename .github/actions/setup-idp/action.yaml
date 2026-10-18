@@ -1,18 +1,80 @@
 name: setup-idp
-description: Install Go and OpenTofu, and build the idp CLI from an idp-engine checkout (ADR-0021).
+description: Install OpenTofu and the idp CLI for an idp-engine checkout. A release commit installs its release binary after checking its checksum and build provenance; any other commit is built from source (ADR-0021, ADR-0028).
 
 inputs:
   engine-dir:
     description: The idp-engine checkout, relative to the workspace.
     required: true
   version:
-    description: The commit of that checkout, 40 hex characters. The build embeds it, and rendered module sources pin it.
+    description: The commit of that checkout, 40 hex characters. A release commit installs its release, whose binary carries the tag; any other commit is built with the commit embedded. Rendered module sources pin that version.
     required: true
 
 runs:
   using: composite
   steps:
+    - id: download
+      name: download and verify the release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        IDP_VERSION: ${{ inputs.version }}
+      run: | # zizmor: ignore[github-env] appends a fixed directory under RUNNER_TEMP to GITHUB_PATH; no input reaches the value
+        # A release commit installs its release: the archive is checked against
+        # the release's checksums.txt and its provenance against this commit
+        # before it runs (ADR-0028). Any other commit is built from source.
+        if ! listing="$(gh api --paginate "repos/jellalshadows-idp/idp-engine/git/matching-refs/tags/v" --jq '.[] | [.ref, .object.type, .object.sha] | @tsv')"; then
+          echo "::error::setup-idp: could not list the idp-engine release tags, so it cannot tell whether $IDP_VERSION is a release; re-run the job"
+          exit 1
+        fi
+        tags=()
+        while IFS=$'\t' read -r ref type sha; do
+          if [[ "$type" == commit && "$sha" == "$IDP_VERSION" && "$ref" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            tags+=("${ref#refs/tags/}")
+          fi
+        done <<< "$listing"
+        if [ "${#tags[@]}" -eq 0 ]; then
+          echo "setup-idp: $IDP_VERSION is not a release; building idp from source"
+          echo "installed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ "${#tags[@]}" -gt 1 ]; then
+          echo "::error::setup-idp: $IDP_VERSION carries several release tags (${tags[*]}); a release commit has exactly one"
+          exit 1
+        fi
+        tag="${tags[0]}"
+        case "$RUNNER_ARCH" in
+          X64) arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::setup-idp: idp releases have no linux archive for runner architecture $RUNNER_ARCH"; exit 1 ;;
+        esac
+        archive="idp_${tag#v}_linux_${arch}.tar.gz"
+        dl="$RUNNER_TEMP/idp-dl"
+        rm -rf "$dl"
+        mkdir -p "$dl"
+        if ! gh release download "$tag" --repo jellalshadows-idp/idp-engine --pattern "$archive" --pattern checksums.txt --dir "$dl" || [ ! -f "$dl/$archive" ] || [ ! -f "$dl/checksums.txt" ]; then
+          echo "::error::setup-idp: $IDP_VERSION is release $tag, but $archive and checksums.txt could not be downloaded from it. A release commit never falls back to a source build: finish the release's publish job or pin another release (docs/runbooks/releases.md)"
+          exit 1
+        fi
+        if ! verified="$(cd "$dl" && sha256sum --check --ignore-missing checksums.txt)" || [ "$verified" != "$archive: OK" ]; then
+          echo "::error::setup-idp: $archive does not match the checksums.txt of release $tag"
+          exit 1
+        fi
+        if ! gh attestation verify "$dl/$archive" --repo jellalshadows-idp/idp-engine --signer-workflow jellalshadows-idp/idp-engine/.github/workflows/release.yaml --source-digest "$IDP_VERSION" --source-ref refs/heads/main; then
+          echo "::error::setup-idp: the provenance of $archive does not show that release.yaml built it on main from $IDP_VERSION"
+          exit 1
+        fi
+        mkdir -p "$RUNNER_TEMP/idp-bin"
+        tar -xzf "$dl/$archive" -C "$RUNNER_TEMP/idp-bin" idp
+        got="$("$RUNNER_TEMP/idp-bin/idp" version)"
+        if [ "$got" != "$tag" ]; then
+          echo "::error::setup-idp: the idp binary of release $tag prints version $got"
+          exit 1
+        fi
+        echo "$RUNNER_TEMP/idp-bin" >> "$GITHUB_PATH"
+        echo "installed=true" >> "$GITHUB_OUTPUT"
+        echo "setup-idp: installed idp $tag, verified against $IDP_VERSION"
     - id: go
+      if: steps.download.outputs.installed != 'true'
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: ${{ inputs.engine-dir }}/go.mod
@@ -24,6 +86,7 @@ runs:
         tofu_wrapper: false
     - id: build
       name: build idp
+      if: steps.download.outputs.installed != 'true'
       shell: bash
       working-directory: ${{ inputs.engine-dir }}
       env:
