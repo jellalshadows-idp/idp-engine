@@ -14,7 +14,7 @@ Apps also need the right permission set: to write `.github/workflows/` they need
 
 ## Decision
 
-There are **two GitHub Apps** and **two environments**, with three secret scopes (spec §7.3): *(Amended in Phase 1e, 2026-10-18.)* A third App, `<org>-bot`, was added by ADR-0026.
+There are **two GitHub Apps** and **two environments**, with three secret scopes (spec §7.3):
 
 | Credential | Permissions | Where it lives |
 |---|---|---|
@@ -22,6 +22,8 @@ There are **two GitHub Apps** and **two environments**, with three secret scopes
 | `idp-writer` App key | Write, **including `Workflows`** | **Only** in environment `idp-write` (deployment branch `main`, no reviewers) |
 | State passphrase | none | Repo secret, needed to read state in plans |
 | Approval | none | Environment `idp-approval` (required reviewers, `main`, no secrets) |
+
+*(Amended in Phase 1e, 2026-10-18.)* A third App, `<org>-bot`, was added by ADR-0026.
 
 - `idp-reader` and `idp-writer` are roles. App names are unique across GitHub and limited to 34 characters, so the real Apps are `<org>-reader` and `<org>-writer` (for example `jellalshadows-idp-writer`, 24 characters). Both claims repos share the same two Apps, because Apps are installed per org.
 - Approval lives in a single job that references `idp-approval` and holds no secrets; `apply-github` references `idp-write` (§6.2). This gives exactly one approval per run.
