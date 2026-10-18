@@ -2,6 +2,7 @@ package workflowspec
 
 import (
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -225,7 +226,7 @@ func workflowFiles(t *testing.T) []string {
 // internalWorkflows run only in idp-engine.
 var (
 	reusableNames     = []string{"drift.yaml", "pr.yaml", "reconcile.yaml", "recover.yaml"}
-	internalWorkflows = []string{"ci.yaml", "e2e.yaml", "release.yaml"}
+	internalWorkflows = []string{"ci.yaml", "e2e.yaml", "release.yaml", "renovate.yaml"}
 )
 
 func reusableWorkflows(t *testing.T) []string {
@@ -568,4 +569,34 @@ func wantBotToken(t *testing.T, where string, s step, repositories string, perms
 	if !strings.HasPrefix(s.Uses, "actions/create-github-app-token@") || !maps.Equal(map[string]string(s.With), want) {
 		t.Errorf("%s: %q %v, want create-github-app-token with %v", where, s.Uses, s.With, want)
 	}
+}
+
+// repoFiles lists every file of the repository as a slash path relative to its
+// root, without .git, the local scratch folders and build output.
+func repoFiles(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(repoRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".superpowers", ".terraform", "dist":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(repoRoot, p)
+		if err != nil {
+			return err
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(out)
+	return out
 }

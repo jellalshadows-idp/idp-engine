@@ -39,12 +39,12 @@ go run ./cmd/idp bootstrap app --org <org> --role bot
 
 Confirm **Create GitHub App** in the browser, then open the printed install link and select **Only select repositories**: `idp-engine`, `idp-claims` and `idp-claims-e2e`, and nothing else. Unlike the reader and the writer, it must not have org-wide access.
 
-`apply` never writes the bot's key: it lives only in the `idp-engine` environment `idp-e2e` ([e2e harness](../e2e.md#credentials)), so "Rotating a secret" below does not apply to it. To rotate it:
+`apply` never writes the bot's key: it lives only in the `idp-engine` environments `idp-e2e` ([e2e harness](../e2e.md#credentials)), `idp-release` ([releases](releases.md)) and `idp-renovate` ([dependencies](dependencies.md)), so "Rotating a secret" below does not apply to it. To rotate it:
 
 1. Generate a new private key in the App's settings (`https://github.com/organizations/<org>/settings/apps/<org>-bot`).
-2. `gh secret set IDP_BOT_PRIVATE_KEY --env idp-e2e --repo <org>/idp-engine < <new pem>`
-3. Save the new key as `~/.idp/apps/<org>-bot.pem`, replacing the old one: the [e2e setup](../e2e.md#setting-up) command reads it.
-4. Run the e2e workflow once (`gh workflow run e2e.yaml --repo <org>/idp-engine --ref main`) and check it passes.
+2. Set it in all three environments: `for env in idp-e2e idp-release idp-renovate; do gh secret set IDP_BOT_PRIVATE_KEY --env "$env" --repo <org>/idp-engine < <new pem>; done`
+3. Save the new key as `~/.idp/apps/<org>-bot.pem`, replacing the old one: the setup commands of the three environments read it.
+4. Run each workflow once and check it passes: `gh workflow run e2e.yaml --repo <org>/idp-engine --ref main`, the same for `release.yaml` and `renovate.yaml`.
 5. Delete the old key in the App's settings.
 
 ## Create the passphrase file
@@ -118,7 +118,7 @@ IDP_BOOTSTRAP='<the variable value>' GH_TOKEN=<reader token> go run ./cmd/idp bo
 
 ## After bootstrapping
 
-Once every claims repo you intend to bootstrap is done and `check` is clean, delete the local `.pem` files and the passphrase files. Keep the bot's `~/.idp/apps/<org>-bot.pem` until the `idp-e2e` environment is set up: its [setup](../e2e.md#setting-up) reads it. The keys and the passphrase now live in GitHub secrets and your password manager.
+Once every claims repo you intend to bootstrap is done and `check` is clean, delete the local `.pem` files and the passphrase files. Keep the bot's `~/.idp/apps/<org>-bot.pem` until the `idp-e2e`, `idp-release` and `idp-renovate` environments are set up: their setup commands read it ([e2e](../e2e.md#setting-up), [releases](releases.md#setting-up-the-environment), [dependencies](dependencies.md#setting-up-the-environment)). The keys and the passphrase now live in GitHub secrets and your password manager.
 
 To bootstrap another claims repo later, generate a new private key in the App's settings page.
 
