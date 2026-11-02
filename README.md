@@ -2,9 +2,9 @@
 
 The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. Desired state lives in claims (YAML in Git), with no Kubernetes involved.
 
-> **Status:** Phase 1d is complete: an end-to-end harness runs the pipelines against `idp-claims-e2e` nightly and on dispatch, on top of the reusable `pr`, `reconcile`, `drift` and `recover` workflows; see the [phase 1d log](docs/phases/phase-1d.md), [docs/e2e.md](docs/e2e.md) and [docs/pipelines.md](docs/pipelines.md). Phase 1e (releases, Renovate, `v0.1.0`, onboarding `idp-claims`) is next.
+> **Status:** Phase 1e is complete: the engine is released with verified binaries, Renovate keeps every pin current, and the production `idp-claims` runs the pipelines at a release; see the [phase 1e log](docs/phases/phase-1e.md), the [releases runbook](docs/runbooks/releases.md) and [docs/pipelines.md](docs/pipelines.md). Phase 2 (the Component's AWS part) is next.
 
-**What exists today:** `idp-claims-e2e` runs the pipelines against the org, checked nightly by the harness; `idp-claims` is bootstrapped and protected, and gets its workflows with the first release.
+**What exists today:** `idp-claims` runs the pipelines at an engine release; `idp-claims-e2e` is checked by the end-to-end harness nightly and on every release PR.
 
 - Design: [docs/superpowers/specs/2026-10-08-idp-on-actions-design.md](docs/superpowers/specs/2026-10-08-idp-on-actions-design.md)
 - Decisions: [docs/adr/](docs/adr/)
@@ -15,6 +15,18 @@ The engine of an internal developer platform (IDP) that reconciles on **GitHub A
 - Runbooks: [docs/runbooks/](docs/runbooks/)
 - Phase log: [docs/phases/](docs/phases/)
 - Plans: [docs/superpowers/plans/](docs/superpowers/plans/)
+
+## Releases
+
+The engine ships as one version for everything (the CLI, the reusable workflows, the modules and the schemas), tagged `vX.Y.Z` and `0.x` until v1. release-please keeps a release PR on `main`; the end-to-end harness runs on it, and merging it tags the release. Each release carries `idp` for Linux, macOS and Windows (amd64 and arm64), `checksums.txt` and a build provenance attestation. Claims repos pin a release commit in their four caller workflows, the workflows run that release's verified binary, and Renovate moves the pins when a new release ships.
+
+To install the CLI, download your platform's archive from the release page and verify it before you run it:
+
+```bash
+gh attestation verify <archive> --repo jellalshadows-idp/idp-engine   --signer-workflow jellalshadows-idp/idp-engine/.github/workflows/release.yaml
+```
+
+Runbooks: [releases](docs/runbooks/releases.md), [dependency updates](docs/runbooks/dependencies.md).
 
 ## Honest limitations (v1)
 
