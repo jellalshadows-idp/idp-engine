@@ -146,7 +146,6 @@
 * amend spec with phase 0 inputs and go bootstrap ([fa4c17f](https://github.com/jellalshadows-idp/idp-engine/commit/fa4c17f3301a6058a8e2e45f96658f431ce8acd4))
 * **bootstrap:** explain single-page listings ([3e7abd3](https://github.com/jellalshadows-idp/idp-engine/commit/3e7abd3d18975949340f6340aeb3a9914b77629a))
 * **bootstrap:** note null in the bypass actors fail-closed comment ([1cb8cbd](https://github.com/jellalshadows-idp/idp-engine/commit/1cb8cbddb24c57a4c35a6bbba7add7edf8744881))
-* clarify the two adrian accounts in the phase 0 log ([22a8ee4](https://github.com/jellalshadows-idp/idp-engine/commit/22a8ee4c3a877bc7b097bce2ed8011873e140bd8))
 * close phase 0 with s2 results, real-run defects and final status ([7493c0c](https://github.com/jellalshadows-idp/idp-engine/commit/7493c0c3f94a41edf912f9b8f8a3a8617a5f801a))
 * compare the protection App against the scoped approver token ([fbbb471](https://github.com/jellalshadows-idp/idp-engine/commit/fbbb471d845752590ef2d7906f0285ac8906d069))
 * complete the phase 1d log with the verified run and CI facts ([b71d5dc](https://github.com/jellalshadows-idp/idp-engine/commit/b71d5dc86720630af8c6538c86d6e2a57397ce69))
