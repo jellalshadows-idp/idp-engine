@@ -1,7 +1,8 @@
 name: idp-pr
 
 # Claims repo caller of the engine's PR pipeline (docs/pipelines.md). Keep the
-# pinned engine commit identical in all four idp workflows. The idp-gate job is
+# pinned engine release identical in all four idp workflows; Renovate moves
+# them together. The idp-gate job is
 # the check the main ruleset requires (ADR-0022): keep its name, and add no path
 # filters, so every pull request reports it.
 
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   pr:
-    uses: jellalshadows-idp/idp-engine/.github/workflows/pr.yaml@aa0f2b4a50e965c84e251f445b5938148ff8a1dc # unreleased
+    uses: jellalshadows-idp/idp-engine/.github/workflows/pr.yaml@08ec386b36f80d338d5cbf3927848af018ca725b # v0.1.0
     permissions:
       contents: read
       pull-requests: write

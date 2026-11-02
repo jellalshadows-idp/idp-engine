@@ -11,13 +11,13 @@ import (
 var (
 	pinnedRef   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$`)
 	versionNote = regexp.MustCompile(`^# v\d+\.\d+\.\d+(\s|$)`)
-	unreleased  = regexp.MustCompile(`^# unreleased(\s|$)`)
 )
 
 // checkUses enforces spec §7.5: actions and reusable workflows from other
 // repositories are pinned to a full commit SHA, with the version as a trailing
-// comment that Renovate keeps in step. An engine workflow ref of an unreleased
-// engine says "# unreleased" instead. Local actions (./...) are checked by
+// comment that Renovate keeps in step. Engine workflow refs pin a release too
+// (ADR-0028); only the end-to-end harness pins an unreleased commit, in
+// idp-claims-e2e. Local actions (./...) are checked by
 // TestJobsBuildIdpFromTheWorkflowCommit.
 func checkUses(value, comment string) error {
 	if strings.HasPrefix(value, "./") {
@@ -25,9 +25,6 @@ func checkUses(value, comment string) error {
 	}
 	if !pinnedRef.MatchString(value) {
 		return fmt.Errorf("%q is not pinned to a full commit SHA", value)
-	}
-	if strings.Contains(value, "/idp-engine/.github/workflows/") && unreleased.MatchString(comment) {
-		return nil
 	}
 	if !versionNote.MatchString(comment) {
 		return fmt.Errorf("%q needs a trailing '# vX.Y.Z' comment, got %q", value, comment)
@@ -106,7 +103,7 @@ func TestCheckUses(t *testing.T) {
 		{"pinned action", "actions/checkout@" + sha, "# v7.0.1", true},
 		{"pinned action with a trailing note", "actions/create-github-app-token@" + sha, "# v3.2.0 # zizmor: ignore[github-app] reason", true},
 		{"local action", "./.idp/engine/.github/actions/setup-idp", "", true},
-		{"reusable workflow, unreleased", "acme/idp-engine/.github/workflows/pr.yaml@" + sha, "# unreleased", true},
+		{"reusable workflow marked unreleased", "acme/idp-engine/.github/workflows/pr.yaml@" + sha, "# unreleased", false},
 		{"reusable workflow, released", "acme/idp-engine/.github/workflows/pr.yaml@" + sha, "# v0.1.0", true},
 		{"another repo's workflow marked unreleased", "acme/other/.github/workflows/x.yaml@" + sha, "# unreleased", false},
 		{"tag", "actions/checkout@v7", "# v7", false},
