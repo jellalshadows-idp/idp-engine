@@ -16,7 +16,7 @@ import (
 
 // Pinned versions the rendered stacks require (spec §7.5).
 const (
-	TofuVersion           = "1.12.6"
+	TofuVersion           = "1.13.1"
 	GitHubProviderVersion = "6.13.0"
 )
 
