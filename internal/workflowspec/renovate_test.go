@@ -34,6 +34,7 @@ type renovateConfig struct {
 	Automerge            *bool              `json:"automerge"`
 	MinimumReleaseAge    string             `json:"minimumReleaseAge"`
 	PRHourlyLimit        *int               `json:"prHourlyLimit"`
+	PRConcurrentLimit    *int               `json:"prConcurrentLimit"`
 	InternalChecksFilter string             `json:"internalChecksFilter"`
 	StatusCheckNames     map[string]*string `json:"statusCheckNames"`
 	EnabledManagers      []string           `json:"enabledManagers"`
@@ -190,6 +191,9 @@ func TestRenovateGlobalConfig(t *testing.T) {
 	}
 	if c.PRHourlyLimit == nil || *c.PRHourlyLimit != 0 {
 		t.Errorf("prHourlyLimit = %v, want 0: the weekly run opens every update, and engine bumps do not wait", c.PRHourlyLimit)
+	}
+	if c.PRConcurrentLimit == nil || *c.PRConcurrentLimit != 0 {
+		t.Errorf("prConcurrentLimit = %v, want 0: the default of 10 would make the engine bump wait behind open third-party PRs", c.PRConcurrentLimit)
 	}
 	if c.GitAuthor != botGitAuthor {
 		t.Errorf("gitAuthor = %q, want %q", c.GitAuthor, botGitAuthor)

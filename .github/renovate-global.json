@@ -13,6 +13,7 @@
   "minimumReleaseAge": "14 days",
   "internalChecksFilter": "strict",
   "prHourlyLimit": 0,
+  "prConcurrentLimit": 0,
   "statusCheckNames": {
     "artifactError": null,
     "configValidation": null,

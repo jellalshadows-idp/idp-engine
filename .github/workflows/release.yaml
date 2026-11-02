@@ -147,8 +147,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      actions: write
-      pull-requests: read
+      actions: write # dispatch the harness on main
+      pull-requests: read # read the release PR and its head commit
     steps:
       # A workflow_dispatch made with GITHUB_TOKEN does start a run. The harness
       # runs on main, the release PR's base, and reports idp-e2e on its head.
