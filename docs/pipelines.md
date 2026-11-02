@@ -80,7 +80,7 @@ The tag lookup, the download and the provenance check use the job's own `GITHUB_
 Engine releases are `vX.Y.Z` tags ([releases runbook](runbooks/releases.md)). A claims repo upgrades by re-pinning its four caller workflows:
 
 1. Re-pin all four together, to the commit the new tag points at, with the tag as the comment: `@<commit> # vX.Y.Z`. Renovate opens this PR (group "idp engine", [dependencies runbook](runbooks/dependencies.md)); by hand, the commit is `gh api repos/jellalshadows-idp/idp-engine/git/ref/tags/vX.Y.Z --jq .object.sha`.
-2. The PR's plan shows the upgrade: every module source moves to the new `?ref=`. Merge it when the plan is what you expect.
+2. The PR's plan comment shows only the resource changes the new engine makes, usually `No infrastructure changes.`; the version jump shows in the PR diff (`# vA` to `# vB`, all four callers) and in the release notes. A plan that does change resources is reviewed like any other plan, and a delete or replace waits for approval. Merge it when the plan is what you expect.
 3. Re-run `idp bootstrap apply` for the claims repo when the release notes say so, after the re-pin merges, never before.
 
 **From an engine older than commit `3b9beed` (the end-to-end harness) to `v0.1.0` or later:** the newer engine writes `IDP_BOOTSTRAP` with `approverIds`, which the older engine's parser rejects, while the newer parser still reads the older `approverId` form. So merge the re-pin first, then run `idp bootstrap apply` and `check` for that claims repo ([bootstrap runbook](runbooks/bootstrap.md)). Until `apply` runs, the drift check reports `IDP_BOOTSTRAP` as drift.

@@ -26,11 +26,11 @@ gh workflow run renovate.yaml --repo jellalshadows-idp/idp-engine --ref main
 | actionlint, zizmor | `ci.yaml` | one each |
 | Renovate | `renovate.yaml` and the validator image in `ci.yaml` | one |
 
-Runner images (`runs-on`) are not updated. Every update waits 14 days after its release; engine releases do not wait. Renovate opens every pending update in the run, with no hourly limit on pull requests (`prHourlyLimit: 0`). Pending updates are listed in the "Dependency Dashboard" issue of each repository.
+Runner images (`runs-on`) are not updated. Every update waits 14 days after its release; engine releases do not wait. Renovate opens every pending update in the run, with no limit on pull requests per hour or open at once (`prHourlyLimit: 0`, `prConcurrentLimit: 0`), so the engine bump never waits behind third-party PRs. Pending updates are listed in the "Dependency Dashboard" issue of each repository.
 
 ## Reviewing and merging
 
-Renovate never merges. Wait for the PR's checks, read it, and merge it with a merge commit: `gh pr merge <number> --repo <owner>/<repo> --merge --delete-branch`. In `idp-claims` a PR merges only after `idp-gate`; for an engine upgrade the plan comment shows every module source moving to the new `?ref=` ([Upgrading the engine](../pipelines.md#upgrading-the-engine)).
+Renovate never merges. Wait for the PR's checks, read it, and merge it with a merge commit: `gh pr merge <number> --repo <owner>/<repo> --merge --delete-branch`. In `idp-claims` a PR merges only after `idp-gate`; for an engine upgrade the plan comment shows only the resource changes the new engine makes, usually `No infrastructure changes.`, and the version jump shows in the PR diff and the release notes ([Upgrading the engine](../pipelines.md#upgrading-the-engine)).
 
 Renovate sets no commit statuses (the bot can read statuses, not write them), so there is no `renovate/stability-days` check on its branches.
 
@@ -46,13 +46,13 @@ gh variable set IDP_BOT_CLIENT_ID --env idp-renovate --repo jellalshadows-idp/id
 
 ## A GitHub provider update (`needs-lockfile`)
 
-Renovate moves the provider pins but not the shipped lock file, so the PR's `go` and `modules` jobs fail (`TestRenderCopiesTheLockFile`, `tofu init -lockfile=readonly`). Regenerate the lock on the PR branch, in Git Bash, with OpenTofu at the pinned version (here 1.12.6):
+Renovate moves the provider pins but not the shipped lock file, so the PR's `go` and `modules` jobs fail (`TestRenderCopiesTheLockFile`, `tofu init -lockfile=readonly`). Regenerate the lock on the PR branch, in Git Bash, with OpenTofu at the version pinned in `render.TofuVersion` (and `ci.yaml`), written `<version>` below:
 
 ```bash
 gh pr checkout <number> --repo jellalshadows-idp/idp-engine
 cd modules/github/group
 rm -f .terraform.lock.hcl
-"$HOME/.idp/tools/tofu-1.12.6/tofu.exe" providers lock -platform=linux_amd64 -platform=windows_amd64 -platform=darwin_amd64 -platform=darwin_arm64
+"$HOME/.idp/tools/tofu-<version>/tofu.exe" providers lock -platform=linux_amd64 -platform=windows_amd64 -platform=darwin_amd64 -platform=darwin_arm64
 mv .terraform.lock.hcl ../../../lockfiles/github.terraform.lock.hcl
 cd ../../..
 ```
