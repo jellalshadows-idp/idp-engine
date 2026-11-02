@@ -5,7 +5,7 @@ A claims repo reconciles through four thin workflows that call the engine's reus
 ## Onboard a claims repo
 
 1. Bootstrap the repo first ([bootstrap runbook](runbooks/bootstrap.md)). The pipelines need what `idp bootstrap apply` creates: the `wet` branch, the rulesets, the `idp-approval` and `idp-write` environments, the secrets `IDP_READER_PRIVATE_KEY` and `IDP_STATE_PASSPHRASE`, the variables `IDP_READER_CLIENT_ID` and `IDP_BOOTSTRAP`, and, in `idp-write`, the secret `IDP_WRITER_PRIVATE_KEY` and the variable `IDP_WRITER_CLIENT_ID`. The reconcile, recover and drift templates pass the writer key by name; keep that mapping.
-2. Copy the four files of [`examples/claims-repo/.github/workflows/`](../examples/claims-repo/.github/workflows/) into the claims repo's `.github/workflows/`. Keep the pinned engine commit; all four must pin the same one.
+2. Copy the four files of [`examples/claims-repo/.github/workflows/`](../examples/claims-repo/.github/workflows/) into the claims repo's `.github/workflows/`. They pin the latest release (its commit, with the tag as the comment); keep all four on the same one ([Upgrading the engine](#upgrading-the-engine)).
 3. Add `config/platform.yaml` ([claims reference](claims.md)), and claims when you want them.
 4. Open a pull request. The `idp-gate` check that the `main` ruleset requires comes from the PR workflow.
 
