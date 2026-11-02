@@ -47,7 +47,7 @@ jobs:
         # concurrency.queue is a documented GitHub key (spec §6.2) that actionlint v1.7.12 does not know yet.
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -ignore 'unexpected key "queue" for "concurrency" section' examples/claims-repo/.github/workflows/*.yaml
       - name: zizmor
-        run: pipx run zizmor==1.30.1 .github/workflows .github/actions/setup-idp/action.yaml examples/claims-repo/.github/workflows/*.yaml
+        run: pipx run zizmor==1.31.1 .github/workflows .github/actions/setup-idp/action.yaml examples/claims-repo/.github/workflows/*.yaml
       - name: renovate config
         id: renovate-config
         # The Renovate image at renovate.yaml's version: Renovate needs a newer
