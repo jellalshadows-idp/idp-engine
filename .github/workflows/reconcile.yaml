@@ -178,7 +178,7 @@ jobs:
       - name: keep the plan and the render for the apply
         id: upload
         if: steps.stacks.outputs.github == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: idp-reconcile
           path: ${{ runner.temp }}/idp/out
@@ -324,7 +324,7 @@ jobs:
       - name: keep the wet commit as an artifact
         id: keep
         if: always() && steps.prepare.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: idp-wet-root
           path: ${{ runner.temp }}/idp/wet-root
