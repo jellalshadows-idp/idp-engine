@@ -6,3 +6,7 @@ paths:
       # properties (the reusable workflow's own repository and commit, ADR-0021)
       # that actionlint v1.7.12 does not know yet.
       - 'property "workflow_(repository|sha)" is not defined in object type'
+      # concurrency.queue is a documented GitHub key (spec §6.2) that actionlint
+      # v1.7.12 does not know yet; release.yaml uses it so that no release run
+      # is dropped (ADR-0028).
+      - 'unexpected key "queue" for "concurrency" section'

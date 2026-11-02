@@ -2,9 +2,11 @@ package workflowspec
 
 import (
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -116,6 +118,7 @@ type step struct {
 	ID               string `yaml:"id"`
 	Name             string `yaml:"name"`
 	If               string `yaml:"if"`
+	ContinueOnError  string `yaml:"continue-on-error"`
 	Uses             string `yaml:"uses"`
 	Run              string `yaml:"run"`
 	Shell            string `yaml:"shell"`
@@ -223,7 +226,7 @@ func workflowFiles(t *testing.T) []string {
 // internalWorkflows run only in idp-engine.
 var (
 	reusableNames     = []string{"drift.yaml", "pr.yaml", "reconcile.yaml", "recover.yaml"}
-	internalWorkflows = []string{"ci.yaml", "e2e.yaml"}
+	internalWorkflows = []string{"ci.yaml", "e2e.yaml", "release.yaml", "renovate.yaml"}
 )
 
 func reusableWorkflows(t *testing.T) []string {
@@ -461,6 +464,29 @@ func wantRun(t *testing.T, where string, s step, subs ...string) {
 	}
 }
 
+// bashMatch returns the extended regular expression a run script tests
+// variable against ([[ "$variable" =~ pattern ]]), compiled with Go's regexp:
+// for the anchored character-class patterns the workflows use, bash and RE2
+// agree. It reads the first such test.
+func bashMatch(t *testing.T, where, run, variable string) *regexp.Regexp {
+	t.Helper()
+	marker := `"$` + variable + `" =~ `
+	i := strings.Index(run, marker)
+	if i < 0 {
+		t.Fatalf("%s: the run script never tests $%s with =~", where, variable)
+	}
+	rest := run[i+len(marker):]
+	j := strings.Index(rest, " ]]")
+	if j < 0 {
+		t.Fatalf("%s: unterminated [[ ... =~ ... ]] for $%s", where, variable)
+	}
+	re, err := regexp.Compile(rest[:j])
+	if err != nil {
+		t.Fatalf("%s: the pattern for $%s does not compile: %v", where, variable, err)
+	}
+	return re
+}
+
 // wantOptionalSecrets checks that a reusable workflow declares exactly these
 // secrets and requires none: a fork PR gets no secrets and must still reach the
 // verdict, and each job that needs a secret names the missing one (ruling P-11).
@@ -523,4 +549,54 @@ func invokes(run, sub string) bool {
 		}
 	}
 	return false
+}
+
+// wantBotToken checks a create-github-app-token step: the bot App's credentials
+// from the environment, the idp-engine owner, exactly these repositories and
+// exactly these permissions (permission-<scope>: <level>), nothing else. perms
+// is keyed by scope without the permission- prefix.
+func wantBotToken(t *testing.T, where string, s step, repositories string, perms map[string]string) {
+	t.Helper()
+	want := map[string]string{
+		"client-id":    "${{ vars.IDP_BOT_CLIENT_ID }}",
+		"private-key":  "${{ secrets.IDP_BOT_PRIVATE_KEY }}",
+		"owner":        "jellalshadows-idp",
+		"repositories": repositories,
+	}
+	for scope, level := range perms {
+		want["permission-"+scope] = level
+	}
+	if !strings.HasPrefix(s.Uses, "actions/create-github-app-token@") || !maps.Equal(map[string]string(s.With), want) {
+		t.Errorf("%s: %q %v, want create-github-app-token with %v", where, s.Uses, s.With, want)
+	}
+}
+
+// repoFiles lists every file of the repository as a slash path relative to its
+// root, without .git, the local scratch folders and build output.
+func repoFiles(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(repoRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".superpowers", ".terraform", "dist":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(repoRoot, p)
+		if err != nil {
+			return err
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(out)
+	return out
 }

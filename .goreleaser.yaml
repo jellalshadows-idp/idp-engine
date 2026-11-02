@@ -1,0 +1,43 @@
+# GoReleaser configuration for the idp CLI (ADR-0028). release.yaml runs it
+# after release-please has tagged a release; ci.yaml checks it and builds a
+# snapshot on every pull request. It never runs locally.
+version: 2
+
+builds:
+  - main: ./cmd/idp
+    binary: idp
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # {{.Tag}} keeps the v: rendered module sources pin ?ref=<this version>,
+    # and {{.Version}} (0.1.0) names no ref of the engine.
+    ldflags:
+      - -s -w -X github.com/jellalshadows-idp/idp-engine/internal/version.Version={{.Tag}}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "idp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+# release-please writes the notes and creates the release; GoReleaser uploads
+# the archives and checksums.txt into it.
+changelog:
+  disable: true
+
+release:
+  mode: keep-existing

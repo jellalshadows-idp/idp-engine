@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-12
-- Spec: [§6.1](../superpowers/specs/2026-10-08-idp-on-actions-design.md#61-pr-pull_request--main), [§6.2](../superpowers/specs/2026-10-08-idp-on-actions-design.md#62-reconcile-push--main-and-workflow_dispatch-on-main), [§6.4](../superpowers/specs/2026-10-08-idp-on-actions-design.md#64-drift-daily-cron), [§7.3](../superpowers/specs/2026-10-08-idp-on-actions-design.md#73-two-github-apps-and-three-secret-scopes), [§7.1](../superpowers/specs/2026-10-08-idp-on-actions-design.md#71-threat-model)
+- Spec: [§6.1](../superpowers/specs/2026-10-08-idp-on-actions-design.md#61-pr-pull_request--main), [§6.2](../superpowers/specs/2026-10-08-idp-on-actions-design.md#62-reconcile-push--main-and-workflow_dispatch-on-main), [§6.4](../superpowers/specs/2026-10-08-idp-on-actions-design.md#64-drift-daily-cron), [§7.3](../superpowers/specs/2026-10-08-idp-on-actions-design.md#73-three-github-apps-and-their-secret-scopes), [§7.1](../superpowers/specs/2026-10-08-idp-on-actions-design.md#71-threat-model)
 
 ## Context
 

@@ -75,7 +75,7 @@ encrypted state and its own passphrase (owner decision, 2026-10-09; see §8.5).
 | `idp-engine` | Product: Go CLI `idp`, OpenTofu modules (`modules/github/*`, `modules/aws/*`), reusable workflows, JSON Schemas, provider lock files, bootstrap, docs | release-please, **one version for everything** (`vX.Y.Z`) |
 | `idp-features` | Catalog of features (`features/<name>/`) | release-please multi-component, tags `<name>-v<semver>` |
 | `idp-modules` | Catalog of Workspace modules (`modules/<name>/`). v1 ships `s3-bucket` | release-please multi-component, tags `<name>-v<semver>` |
-| `idp-claims` | `main` = desired state (DRY). `wet` = rendered output + encrypted GitHub state, written only by `idp-writer` | None. Renovate bumps the engine version |
+| `idp-claims` | `main` = desired state (DRY). `wet` = rendered output + encrypted GitHub state, written only by `idp-writer` | None. Renovate, run from `idp-engine`, bumps the engine version (ADR-0029). *(Amendment A9.)* |
 | `idp-claims-e2e` | E2E harness target (see §8.5): same shape as `idp-claims`, but only `e2e-`-prefixed resources | None |
 
 ### 3.2 Flow
@@ -119,8 +119,9 @@ Each unit has one purpose and a narrow interface.
 
 CLI subcommands: `idp validate`, `idp fetch`, `idp adopt`, `idp render`,
 `idp diff`, `idp plan-summary`, `idp gate`, `idp comment`, `idp issue`,
-`idp wet-push`, `idp encryption-env`, `idp feature test`, and
-`idp bootstrap app|apply|check`. They share one exit-code convention
+`idp wet-push`, `idp encryption-env`, `idp feature test`,
+`idp bootstrap app|apply|check`, and `idp version`, which prints the build's version
+(ADR-0028; *Amendment A9, 2026-10-18*). They share one exit-code convention
 (ADR-0016): 0 ok, 1 failed, 2 usage error, 3 found problems. Platform config
 loading lives in `internal/claims` (Phase 1a ruling R-3.3) rather than a
 separate `internal/config`. *(Amendment A4, 2026-10-10.)*
@@ -413,9 +414,10 @@ The guiding rule: **nothing is ever applied that nobody saw.**
 the recovery button for a failed wet push (ADR-0024). Each one is
 `uses: <org>/idp-engine/.github/workflows/<x>.yaml@<commit SHA> # <version>`, and
 Renovate bumps the ref and the comment. Each workflow sets `permissions: {}`, and each
-job asks for what it needs. Every reusable job builds `idp` from the reusable
+job asks for what it needs. Every reusable job gets `idp` for the reusable
 workflow's own commit, so the workflow, the CLI and the module refs are one version
-(ADR-0021). Until Phase 2 the only stack is `github`, and until Phase 4 there are no
+(ADR-0021): a release commit installs its verified release binary, and any other
+commit is built from source (ADR-0028; *Amendment A9, 2026-10-18*). Until Phase 2 the only stack is `github`, and until Phase 4 there are no
 features to fetch or adopt: the workflows fail if any other stack is affected.
 *(Amendment A6, 2026-10-11.)*
 
@@ -583,7 +585,7 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
   backup. Restoring state is **not** a `git revert`; there is a runbook for it.
 - Rotation uses OpenTofu's `fallback` block (runbook).
 
-### 7.3 Two GitHub Apps and three secret scopes
+### 7.3 Three GitHub Apps and their secret scopes
 
 | Credential | Permissions | Where it lives |
 |---|---|---|
@@ -591,14 +593,16 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 | `idp-writer` App key | Write, **including `Workflows`** (features write `.github/workflows/`; `Contents` alone is rejected) | **Only** in environment `idp-write` (deployment branch `main`, no reviewers): the applies and the `wet` commits, and also the reconcile and drift plans (ADR-0025) *(Amendment A7, 2026-10-12.)* |
 | State passphrase | — | Repo secret, needed to read state in plans |
 | Approval | — | Environment `idp-approval` (required reviewers, `main`, no secrets) |
-| `idp-bot` App key | Pull requests, contents and workflows on the engine and claims repos; members read | Only in `idp-engine` environments with deployment branch `main` (`idp-e2e`; the release and Renovate environments in Phase 1e); installed on `idp-engine`, `idp-claims` and `idp-claims-e2e` only (ADR-0026). *(Amendment A8.)* |
+| `idp-bot` App key | Pull requests, contents and workflows on the engine and claims repos; members read | Only in `idp-engine` environments with deployment branch `main`: `idp-e2e`, `idp-release` and `idp-renovate`; installed on `idp-engine`, `idp-claims` and `idp-claims-e2e` only (ADR-0026). *(Amendment A8; environments named in A9.)* |
 | E2E approver token | Approves `idp-approval` deployments in `idp-claims-e2e` only | Only in `idp-engine` environment `idp-e2e` (ADR-0027). *(Amendment A8.)* |
 
-- `idp-reader` and `idp-writer` are **roles**. GitHub App names are unique across
-  GitHub and limited to 34 characters, so the real Apps are named
-  `<org>-reader` and `<org>-writer`. For example, `jellalshadows-idp-writer` is 24
-  characters. Both claims repos (`idp-claims` and `idp-claims-e2e`) share the same
-  two Apps, because Apps are installed per org.
+- `idp-reader`, `idp-writer` and `idp-bot` are **roles**. GitHub App names are unique
+  across GitHub and limited to 34 characters, so the real Apps are named
+  `<org>-reader`, `<org>-writer` and `<org>-bot`. For example, `jellalshadows-idp-writer`
+  is 24 characters. Both claims repos (`idp-claims` and `idp-claims-e2e`) share the
+  reader and writer Apps, which are installed on the whole org; the bot is installed
+  only on `idp-engine`, `idp-claims` and `idp-claims-e2e` (ADR-0026).
+  *(Amendment A9, 2026-10-18.)*
 - Tokens are minted per step with `actions/create-github-app-token`, with the
   narrowest scope that works (ADR-0023), and expire after 1 hour. A longer apply is a
   known limitation, and Phase 0 measures how long applies take.
@@ -613,7 +617,9 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 - **`idp-claims` `wet`:** only `idp-writer` may update it; no force push, no
   deletion.
 - **Tags in `idp-engine`, `idp-features` and `idp-modules`:** a published tag never
-  moves.
+  moves. In `idp-engine` the repository ruleset `idp-engine-tags` forbids deleting,
+  force-moving or updating `refs/tags/v*`, with no bypass (ADR-0028).
+  *(Amendment A9, 2026-10-18.)*
 
 ### 7.5 Supply chain
 - Actions are pinned by SHA, and Renovate updates them along with the version
@@ -623,12 +629,17 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 - The OpenTofu version is pinned exactly (≥ 1.12, chosen in Phase 0).
 - Every pinned version (actions, tools, providers, images, Go modules) must be at
   least 14 days old when it is adopted. Renovate enforces this with
-  `minimumReleaseAge`.
+  `minimumReleaseAge`. The engine's own releases, pinned by the claims repos and the
+  caller templates, are exempt: they are this project's code, proven by the
+  end-to-end harness on their release PR (ADR-0029). *(Amendment A9, 2026-10-18.)*
 - The CLI is released with checksums and a provenance attestation
   (`actions/attest-build-provenance`). The workflows run `gh attestation verify`
-  before they execute it. Until the first release, the workflows build `idp` from
-  source at the pinned commit instead (ADR-0021); Phase 1d decides how releases
-  change that. *(Amendment A6, 2026-10-11.)*
+  before they execute it. A pinned commit that carries a release tag installs that
+  release's binary after checking it against the release's `checksums.txt` and
+  verifying that `release.yaml` built it on `main` from that commit; it never falls
+  back to a build. Any other commit, such as the harness's commit under test, is
+  built from source at the pinned commit (ADR-0021, ADR-0028). *(Amendment A6,
+  2026-10-11; A9, 2026-10-18.)*
 
 ### 7.6 No secrets flow through the IDP in v1
 - Claims have no secret fields, on purpose.
@@ -698,7 +709,11 @@ The harness is `cmd/idp-e2e`, run by the engine workflow `e2e.yaml` in environme
 a member login (expecting no change) and runs drift. It approves the destructive
 reconcile with the token of a test account that is a second `idp-approval` reviewer
 in `idp-claims-e2e` only, because only a person can approve a deployment (ADR-0027).
-Release PRs join in Phase 1e. *(Amendment A8, 2026-10-13.)*
+*(Amendment A8, 2026-10-13.)* When release-please creates or updates the engine's
+release PR, `release.yaml` dispatches the harness on `main`, the release PR's base
+(the same code without the changelog). The run posts the commit status `idp-e2e` on
+the release PR's head, `pending` and then `success` or `failure`, and a release PR is
+merged only when `idp-e2e` is green (ADR-0028). *(Amendment A9, 2026-10-18.)*
 
 **One org, isolated by repo and prefix (owner decision, 2026-10-09).** There is no
 separate sandbox org, so the isolation is enforced in three ways:
@@ -790,7 +805,7 @@ use what that phase measured. Each phase ships an engine minor release.
 | Phase | Delivers | Exit criteria |
 |---|---|---|
 | 0 | Bootstrap + spike | Orgs, Apps and repos exist. An ADR with measurements: encrypted state round-trip via Git, the GitHub provider with an App token, apply duration vs the 1-hour token, floci replay time per stack, and pending-invite behavior |
-| 1 → `0.1.0` | Group + Component (GitHub part), all pipelines (§6), **E2E harness born** | E2E creates, modifies and deletes an `e2e-` repo and team through `idp-claims-e2e` |
+| 1 → `0.1.0` | Group + Component (GitHub part), all pipelines (§6), **E2E harness born**, releases and Renovate; `0.1.0` ships at the end of Phase 1e *(Amendment A9)* | E2E creates, modifies and deletes an `e2e-` repo and team through `idp-claims-e2e` |
 | 2 → `0.2.0` | Component AWS part: baseline, ECR + role, deterministic env variables | E2E checks the env variables, and floci integration is green |
 | 3 → `0.3.0` | Workspace: allowlist, policies, orphans, `idp-modules/s3-bucket` | E2E covers the two-step delete and the `apply`-policy rejection |
 | 4 → `0.4.0` | Features: `idp-features` + the 3 features, managed and userManaged | Golden tests, plus E2E with one managed and one userManaged file |

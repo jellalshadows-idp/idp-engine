@@ -288,3 +288,17 @@ Writes: one line per finding. Notices do not count as drift. It ends with `boots
 The scheduled drift run uses `--params-env IDP_BOOTSTRAP --allow-hidden-bypass` with the reader token. The owner-run check, with an owner token and without `--allow-hidden-bypass`, still verifies bypass lists.
 
 Exit codes: 0 no drift (notices allowed); 1 the check could not run; 2 usage error; 3 drift found.
+
+## version
+
+Prints this build's version.
+
+```text
+idp version
+```
+
+It takes no flags.
+
+Writes: one line with the version: the release tag of a released binary (for example `v0.1.0`), the engine commit of the source build the pipelines make for a commit that is not a release, or `dev` for a local build. Rendered module sources pin the same value. The workflows compare it with the release tag after they install a release ([ADR-0028](adr/0028-releases-and-how-the-workflows-get-idp.md)).
+
+Exit codes: 0 printed; 2 usage error (an argument).

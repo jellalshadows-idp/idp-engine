@@ -21,6 +21,18 @@ func parseWorkflow(t *testing.T, src string) *workflow {
 	return w
 }
 
+func TestBashMatch(t *testing.T) {
+	run := `x=1
+if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+  exit 1
+fi
+`
+	re := bashMatch(t, "inline", run, "TAG")
+	if !re.MatchString("v1.2") || re.MatchString("v1.2.3") || re.MatchString("1.2") {
+		t.Errorf("bashMatch = %q, want the pattern after =~", re)
+	}
+}
+
 func TestUsesRefsKeepTheTrailingComment(t *testing.T) {
 	sha := strings.Repeat("b", 40)
 	src := "jobs:\n  a:\n    steps:\n" +

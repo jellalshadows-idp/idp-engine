@@ -68,10 +68,26 @@ Each token is set only on the step that uses it ([ADR-0023](adr/0023-pipeline-to
 
 ## How the workflows get idp
 
-Each job checks out the engine at the reusable workflow's own commit and builds `idp` from it with the `setup-idp` composite action, so the workflow, the CLI and the rendered module refs are one version ([ADR-0021](adr/0021-reusable-workflows-build-idp-from-their-commit.md)).
+Each job checks out the engine at the reusable workflow's own commit (`job.workflow_sha`, the commit the caller pinned) and runs the `setup-idp` composite action. The action gets `idp` one of two ways and installs OpenTofu in either case, so the workflow, the CLI and the rendered module refs are always one version ([ADR-0021](adr/0021-reusable-workflows-build-idp-from-their-commit.md), [ADR-0028](adr/0028-releases-and-how-the-workflows-get-idp.md)):
+
+- **The commit is a release** (a `vX.Y.Z` tag points at it). It downloads the release's linux archive for the runner and `checksums.txt`, checks the checksum, verifies the build provenance with `gh attestation verify` (built by `release.yaml` on `main` from that very commit), checks that `idp version` prints the tag, and installs it. Module sources pin the tag. If any of this fails, the job fails: a release commit never falls back to a build, because the render would then pin the commit and a broken release would go unnoticed.
+- **Any other commit** (the end-to-end harness's commit under test, or an unreleased pin). It installs Go from the engine's `go.mod` and builds `idp` from the checkout. Module sources pin the commit.
+
+The tag lookup, the download and the provenance check use the job's own `GITHUB_TOKEN`; the engine is public, so `contents: read` is enough. Nothing is cached.
+
+## Upgrading the engine
+
+Engine releases are `vX.Y.Z` tags ([releases runbook](runbooks/releases.md)). A claims repo upgrades by re-pinning its four caller workflows:
+
+1. Re-pin all four together, to the commit the new tag points at, with the tag as the comment: `@<commit> # vX.Y.Z`. Renovate opens this PR (group "idp engine", [dependencies runbook](runbooks/dependencies.md)); by hand, the commit is `gh api repos/jellalshadows-idp/idp-engine/git/ref/tags/vX.Y.Z --jq .object.sha`.
+2. The PR's plan comment shows only the resource changes the new engine makes, usually `No infrastructure changes.`; the version jump shows in the PR diff (`# vA` to `# vB`, all four callers) and in the release notes. A plan that does change resources is reviewed like any other plan, and a delete or replace waits for approval. Merge it when the plan is what you expect.
+3. Re-run `idp bootstrap apply` for the claims repo when the release notes say so, after the re-pin merges, never before.
+
+**From an engine older than commit `3b9beed` (the end-to-end harness) to `v0.1.0` or later:** the newer engine writes `IDP_BOOTSTRAP` with `approverIds`, which the older engine's parser rejects, while the newer parser still reads the older `approverId` form. So merge the re-pin first, then run `idp bootstrap apply` and `check` for that claims repo ([bootstrap runbook](runbooks/bootstrap.md)). Until `apply` runs, the drift check reports `IDP_BOOTSTRAP` as drift.
 
 ## Limitations
 
 - Only the `github` stack is reconciled for now; the workflows fail when any other stack is affected.
 - The required check comes from a workflow file in the claims repo, so a pull request can change it. Requiring a review on `.github/` closes that gap; it is the owner's decision ([ADR-0022](adr/0022-required-check-lives-in-the-caller.md)).
 - GitHub disables scheduled workflows in public repos after 60 days without activity. Re-enable the drift check with `gh workflow enable drift.yaml`.
+- Every job lists the engine's tags through the GitHub API before it gets `idp`; when that call fails, the job fails rather than guess whether its commit is a release.

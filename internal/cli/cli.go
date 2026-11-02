@@ -22,6 +22,7 @@ Commands:
   wet-push        Commit files to the wet branch in one commit
   encryption-env  Export TF_ENCRYPTION for OpenTofu from IDP_STATE_PASSPHRASE
   bootstrap       Create or verify the protections an org needs before the IDP runs
+  version         Print this build's version (a release tag, a commit or dev)
   help            Show this help
 
 Exit codes: 0 ok, 1 the command failed, 2 usage error,
@@ -61,6 +62,8 @@ func Run(args []string, stdout, stderr io.Writer, env Env) int {
 		return runEncryptionEnv(args[1:], stdout, stderr, env)
 	case "bootstrap":
 		return runBootstrap(args[1:], stdout, stderr, env)
+	case "version":
+		return runVersion(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "idp: unknown command %q\n\n%s", args[0], usage)
 		return exitUsage

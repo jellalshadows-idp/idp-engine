@@ -6,7 +6,7 @@ The harness drives `idp-claims-e2e` through the real pipelines at an engine comm
 
 Before step 1 it checks that the approver token can still read the runs of `idp-claims-e2e`, and refuses to start while claims, repositories or teams named `e2e-r<id>-app` or `e2e-r<id>-team` from an earlier run exist, while a reconcile, drift or recover run of `idp-claims-e2e` is unfinished (they share the `idp-wet` queue), or while a "Wet push failed" issue is open.
 
-1. Pins the four caller workflows of `idp-claims-e2e` to the commit under test (a PR, when they differ). That PR must plan `No infrastructure changes.`: anything else means claims the platform has not applied are on `main`.
+1. Pins the four caller workflows of `idp-claims-e2e` to the commit under test, marked `# unreleased` because that commit is usually not a release (a PR, when they differ). That PR must plan `No infrastructure changes.`: anything else means claims the platform has not applied are on `main`.
 2. Creates `e2e-r<run>-team` and `e2e-r<run>-app` through a PR, merges it after `idp-gate`, waits for the automatic reconcile, and checks the repository, its active `idp-default-branch` ruleset, the team, its memberships, its `maintain` (not `admin`) grant on the repository, and the environment. The component's files are checked from Phase 4, when component templates exist.
 3. Updates the description and removes every topic. Its plan deletes the topics resource, because the GitHub provider clears topics only when that resource is destroyed. The harness requires that to be the only delete, and approves it under the same checks as step 6.
 4. Changes only the case of a member login and expects `No infrastructure changes.`.
@@ -30,11 +30,22 @@ A partial apply failure, the `recover` workflow and pull requests from forks are
 
 ## When it runs
 
-Nightly at 03:41 UTC and on demand: `gh workflow run e2e.yaml --repo jellalshadows-idp/idp-engine --ref main`. One run at a time. Do not commit to `idp-claims-e2e` while a run is in progress.
+Nightly at 03:41 UTC, for every engine release PR (below), and on demand: `gh workflow run e2e.yaml --repo jellalshadows-idp/idp-engine --ref main`. One run at a time. Do not commit to `idp-claims-e2e` while a run is in progress.
 
 Never re-run a run ("Re-run all jobs" or "Re-run failed jobs"): the new attempt reuses the run id, so its branches `e2e/<run>/<step>` collide with the first attempt's. The workflow refuses any attempt but the first; dispatch a new run instead.
 
 The job's timeout (330 minutes) outlasts the harness's own bounded waits (about 300 minutes in the worst case, cleanup included), so GitHub never kills a run before those waits end.
+
+## On release pull requests
+
+When release-please creates or updates the engine's release PR, `release.yaml` dispatches this workflow on `main` with `release-pr-sha` set to the PR's head commit ([ADR-0028](adr/0028-releases-and-how-the-workflows-get-idp.md)). `main` is the release PR's base: the same code without the changelog. Right after the re-run guard, the run posts the commit status `idp-e2e` as `pending` on that commit; its last step posts `success` or `failure`, also when an earlier step failed. Merge a release PR only when its `idp-e2e` status is green ([releases runbook](runbooks/releases.md)).
+
+A dispatch waits in the `idp-e2e` concurrency group while another run is in progress, and GitHub keeps only the newest waiting run of a group: a nightly run or a newer dispatch can replace it. The replaced run never starts, so the release PR shows no `idp-e2e` status. A run killed by the runner or by its timeout can also leave `pending` set, because its last step never ran. Either way, dispatch it again for the current head (the next push that updates the release PR does the same, and the new status replaces the old one):
+
+```bash
+head="$(gh pr view <number> --repo jellalshadows-idp/idp-engine --json headRefOid --jq .headRefOid)"
+gh workflow run e2e.yaml --repo jellalshadows-idp/idp-engine --ref main -f release-pr-sha="$head"
+```
 
 ## Credentials
 
@@ -46,6 +57,8 @@ Both live only in the `idp-engine` environment `idp-e2e` (deployment branch `mai
 | `IDP_E2E_APPROVER_TOKEN` (secret) | A fine-grained token of `jellalshadows`, the org owner and the only `idp-approval` reviewer of `idp-claims-e2e` | `idp-claims-e2e` only: Actions read, Deployments read and write |
 
 An installation token lives one hour and a run can last longer, so the harness mints the bot's tokens from the App key rather than receiving one. The key is passed only to the `run the harness` step, and the binary is built in an earlier step that sees no secret.
+
+The run's own `GITHUB_TOKEN` has `statuses: write`. The workflow sets it explicitly only on the two steps that post `idp-e2e` on a release PR head, and it never reaches the harness step's environment. Actions that default their `token` input to the job token (`actions/checkout`, `actions/setup-go`) receive it as usual.
 
 ### Setting up
 

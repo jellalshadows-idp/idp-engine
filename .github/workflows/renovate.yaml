@@ -1,0 +1,69 @@
+name: idp-renovate
+
+# Self-hosted Renovate with the bot App (ADR-0029): weekly and on demand from
+# main, over idp-engine and idp-claims. Its whole configuration is
+# .github/renovate-global.json; it never merges anything.
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: idp-renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    name: renovate
+    runs-on: ubuntu-24.04
+    # Stays within the hour the bot token lives.
+    timeout-minutes: 50
+    environment: idp-renovate
+    permissions:
+      contents: read
+    steps:
+      - name: check the environment
+        id: config
+        env:
+          BOT_CLIENT_ID: ${{ vars.IDP_BOT_CLIENT_ID }}
+          BOT_KEY_SET: ${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}
+        run: |
+          missing=""
+          [ -n "$BOT_CLIENT_ID" ] || missing="$missing variable IDP_BOT_CLIENT_ID,"
+          [ "$BOT_KEY_SET" = true ] || missing="$missing secret IDP_BOT_PRIVATE_KEY,"
+          if [ -n "$missing" ]; then
+            echo "::error::the idp-renovate environment is missing:${missing%,} (docs/runbooks/dependencies.md)"
+            exit 1
+          fi
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: mint the bot token
+        id: bot
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.IDP_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.IDP_BOT_PRIVATE_KEY }}
+          owner: jellalshadows-idp
+          repositories: idp-engine,idp-claims
+          permission-checks: read
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-statuses: read
+          permission-workflows: write
+      - name: renovate
+        id: renovate
+        uses: renovatebot/github-action@6d26fcf0275dc65624cbc3d51fe78bc773f98321 # v46.3.6
+        with:
+          configurationFile: .github/renovate-global.json
+          renovate-version: 44.132.5
+          token: ${{ steps.bot.outputs.token }}
