@@ -100,8 +100,8 @@ Each unit has one purpose and a narrow interface.
 
 | Unit | Purpose | Depends on |
 |---|---|---|
-| `internal/claims` | Load, parse and validate claims (schema + semantics) | `internal/config`, JSON Schemas |
-| `internal/config` | Load `config/platform.yaml` | — |
+| `internal/claims` | Load, parse and validate claims (schema + semantics), and load `config/platform.yaml` | JSON Schemas *(Amendment A11)* |
+| `internal/config` | Not extracted (A4, A10): `internal/claims` loads `config/platform.yaml` *(Amendment A11)* | — |
 | `internal/naming` | Deterministic identities: ARNs, ECR URLs, role names, Terraform addresses | None: pure functions of names, account IDs and regions *(Amendment A10)* |
 | `internal/features` | Fetch features at a tag, resolve inputs, render templates | GitHub API (fetch only) |
 | `internal/render` | Claims → stacks (`.tf.json` + files). Pure | `claims`, `naming`, `features` (cache) |
@@ -694,7 +694,8 @@ the owner's `go-testing` skill: table-driven tests, golden files with `-update`,
 spec. For example:
 - `idp-writer` is in the ruleset bypass.
 - A protected env has the owner team as a reviewer.
-- The trust policy `sub` is `repo:<org>/<name>:environment:<env>`.
+- The trust policy `sub` is `repo:<org>/<name>:environment:<env>`, and its `aud` is
+  `sts.amazonaws.com` (§4.4). *(Amendment A11, 2026-11-03.)*
 - `archive_on_destroy` follows the platform config.
 
 ### 8.4 Level 3: floci
@@ -831,7 +832,7 @@ Phase 2 is delivered as six plans, each written after the previous one ships: **
 | 1 | A Group member who is not yet in the org gets an invitation, and the membership stays "pending", which could leave a permanent plan diff | Fallback: validation requires members to already be org members (checked with the reader token) | Closed: no fallback needed. The plan exits 0 both with the invitation pending and after acceptance. See [ADR-0013](../../adr/0013-phase-0-spike-findings.md) |
 | 2 | A GitHub apply takes longer than the 1-hour installation token | Measure in Phase 0. Fallback: the provider's `app_auth` with the key file inside `idp-write` | Closed: 32 s for 10 resources is 3.2 s per resource; 3.2 s x 450 is about 24 min, under the 30 min threshold. Keep minted installation tokens, no `app_auth`. See [ADR-0013](../../adr/0013-phase-0-spike-findings.md) |
 | 3 | floci replay time multiplied by the number of stacks drives CI minutes | Measure in Phase 0. Only affected stacks are planned | Measured in S3: about 26 s per stack (init 7 + apply 13 + plan 6) plus 6 s floci readiness per job. Acceptable |
-| 4 | floci fidelity gaps (IAM/ECR) | The OIDC provider is already confirmed to exist in floci. Gaps get documented and skipped in level 3 | No gaps found for IAM, OIDC and ECR in S3. ECR URL uses the `localhost:4566` host form (cosmetic). Real `AssumeRoleWithWebIdentity` not exercised; out of scope for v1, which has no real AWS account (§2.2, §7.6): the module tests assert the trust policy (§8.3) (owner decision; *Amendment A10, 2026-11-03*) |
+| 4 | floci fidelity gaps (IAM/ECR) | The OIDC provider is already confirmed to exist in floci. Gaps get documented and skipped in level 3 | No gaps found for IAM, OIDC and ECR in S3. ECR URL uses the `localhost:4566` host form (cosmetic). Real `AssumeRoleWithWebIdentity` not exercised; out of scope for v1, which has no real AWS account (§2.2, §7.6): the AWS module tests will assert the trust policy's `sub` and `aud` (Phase 2c, §8.3) (owner decision; *Amendment A10, 2026-11-03; reworded by Amendment A11, 2026-11-03*) |
 | 5 | `userManaged` adoption edge cases (file deleted between adopt and apply) | `overwrite_on_create = false` on `user_managed`, so the apply fails loudly and the next reconcile retries | Not in Phase 0 scope: covered in Phase 4 (Features) |
 | 6 | Cron disabled after 60 days of inactivity | Renovate activity. Documented | Not in Phase 0 scope: covered in Phase 1 (drift pipeline) and Phase 5 (docs) |
 
