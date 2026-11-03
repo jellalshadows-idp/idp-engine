@@ -9,6 +9,7 @@ import (
 
 const (
 	validPlatform  = "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 5255579\nenvironments:\n  dev: {}\n  pro:\n    protected: true\n"
+	awsPlatform    = "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 5255579\nenvironments:\n  dev:\n    aws:\n      accountId: \"000000000001\"\n      region: eu-west-1\n  pro:\n    protected: true\n    aws:\n      accountId: \"000000000003\"\n      region: eu-west-1\n  sandbox: {}\n"
 	validGroup     = "apiVersion: idp/v1\nkind: Group\nname: platform\nmembers:\n  - user: alice\n    role: maintainer\n"
 	validComponent = "apiVersion: idp/v1\nkind: Component\nname: api\nowner: group:platform\nenvironments: [dev, pro]\n"
 )
@@ -66,6 +67,25 @@ func TestLoadValidRepo(t *testing.T) {
 	}
 	if len(m.Components) != 1 || m.Components[0].OwnerGroup() != "platform" {
 		t.Errorf("components = %+v", m.Components)
+	}
+}
+
+func TestLoadPlatformAWS(t *testing.T) {
+	repo := baseRepo()
+	repo["config/platform.yaml"] = awsPlatform
+	m, ds, err := Load(writeTree(t, repo))
+	if err != nil || len(ds) != 0 {
+		t.Fatalf("err %v, diagnostics %v", err, lines(ds))
+	}
+	envs := m.Platform.Environments
+	if got := envs["dev"].AWS; got == nil || *got != (AWS{AccountID: "000000000001", Region: "eu-west-1"}) {
+		t.Errorf("dev aws = %+v, want account 000000000001 in eu-west-1", got)
+	}
+	if got := envs["pro"]; !got.Protected || got.AWS == nil || got.AWS.AccountID != "000000000003" {
+		t.Errorf("pro = %+v, want protected, with account 000000000003", got)
+	}
+	if got := envs["sandbox"].AWS; got != nil {
+		t.Errorf("sandbox aws = %+v, want nil: the environment has no aws block", got)
 	}
 }
 

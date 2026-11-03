@@ -36,6 +36,7 @@ func TestValidate(t *testing.T) {
 		{name: "owner without group prefix", kind: "Component", src: "apiVersion: idp/v1\nkind: Component\nname: api\nowner: platform\n", wantLine: 4, wantContains: "/owner"},
 		{name: "aws is not supported yet", kind: "Component", src: "apiVersion: idp/v1\nkind: Component\nname: api\nowner: group:platform\naws:\n  registry: true\n", wantLine: 5, wantContains: "aws"},
 		{name: "a group filed as a component", kind: "Component", src: group, wantLine: 2, wantContains: "/kind"},
+		{name: "unquoted aws account id points at it", kind: "Platform", src: "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 1\nenvironments:\n  dev:\n    aws:\n      accountId: 000000000001\n      region: eu-west-1\n", wantLine: 9, wantContains: "/environments/dev/aws/accountId"},
 		{name: "self-referential anchor is a diagnostic, not a hang", kind: "Group", src: "a: &a [*a]\n", wantLine: 1, wantContains: "cannot read document"},
 	}
 	for _, tt := range tests {
