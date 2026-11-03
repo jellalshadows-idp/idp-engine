@@ -220,13 +220,26 @@ func (l *loader) checkSemantics() {
 			l.add(Diagnostic{File: doc.file, Line: doc.lines["/owner"],
 				Message: fmt.Sprintf("owner group %q does not exist (no claims/groups/%s.yaml)", c.OwnerGroup(), c.OwnerGroup())})
 		}
+		if c.AWS.Registry && len(c.Environments) == 0 {
+			l.add(Diagnostic{File: doc.file, Line: doc.lines["/aws/registry"],
+				Message: "aws.registry needs at least one environment: the registry and its CI role are created per environment"})
+		}
 		if !l.platformOK {
 			continue
 		}
 		for i, env := range c.Environments {
-			if _, ok := l.model.Platform.Environments[env]; !ok {
-				l.add(Diagnostic{File: doc.file, Line: doc.lines[fmt.Sprintf("/environments/%d", i)],
+			line := doc.lines[fmt.Sprintf("/environments/%d", i)]
+			e, ok := l.model.Platform.Environments[env]
+			if !ok {
+				l.add(Diagnostic{File: doc.file, Line: line,
 					Message: fmt.Sprintf("environment %q is not defined in config/platform.yaml", env)})
+				continue
+			}
+			// The registry, its CI role and the env variables are computed per
+			// environment from its account and region (spec §4.7, §5.5).
+			if c.AWS.Registry && e.AWS == nil {
+				l.add(Diagnostic{File: doc.file, Line: line,
+					Message: fmt.Sprintf("environment %q needs an aws block (accountId and region) in config/platform.yaml, because aws.registry is true", env)})
 			}
 		}
 	}

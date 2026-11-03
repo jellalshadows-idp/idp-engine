@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"maps"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,6 +52,32 @@ func TestRenderGolden(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Errorf("main.tf.json differs from its golden file:\n%s", got)
+	}
+}
+
+// TestRenderIgnoresTheAWSPart pins Phase 2a's interim contract: a Component's aws
+// part is validated but renders nothing yet. The aws-registry fixture is basic
+// plus aws.registry and the environments' aws blocks, so its render must be
+// basic's golden file, byte for byte, and still only the github stack. Phase 2b
+// (the env variables) and Phase 2d (the AWS stacks) change this test on purpose.
+func TestRenderIgnoresTheAWSPart(t *testing.T) {
+	m := loadFixture(t, "aws-registry")
+	if !m.Components[0].AWS.Registry || m.Platform.Environments["dev"].AWS == nil || m.Platform.Environments["pro"].AWS == nil {
+		t.Fatal("the fixture must set aws.registry and give every environment an aws block")
+	}
+	files, err := Render(m, Options{ModuleRef: "v0.0.0-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := slices.Sorted(maps.Keys(files)); !slices.Equal(got, []string{"github/.terraform.lock.hcl", "github/main.tf.json"}) {
+		t.Errorf("rendered files = %v, want only the github stack", got)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "basic", "expected", "github", "main.tf.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(files["github/main.tf.json"], want) {
+		t.Errorf("an aws part changed the github stack:\n%s", files["github/main.tf.json"])
 	}
 }
 

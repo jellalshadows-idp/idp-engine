@@ -9,6 +9,7 @@ import (
 
 const (
 	validPlatform  = "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 5255579\nenvironments:\n  dev: {}\n  pro:\n    protected: true\n"
+	awsPlatform    = "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 5255579\nenvironments:\n  dev:\n    aws:\n      accountId: \"000000000001\"\n      region: eu-west-1\n  pro:\n    protected: true\n    aws:\n      accountId: \"000000000003\"\n      region: eu-west-1\n  sandbox: {}\n"
 	validGroup     = "apiVersion: idp/v1\nkind: Group\nname: platform\nmembers:\n  - user: alice\n    role: maintainer\n"
 	validComponent = "apiVersion: idp/v1\nkind: Component\nname: api\nowner: group:platform\nenvironments: [dev, pro]\n"
 )
@@ -66,6 +67,41 @@ func TestLoadValidRepo(t *testing.T) {
 	}
 	if len(m.Components) != 1 || m.Components[0].OwnerGroup() != "platform" {
 		t.Errorf("components = %+v", m.Components)
+	}
+}
+
+func TestLoadPlatformAWS(t *testing.T) {
+	repo := baseRepo()
+	repo["config/platform.yaml"] = awsPlatform
+	m, ds, err := Load(writeTree(t, repo))
+	if err != nil || len(ds) != 0 {
+		t.Fatalf("err %v, diagnostics %v", err, lines(ds))
+	}
+	envs := m.Platform.Environments
+	if got := envs["dev"].AWS; got == nil || *got != (AWS{AccountID: "000000000001", Region: "eu-west-1"}) {
+		t.Errorf("dev aws = %+v, want account 000000000001 in eu-west-1", got)
+	}
+	if got := envs["pro"]; !got.Protected || got.AWS == nil || got.AWS.AccountID != "000000000003" {
+		t.Errorf("pro = %+v, want protected, with account 000000000003", got)
+	}
+	if got := envs["sandbox"].AWS; got != nil {
+		t.Errorf("sandbox aws = %+v, want nil: the environment has no aws block", got)
+	}
+}
+
+func TestLoadComponentAWS(t *testing.T) {
+	repo := baseRepo()
+	repo["config/platform.yaml"] = awsPlatform
+	repo["claims/components/web.yaml"] = strings.Replace(validComponent, "name: api", "name: web", 1) + "aws:\n  registry: true\n"
+	m, ds, err := Load(writeTree(t, repo))
+	if err != nil || len(ds) != 0 {
+		t.Fatalf("err %v, diagnostics %v", err, lines(ds))
+	}
+	if m.Components[0].Name != "api" || m.Components[0].AWS.Registry {
+		t.Errorf("api = %+v, want no aws registry: its claim has no aws block", m.Components[0])
+	}
+	if m.Components[1].Name != "web" || !m.Components[1].AWS.Registry {
+		t.Errorf("web = %+v, want aws.registry true", m.Components[1])
 	}
 }
 
@@ -130,6 +166,32 @@ func TestLoadDiagnostics(t *testing.T) {
 			r["claims/components/api.yaml"] = strings.Replace(strings.Replace(validComponent, "name: api", "name: orders", 1), "[dev, pro]", "[staging]", 1)
 			r["claims/components/orders.yaml"] = strings.Replace(validComponent, "name: api", "name: orders", 1)
 		}, []string{`claims/components/api.yaml:3: name "orders" must match the file name "api"`}},
+		{"aws.registry needs an aws block in every environment", func(r map[string]string) {
+			r["claims/components/api.yaml"] = validComponent + "aws:\n  registry: true\n"
+		}, []string{
+			`claims/components/api.yaml:5: environment "dev" needs an aws block (accountId and region) in config/platform.yaml, because aws.registry is true`,
+			`claims/components/api.yaml:5: environment "pro" needs an aws block (accountId and region) in config/platform.yaml, because aws.registry is true`,
+		}},
+		{"aws.registry checks each environment", func(r map[string]string) {
+			r["config/platform.yaml"] = strings.Replace(validPlatform, "  dev: {}\n", "  dev:\n    aws:\n      accountId: \"000000000001\"\n      region: eu-west-1\n", 1)
+			r["claims/components/api.yaml"] = validComponent + "aws:\n  registry: true\n"
+		}, []string{`claims/components/api.yaml:5: environment "pro" needs an aws block (accountId and region) in config/platform.yaml, because aws.registry is true`}},
+		{"registry false needs no aws block", func(r map[string]string) {
+			r["claims/components/api.yaml"] = validComponent + "aws:\n  registry: false\n"
+		}, nil},
+		{"an empty aws block needs no aws block", func(r map[string]string) {
+			r["claims/components/api.yaml"] = validComponent + "aws: {}\n"
+		}, nil},
+		{"aws.registry needs an environment", func(r map[string]string) {
+			r["claims/components/api.yaml"] = "apiVersion: idp/v1\nkind: Component\nname: api\nowner: group:platform\naws:\n  registry: true\n"
+		}, []string{`claims/components/api.yaml:6: aws.registry needs at least one environment: the registry and its CI role are created per environment`}},
+		{"aws.registry needs a non-empty environment list", func(r map[string]string) {
+			r["claims/components/api.yaml"] = strings.Replace(validComponent, "[dev, pro]", "[]", 1) + "aws:\n  registry: true\n"
+		}, []string{`claims/components/api.yaml:7: aws.registry needs at least one environment: the registry and its CI role are created per environment`}},
+		{"an undefined environment is not also missing aws", func(r map[string]string) {
+			r["config/platform.yaml"] = awsPlatform
+			r["claims/components/api.yaml"] = strings.Replace(validComponent, "[dev, pro]", "[dev, staging]", 1) + "aws:\n  registry: true\n"
+		}, []string{`claims/components/api.yaml:5: environment "staging" is not defined in config/platform.yaml`}},
 		{"gitkeep ignored", func(r map[string]string) { r["claims/groups/.gitkeep"] = "" }, nil},
 	}
 	for _, tt := range tests {

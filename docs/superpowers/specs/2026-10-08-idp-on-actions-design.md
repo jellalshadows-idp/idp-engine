@@ -102,7 +102,7 @@ Each unit has one purpose and a narrow interface.
 |---|---|---|
 | `internal/claims` | Load, parse and validate claims (schema + semantics) | `internal/config`, JSON Schemas |
 | `internal/config` | Load `config/platform.yaml` | — |
-| `internal/naming` | Deterministic identities: ARNs, ECR URLs, role names, Terraform addresses | `internal/config` |
+| `internal/naming` | Deterministic identities: ARNs, ECR URLs, role names, Terraform addresses | None: pure functions of names, account IDs and regions *(Amendment A10)* |
 | `internal/features` | Fetch features at a tag, resolve inputs, render templates | GitHub API (fetch only) |
 | `internal/render` | Claims → stacks (`.tf.json` + files). Pure | `claims`, `naming`, `features` (cache) |
 | `internal/wetdiff` | New render vs `wet` → changed and orphaned stacks, as a matrix | filesystem |
@@ -124,7 +124,10 @@ CLI subcommands: `idp validate`, `idp fetch`, `idp adopt`, `idp render`,
 (ADR-0028; *Amendment A9, 2026-10-18*). They share one exit-code convention
 (ADR-0016): 0 ok, 1 failed, 2 usage error, 3 found problems. Platform config
 loading lives in `internal/claims` (Phase 1a ruling R-3.3) rather than a
-separate `internal/config`. *(Amendment A4, 2026-10-10.)*
+separate `internal/config`. *(Amendment A4, 2026-10-10.)* `internal/naming` takes
+plain values (component and environment names, account IDs and regions), so it
+depends on neither, and no `internal/config` is extracted (Phase 2a ruling D-3).
+*(Amendment A10, 2026-11-03.)*
 
 ## 4. Claims model
 
@@ -260,6 +263,10 @@ annotations with file and line.
    - Name and file match, and names are unique within their kind and env.
    - The owner Group exists.
    - Every env exists in the platform config.
+   - A Component with `aws.registry: true` lists at least one env, and each of its
+     envs has an `aws` block (`accountId` and `region`) in the platform config,
+     because its registry, CI role and env variables are computed per env (§5.5).
+     *(Amendment A10, 2026-11-03.)*
    - Each feature tag exists (checked by `idp fetch`) and its args validate against
      the feature's schema.
    - The module source is allowed and pinned.
@@ -417,9 +424,11 @@ Renovate bumps the ref and the comment. Each workflow sets `permissions: {}`, an
 job asks for what it needs. Every reusable job gets `idp` for the reusable
 workflow's own commit, so the workflow, the CLI and the module refs are one version
 (ADR-0021): a release commit installs its verified release binary, and any other
-commit is built from source (ADR-0028; *Amendment A9, 2026-10-18*). Until Phase 2 the only stack is `github`, and until Phase 4 there are no
+commit is built from source (ADR-0028; *Amendment A9, 2026-10-18*). Until Phase 2
+renders and reconciles the AWS stacks (Phases 2d and 2e, §10), the only stack is
+`github`, and until Phase 4 there are no
 features to fetch or adopt: the workflows fail if any other stack is affected.
-*(Amendment A6, 2026-10-11.)*
+*(Amendment A6, 2026-10-11; Amendment A10, 2026-11-03.)*
 
 ### 6.1 PR (`pull_request` → `main`)
 Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
@@ -813,6 +822,8 @@ use what that phase measured. Each phase ships an engine minor release.
 
 Phase 1 is delivered as five plans, each shipping working software: **1a** claims → render (validation, the GitHub stack, the `github/group` and `github/component` modules); **1b** the pipeline subcommands (`diff`, `plan-summary`, `gate`, `comment`, `issue`, `wet-push`, `encryption-env`, drift-ready `bootstrap check`); **1c** the reusable workflows and a live smoke run in `idp-claims-e2e`; **1d** the E2E harness, its credentials and the hardening carried from 1b and 1c; **1e** releases (release-please, GoReleaser, attestations), Renovate, the `v0.1.0` release and onboarding `idp-claims`. *(2026-10-09, re-split 2026-10-10 and 2026-10-13.)*
 
+Phase 2 is delivered as six plans, each written after the previous one ships: **2a** the AWS model of the Platform and the Component, `internal/naming` and the AWS validation; **2b** the deterministic env variables in `modules/github/component`; **2c** `modules/aws/{baseline,component}` (the OIDC provider, the ECR repository and the CI role), the AWS lock file and the floci CI job; **2d** rendering the AWS stacks; **2e** the workflows' AWS plan and apply against floci; **2f** the E2E env-variable checks, the `0.2.0` release and the phase log. *(Amendment A10, 2026-11-03.)*
+
 ## 11. Risks (verified in Phase 0 or by E2E)
 
 | # | Risk | Mitigation, or fallback if it materializes | Phase 0 result |
@@ -820,7 +831,7 @@ Phase 1 is delivered as five plans, each shipping working software: **1a** claim
 | 1 | A Group member who is not yet in the org gets an invitation, and the membership stays "pending", which could leave a permanent plan diff | Fallback: validation requires members to already be org members (checked with the reader token) | Closed: no fallback needed. The plan exits 0 both with the invitation pending and after acceptance. See [ADR-0013](../../adr/0013-phase-0-spike-findings.md) |
 | 2 | A GitHub apply takes longer than the 1-hour installation token | Measure in Phase 0. Fallback: the provider's `app_auth` with the key file inside `idp-write` | Closed: 32 s for 10 resources is 3.2 s per resource; 3.2 s x 450 is about 24 min, under the 30 min threshold. Keep minted installation tokens, no `app_auth`. See [ADR-0013](../../adr/0013-phase-0-spike-findings.md) |
 | 3 | floci replay time multiplied by the number of stacks drives CI minutes | Measure in Phase 0. Only affected stacks are planned | Measured in S3: about 26 s per stack (init 7 + apply 13 + plan 6) plus 6 s floci readiness per job. Acceptable |
-| 4 | floci fidelity gaps (IAM/ECR) | The OIDC provider is already confirmed to exist in floci. Gaps get documented and skipped in level 3 | No gaps found for IAM, OIDC and ECR in S3. ECR URL uses the `localhost:4566` host form (cosmetic). Real `AssumeRoleWithWebIdentity` not exercised |
+| 4 | floci fidelity gaps (IAM/ECR) | The OIDC provider is already confirmed to exist in floci. Gaps get documented and skipped in level 3 | No gaps found for IAM, OIDC and ECR in S3. ECR URL uses the `localhost:4566` host form (cosmetic). Real `AssumeRoleWithWebIdentity` not exercised; out of scope for v1, which has no real AWS account (§2.2, §7.6): the module tests assert the trust policy (§8.3) (owner decision; *Amendment A10, 2026-11-03*) |
 | 5 | `userManaged` adoption edge cases (file deleted between adopt and apply) | `overwrite_on_create = false` on `user_managed`, so the apply fails loudly and the next reconcile retries | Not in Phase 0 scope: covered in Phase 4 (Features) |
 | 6 | Cron disabled after 60 days of inactivity | Renovate activity. Documented | Not in Phase 0 scope: covered in Phase 1 (drift pipeline) and Phase 5 (docs) |
 

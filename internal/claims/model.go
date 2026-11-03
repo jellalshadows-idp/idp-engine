@@ -25,9 +25,19 @@ type Platform struct {
 	Environments map[string]Environment `yaml:"environments"`
 }
 
-// Environment is one entry of Platform.Environments. Its aws block is used from Phase 2.
+// Environment is one entry of Platform.Environments. AWS is nil when the
+// environment has no aws block.
 type Environment struct {
 	Protected bool `yaml:"protected"`
+	AWS       *AWS `yaml:"aws"`
+}
+
+// AWS is an environment's AWS account and region (spec §4.6), shaped like real
+// AWS; CI maps them to the emulator (spec §5.6). The account ID stays a string,
+// which keeps its leading zeros, and the schema requires both fields.
+type AWS struct {
+	AccountID string `yaml:"accountId"`
+	Region    string `yaml:"region"`
 }
 
 // ArchiveOnDestroy reports github.archiveOnDestroy, which defaults to true.
@@ -59,7 +69,8 @@ type Member struct {
 	Role string `yaml:"role"`
 }
 
-// Component is a service's GitHub part (spec §4.4); aws and features arrive later.
+// Component is a service (spec §4.4): its GitHub part, and its AWS part when
+// AWS.Registry is set. Features arrive in Phase 4.
 type Component struct {
 	Name         string   `yaml:"name"`
 	Description  string   `yaml:"description"`
@@ -68,6 +79,9 @@ type Component struct {
 	GitHub       struct {
 		Topics []string `yaml:"topics"`
 	} `yaml:"github"`
+	AWS struct {
+		Registry bool `yaml:"registry"`
+	} `yaml:"aws"`
 }
 
 // OwnerGroup is the Group name in Owner ("group:platform" → "platform").
