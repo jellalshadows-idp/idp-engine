@@ -122,6 +122,7 @@ func TestSchemaNameRulesKeepAWSNamesValid(t *testing.T) {
 		{"a", false},
 		{"Api", false},
 		{"API", false},
+		{"aBc", false},
 		{"a_b", false},
 		{"a.b", false},
 		{"-ab", false},
@@ -144,7 +145,7 @@ func TestSchemaNameRulesKeepAWSNamesValid(t *testing.T) {
 			}
 		})
 	}
-	for _, env := range []string{"Dev", "DEV", "pro-1", "1dev", "dev_1"} {
+	for _, env := range []string{"Dev", "DEV", "dEv", "deV", "pro-1", "1dev", "dev_1"} {
 		if envRule.MatchString(env) {
 			t.Errorf("the environment rule allows %q", env)
 		}
