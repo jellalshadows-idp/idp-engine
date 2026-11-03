@@ -69,7 +69,8 @@ type Member struct {
 	Role string `yaml:"role"`
 }
 
-// Component is a service's GitHub part (spec §4.4); aws and features arrive later.
+// Component is a service (spec §4.4): its GitHub part, and its AWS part when
+// AWS.Registry is set. Features arrive in Phase 4.
 type Component struct {
 	Name         string   `yaml:"name"`
 	Description  string   `yaml:"description"`
@@ -78,6 +79,9 @@ type Component struct {
 	GitHub       struct {
 		Topics []string `yaml:"topics"`
 	} `yaml:"github"`
+	AWS struct {
+		Registry bool `yaml:"registry"`
+	} `yaml:"aws"`
 }
 
 // OwnerGroup is the Group name in Owner ("group:platform" → "platform").

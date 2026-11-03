@@ -89,6 +89,22 @@ func TestLoadPlatformAWS(t *testing.T) {
 	}
 }
 
+func TestLoadComponentAWS(t *testing.T) {
+	repo := baseRepo()
+	repo["config/platform.yaml"] = awsPlatform
+	repo["claims/components/web.yaml"] = strings.Replace(validComponent, "name: api", "name: web", 1) + "aws:\n  registry: true\n"
+	m, ds, err := Load(writeTree(t, repo))
+	if err != nil || len(ds) != 0 {
+		t.Fatalf("err %v, diagnostics %v", err, lines(ds))
+	}
+	if m.Components[0].Name != "api" || m.Components[0].AWS.Registry {
+		t.Errorf("api = %+v, want no aws registry: its claim has no aws block", m.Components[0])
+	}
+	if m.Components[1].Name != "web" || !m.Components[1].AWS.Registry {
+		t.Errorf("web = %+v, want aws.registry true", m.Components[1])
+	}
+}
+
 func TestLoadSortsClaimsByName(t *testing.T) {
 	repo := baseRepo()
 	repo["claims/components/zeta.yaml"] = strings.Replace(validComponent, "name: api", "name: zeta", 1)
