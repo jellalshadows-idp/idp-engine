@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0](https://github.com/jellalshadows-idp/idp-engine/compare/v0.1.1...v0.2.0) (2026-11-03)
+
+
+### Features
+
+* **claims:** accept a component's aws registry ([85b655d](https://github.com/jellalshadows-idp/idp-engine/commit/85b655d98657b52471e00d2cf0f34677b8942bb2))
+* **claims:** model the environments' aws account and region ([8fc2e11](https://github.com/jellalshadows-idp/idp-engine/commit/8fc2e110f3a2eb284da5dbe1f20cbe5c37525021))
+* **claims:** require an aws block for every environment of an aws component ([c6f416d](https://github.com/jellalshadows-idp/idp-engine/commit/c6f416d81030684cf5c2fe13b85136849e18014e))
+* **naming:** add the deterministic aws identities ([4a3616a](https://github.com/jellalshadows-idp/idp-engine/commit/4a3616a71f964f142b0ef810dd4c1eb60e80cf2f))
+* phase 2a aws model of the platform and the component ([fca5c0b](https://github.com/jellalshadows-idp/idp-engine/commit/fca5c0bc101311cb6629a2f621be0c3c607be52a))
+
+
+### Documentation
+
+* add the phase 2a execution log ([854c62a](https://github.com/jellalshadows-idp/idp-engine/commit/854c62adaebf3e0a7974b2be718643e47bc44946))
+* add the phase 2a plan ([1ccc1d7](https://github.com/jellalshadows-idp/idp-engine/commit/1ccc1d749d32354d8b4c25c8ca07581b36bab3d2))
+* add the phase 2b plan ([d792548](https://github.com/jellalshadows-idp/idp-engine/commit/d792548a29a15119ff40b9c998647c2f958ce8df))
+* record the phase 2 split and the aws validation rule (spec amendment a10) ([2e7d710](https://github.com/jellalshadows-idp/idp-engine/commit/2e7d71069a332a7b28b96c376a79b9c475a416bb))
+
 ## [0.1.1](https://github.com/jellalshadows-idp/idp-engine/compare/v0.1.0...v0.1.1) (2026-11-03)
 
 
