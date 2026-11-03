@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/jellalshadows-idp/idp-engine/compare/v0.1.0...v0.1.1) (2026-11-03)
+
+
+### Documentation
+
+* add the phase 1e execution log ([83234a6](https://github.com/jellalshadows-idp/idp-engine/commit/83234a64f67114b46b9164fd76ca6ed50f6c869e))
+
 ## 0.1.0 (2026-11-02)
 
 
