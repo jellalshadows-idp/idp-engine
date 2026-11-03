@@ -34,9 +34,11 @@ github:
   org: acme
   writerAppId: 5255579      # the writer App's id
 environments:
-  dev: {}
+  dev:
+    aws: { accountId: "000000000001", region: eu-west-1 }
   pro:
     protected: true
+    aws: { accountId: "000000000003", region: eu-west-1 }
 ```
 
 | Field | Required | Default | Meaning |
@@ -49,8 +51,12 @@ environments:
 | `naming.reservedPrefixes` | no | | No claim name may start with these (e.g. `[e2e-, spike-]` in `idp-claims`) |
 | `environments.<env>` | yes (≥ 1) | | Env names match `^[a-z][a-z0-9]{0,9}$` |
 | `environments.<env>.protected` | no | `false` | Protected envs require the owner team's approval |
-| `environments.<env>.aws` | no | | `accountId` and `region`; used from Phase 2 |
+| `environments.<env>.aws` | no | | The environment's AWS account. Required for every environment of a Component with `aws.registry: true` |
+| `environments.<env>.aws.accountId` | yes, in `aws` | | 12 digits, quoted (`"000000000001"`), so YAML keeps it a string with its leading zeros |
+| `environments.<env>.aws.region` | yes, in `aws` | | An AWS region, such as `eu-west-1` |
 | `modules.allowedSources` | no | | Allowed Workspace module prefixes; used from Phase 3 |
+
+An `aws` block is shaped like real AWS: an account ID and a region, never an emulator endpoint (the schema rejects any other key). In v1, AWS is the floci emulator in CI (spec §5.6), so the IDs can be fake ones like those above. An environment needs an `aws` block only when a Component with `aws.registry: true` lists it.
 
 ## Group (`claims/groups/<name>.yaml`)
 
@@ -77,6 +83,8 @@ owner: group:platform      # must name an existing Group
 environments: [dev, pro]   # must exist in config/platform.yaml
 github:
   topics: [java, orders]   # optional; at most 20, unique, each lowercase letters, digits or hyphens, ≤ 50 characters
+aws:
+  registry: true           # optional; default false
 ```
 
 A Component renders:
@@ -86,11 +94,23 @@ A Component renders:
 - a default-branch ruleset that requires PRs, blocks force pushes and deletion, and lets only the writer App bypass;
 - one environment per entry, each deploying only from `main`. Protected environments require the owner team.
 
-The `aws` and `features` fields arrive in Phases 2 and 4. Until then they fail validation.
+With `aws.registry: true`, a Component also gets, in each of its environments: an ECR repository named after it; the IAM role `<name>-<env>-ci`, which may push to that repository and trusts only GitHub's OIDC tokens for `repo:<org>/<name>:environment:<env>`; and the environment variables `AWS_ROLE_ARN`, `ECR_REPOSITORY` and `AWS_REGION` (spec §4.4). Their values are computed from the names and the environment's `aws` block, never read from AWS (spec §5.5). For `api` in `pro` above they are `arn:aws:iam::000000000003:role/api-pro-ci`, `000000000003.dkr.ecr.eu-west-1.amazonaws.com/api` and `eu-west-1`.
+
+- `aws.registry: true` needs at least one environment, and each environment it lists needs an `aws` block in `config/platform.yaml`.
+- `aws: {}` and `registry: false` are valid and ask for nothing.
+- **Not rendered yet.** Since Phase 2a the claims accept and validate the `aws` part, but nothing renders from it until Phases 2b to 2d, and the pipelines apply it from Phase 2e.
+
+The `features` field arrives in Phase 4. Until then it fails validation.
 
 ## Validation
 
 `idp validate --dir <claims repo>` reports every problem at once as `file:line: message` (`file: message` when a problem has no line, such as a missing file). Inside GitHub Actions (`GITHUB_ACTIONS=true`) it also prints GitHub annotations, so errors show inline on the PR. It exits 0 when the claims are valid, 3 when it found problems, 1 when it could not run (for example an unreadable directory), and 2 on a usage error ([ADR-0016](adr/0016-exit-codes.md)).
+
+Beyond the schemas, the checks include: each name matches its file name; the owner Group exists; every environment exists in `config/platform.yaml`; a Component with `aws.registry: true` lists at least one environment, and each of them has an `aws` block. For the Component above, in a platform whose `pro` has no `aws` block:
+
+```text
+claims/components/api.yaml:6: environment "pro" needs an aws block (accountId and region) in config/platform.yaml, because aws.registry is true
+```
 
 ## Rendering
 
@@ -99,6 +119,8 @@ The `aws` and `features` fields arrive in Phases 2 and 4. Until then they fail v
 - `rendered/github/main.tf.json`: the provider, the local backend at `../../tfstate/github.tfstate`, enforced state and plan encryption, and one module call per claim, pinned to the engine's release tag;
 - `rendered/github/.terraform.lock.hcl`: the pinned provider checksums;
 - `rendered/.idp-rendered`: a marker. `--out` must not exist, be empty, or hold a previous render, so a mistyped path can never wipe unrelated data.
+
+A Component's `aws` part renders nothing yet: Phase 2b adds its environment variables to the github stack, and Phase 2d its AWS stacks.
 
 `--out` is relative to the current directory, not to `--dir`. The stack's local backend writes its state to `<out>/../tfstate/github.tfstate`, which is where the `wet` branch keeps it (spec §5.4).
 
