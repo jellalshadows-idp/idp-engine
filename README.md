@@ -2,7 +2,7 @@
 
 The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. Desired state lives in claims (YAML in Git), with no Kubernetes involved.
 
-> **Status:** Phase 1e is complete: the engine is released with verified binaries, Renovate keeps every pin current, and the production `idp-claims` runs the pipelines at a release; see the [phase 1e log](docs/phases/phase-1e.md), the [releases runbook](docs/runbooks/releases.md) and [docs/pipelines.md](docs/pipelines.md). Phase 2 (the Component's AWS part) is next.
+> **Status:** Phase 2a is complete: claims accept a Component's AWS part (`aws.registry`) and each environment's AWS account, validate them, and `internal/naming` computes the AWS identities; nothing AWS is rendered or applied yet. See the [phase 2a log](docs/phases/phase-2a.md) and [docs/claims.md](docs/claims.md). Phase 2b (the deterministic env variables) is next.
 
 **What exists today:** `idp-claims` runs the pipelines at an engine release; `idp-claims-e2e` is checked by the end-to-end harness nightly and on every release PR.
 
@@ -33,7 +33,7 @@ Runbooks: [releases](docs/runbooks/releases.md), [dependency updates](docs/runbo
 - AWS is **emulated** with [floci](https://floci.io). No real cloud account is used.
 - Every repository is **public**: on the GitHub Free plan, rulesets and environment reviewers exist only for public repos.
 - **No secrets** flow through the platform.
-- Phase 1 reconciles **GitHub only** (teams, repositories, rulesets, environments); AWS arrives in Phase 2.
+- The pipelines reconcile **GitHub only** (teams, repositories, rulesets, environments). Claims accept a Component's AWS part since Phase 2a, but it is rendered from Phase 2b and applied from Phase 2e.
 - A reconcile that needs approval holds the claims repo's pipelines until someone decides.
 
 ## License
