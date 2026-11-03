@@ -4,6 +4,14 @@
 // names: they are a contract. Every function is pure, over names the schemas
 // already constrain (lowercase; a Component name of at most 40 characters and an
 // environment name of at most 10), so none can fail.
+//
+// The identities are those of the standard aws partition: ARNs start with
+// arn:aws: and the registry host ends in amazonaws.com. The platform schema
+// checks only a region's shape, so it also accepts GovCloud (us-gov-*) and China
+// (cn-*) regions, whose identities differ; they are not supported. In v1 every
+// region is the floci emulator (spec §5.6), where the partition does not matter.
+// Going live in another partition means deriving the partition and the host
+// suffix from the region here.
 package naming
 
 // OIDCProviderHost is the GitHub Actions OIDC issuer. Each environment's account

@@ -53,7 +53,7 @@ environments:
 | `environments.<env>.protected` | no | `false` | Protected envs require the owner team's approval |
 | `environments.<env>.aws` | no | | The environment's AWS account. Required for every environment of a Component with `aws.registry: true` |
 | `environments.<env>.aws.accountId` | yes, in `aws` | | 12 digits, quoted (`"000000000001"`), so YAML keeps it a string with its leading zeros |
-| `environments.<env>.aws.region` | yes, in `aws` | | An AWS region, such as `eu-west-1` |
+| `environments.<env>.aws.region` | yes, in `aws` | | An AWS region of the standard `aws` partition, such as `eu-west-1`. The schema checks only the shape, so GovCloud (`us-gov-*`) and China (`cn-*`) regions pass it, but they are not supported: the identities are computed for the standard partition (`arn:aws:` ARNs and the `amazonaws.com` registry host) |
 | `modules.allowedSources` | no | | Allowed Workspace module prefixes; used from Phase 3 |
 
 An `aws` block is shaped like real AWS: an account ID and a region, never an emulator endpoint (the schema rejects any other key). In v1, AWS is the floci emulator in CI (spec §5.6), so the IDs can be fake ones like those above. An environment needs an `aws` block only when a Component with `aws.registry: true` lists it.
