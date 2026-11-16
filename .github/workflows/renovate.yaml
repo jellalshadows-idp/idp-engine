@@ -65,5 +65,5 @@ jobs:
         uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
         with:
           configurationFile: .github/renovate-global.json
-          renovate-version: 44.171.2
+          renovate-version: 44.201.1
           token: ${{ steps.bot.outputs.token }}
