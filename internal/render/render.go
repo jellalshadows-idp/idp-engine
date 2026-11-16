@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/claims"
+	"github.com/jellalshadows-idp/idp-engine/internal/naming"
 	"github.com/jellalshadows-idp/idp-engine/internal/version"
 	"github.com/jellalshadows-idp/idp-engine/lockfiles"
 )
@@ -36,12 +37,18 @@ type Options struct {
 }
 
 // Render returns the rendered files, keyed by slash-separated path relative to the
-// output root.
+// output root. It fails, rather than render less, on a model that Load rejects in
+// a way the render depends on, such as a registry Component in an environment
+// without an aws block.
 func Render(m *claims.Model, opts Options) (map[string][]byte, error) {
 	if opts.ModuleRef == "" && opts.ModulesDir == "" {
 		return nil, errors.New("render: set ModuleRef or ModulesDir")
 	}
-	stack, err := marshal(githubStack(m, opts))
+	doc, err := githubStack(m, opts)
+	if err != nil {
+		return nil, err
+	}
+	stack, err := marshal(doc)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +58,7 @@ func Render(m *claims.Model, opts Options) (map[string][]byte, error) {
 	}, nil
 }
 
-func githubStack(m *claims.Model, opts Options) map[string]any {
+func githubStack(m *claims.Model, opts Options) (map[string]any, error) {
 	p := m.Platform
 	modules := map[string]any{}
 	for _, g := range m.Groups {
@@ -69,7 +76,15 @@ func githubStack(m *claims.Model, opts Options) map[string]any {
 	for _, c := range m.Components {
 		envs := map[string]any{}
 		for _, e := range c.Environments {
-			envs[e] = map[string]any{"protected": p.Environments[e].Protected}
+			env := map[string]any{"protected": p.Environments[e].Protected}
+			if c.AWS.Registry {
+				vars, err := envVariables(c.Name, e, p.Environments[e].AWS)
+				if err != nil {
+					return nil, err
+				}
+				env["variables"] = vars
+			}
+			envs[e] = env
 		}
 		topics := make([]string, 0, len(c.GitHub.Topics))
 		for _, t := range c.GitHub.Topics {
@@ -105,7 +120,23 @@ func githubStack(m *claims.Model, opts Options) map[string]any {
 	if len(modules) > 0 {
 		doc["module"] = modules
 	}
-	return doc
+	return doc, nil
+}
+
+// envVariables are the GitHub environment variables of a registry Component in
+// one environment (spec §4.4). internal/naming computes them from the names and
+// the environment's aws block, never from AWS state (spec §5.5).
+func envVariables(component, env string, aws *claims.AWS) (map[string]string, error) {
+	if aws == nil {
+		// Load reports this (spec §4.7). Rendering the Component without its
+		// variables would plan their deletion, so fail instead.
+		return nil, fmt.Errorf("render: component %q has aws.registry, but environment %q has no aws block", component, env)
+	}
+	return map[string]string{
+		"AWS_ROLE_ARN":   literal(naming.RoleARN(aws.AccountID, component, env)),
+		"ECR_REPOSITORY": literal(naming.RegistryURL(aws.AccountID, aws.Region, component)),
+		"AWS_REGION":     literal(aws.Region),
+	}, nil
 }
 
 // literal escapes s so OpenTofu renders it verbatim. OpenTofu evaluates ${ and %{

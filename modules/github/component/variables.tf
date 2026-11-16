@@ -21,9 +21,10 @@ variable "owner_team_id" {
 }
 
 variable "environments" {
-  description = "GitHub environments to create; protected ones require the owner team's approval."
+  description = "GitHub environments to create; protected ones require the owner team's approval. Each environment's variables become its GitHub Actions variables, by name."
   type = map(object({
     protected = bool
+    variables = optional(map(string), {})
   }))
   default = {}
 }

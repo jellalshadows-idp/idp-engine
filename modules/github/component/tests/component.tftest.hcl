@@ -135,6 +135,73 @@ run "environments_deploy_only_from_the_default_branch" {
   }
 }
 
+run "environments_have_no_variables_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(github_actions_environment_variable.this) == 0
+    error_message = "environments without variables must create no variable, so a Component without aws.registry plans no change"
+  }
+}
+
+run "variables_for_two_environments" {
+  command = plan
+
+  variables {
+    environments = {
+      dev = {
+        protected = false
+        variables = {
+          AWS_ROLE_ARN   = "arn:aws:iam::000000000001:role/api-dev-ci"
+          ECR_REPOSITORY = "000000000001.dkr.ecr.eu-west-1.amazonaws.com/api"
+          AWS_REGION     = "eu-west-1"
+        }
+      }
+      pro = {
+        protected = true
+        variables = {
+          AWS_ROLE_ARN   = "arn:aws:iam::000000000003:role/api-pro-ci"
+          ECR_REPOSITORY = "000000000003.dkr.ecr.us-east-1.amazonaws.com/api"
+          AWS_REGION     = "us-east-1"
+        }
+      }
+    }
+  }
+
+  assert {
+    condition     = sort(keys(github_actions_environment_variable.this)) == tolist(["dev/AWS_REGION", "dev/AWS_ROLE_ARN", "dev/ECR_REPOSITORY", "pro/AWS_REGION", "pro/AWS_ROLE_ARN", "pro/ECR_REPOSITORY"])
+    error_message = "one variable per environment and name, addressed \"<env>/<name>\""
+  }
+  assert {
+    condition     = alltrue([for k, v in github_actions_environment_variable.this : v.repository == "api" && "${v.environment}/${v.variable_name}" == k])
+    error_message = "each variable must belong to its own environment of the component's repository"
+  }
+  assert {
+    condition     = github_actions_environment_variable.this["dev/AWS_ROLE_ARN"].value == "arn:aws:iam::000000000001:role/api-dev-ci" && github_actions_environment_variable.this["pro/ECR_REPOSITORY"].value == "000000000003.dkr.ecr.us-east-1.amazonaws.com/api" && github_actions_environment_variable.this["pro/AWS_REGION"].value == "us-east-1"
+    error_message = "each variable must carry its own environment's value"
+  }
+  assert {
+    condition     = length(github_repository_environment.this) == 2 && length(github_repository_environment.this["pro"].reviewers) == 1 && length(github_repository_environment.this["dev"].reviewers) == 0
+    error_message = "variables must not change the environments themselves"
+  }
+}
+
+run "only_environments_with_variables_get_them" {
+  command = plan
+
+  variables {
+    environments = {
+      dev = { protected = false }
+      pro = { protected = true, variables = { AWS_REGION = "eu-west-1" } }
+    }
+  }
+
+  assert {
+    condition     = sort(keys(github_actions_environment_variable.this)) == tolist(["pro/AWS_REGION"]) && github_actions_environment_variable.this["pro/AWS_REGION"].environment == "pro"
+    error_message = "a variable belongs to the environment that declares it, and an environment without variables gets none"
+  }
+}
+
 run "rejects_out_of_range_approvals" {
   command = plan
 

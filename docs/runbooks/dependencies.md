@@ -18,8 +18,8 @@ gh workflow run renovate.yaml --repo jellalshadows-idp/idp-engine --ref main
 |---|---|---|
 | Actions, pinned by SHA with `# vX.Y.Z` | `.github/workflows/`, `.github/actions/setup-idp/` | one per action |
 | The engine's reusable workflows | the four caller workflows of `idp-claims`; the templates in `examples/claims-repo/` | group "idp engine", no waiting period |
-| OpenTofu | `setup-idp`, `ci.yaml`, `TofuVersion` in `internal/render/render.go` and the golden render | group "opentofu" |
-| The GitHub provider | `modules/github/*/versions.tf`, `GitHubProviderVersion` in `render.go` and the golden render | group "github provider", label `needs-lockfile` |
+| OpenTofu | `setup-idp`, `ci.yaml`, `TofuVersion` in `internal/render/render.go` and the golden renders | group "opentofu" |
+| The GitHub provider | `modules/github/*/versions.tf`, `GitHubProviderVersion` in `render.go` and the golden renders | group "github provider", label `needs-lockfile` |
 | Go modules | `go.mod` and `go.sum` (`go mod tidy`) | one per module |
 | Go | the `go` directive in `go.mod`, which CI and `setup-idp` install | patch updates only |
 | GoReleaser | the GoReleaser action's `version` in `ci.yaml` and `release.yaml` | one |

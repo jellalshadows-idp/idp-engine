@@ -93,10 +93,14 @@ jobs:
         with:
           tofu_version: 1.13.1
           tofu_wrapper: false
-      - name: render the fixture with local module sources
-        run: go run ./cmd/idp render --dir internal/render/testdata/basic --out "$RUNNER_TEMP/rendered" --modules-dir modules
-      - name: tofu validate the rendered stack (proves the JSON syntax, lock file and modules)
-        working-directory: ${{ runner.temp }}/rendered/github
+      - name: render the fixtures with local module sources
+        # basic has no aws part; aws-registry passes each environment's variables.
+        run: |
+          for fixture in basic aws-registry; do
+            go run ./cmd/idp render --dir "internal/render/testdata/$fixture" --out "$RUNNER_TEMP/rendered/$fixture" --modules-dir modules
+          done
+      - name: tofu validate the rendered stacks (proves the JSON syntax, lock file and modules)
+        working-directory: ${{ runner.temp }}/rendered
         env:
           TF_ENCRYPTION: |
             key_provider "pbkdf2" "ci" {
@@ -112,8 +116,10 @@ jobs:
               method = method.aes_gcm.ci
             }
         run: |
-          tofu init -backend=false -input=false
-          tofu validate
+          for fixture in basic aws-registry; do
+            tofu -chdir="$fixture/github" init -backend=false -input=false
+            tofu -chdir="$fixture/github" validate
+          done
 
   release-snapshot:
     runs-on: ubuntu-24.04
