@@ -89,3 +89,31 @@ resource "github_repository_environment_deployment_policy" "default_branch" {
   environment    = github_repository_environment.this[each.key].environment
   branch_pattern = var.default_branch
 }
+
+locals {
+  # One entry per environment variable, keyed "<env>/<name>". Environment names
+  # never contain a slash (spec §4.6), so each key names exactly one variable,
+  # and the addresses read github_actions_environment_variable.this["pro/AWS_REGION"].
+  environment_variables = merge([
+    for env, e in var.environments : {
+      for name, value in e.variables : "${env}/${name}" => {
+        environment = env
+        name        = name
+        value       = value
+      }
+    }
+  ]...)
+}
+
+# The environments' GitHub Actions variables. The renderer passes them only for a
+# Component with aws.registry: AWS_ROLE_ARN, ECR_REPOSITORY and AWS_REGION, computed
+# from the names and the environment's aws block (spec §4.4, §5.5). Without
+# variables this resource has no instances, so existing stacks plan no change.
+resource "github_actions_environment_variable" "this" {
+  for_each = local.environment_variables
+
+  repository    = github_repository.this.name
+  environment   = github_repository_environment.this[each.value.environment].environment
+  variable_name = each.value.name
+  value         = each.value.value
+}
