@@ -362,6 +362,8 @@ func TestRenovateCustomManagersFindThePins(t *testing.T) {
 		slices.Sort(v)
 	}
 	ci, rn := ".github/workflows/ci.yaml", renovatePath
+	// Every golden render carries both pins, so Renovate must move them all.
+	awsGolden := "internal/render/testdata/aws-registry/expected/github/main.tf.json"
 	golden := "internal/render/testdata/basic/expected/github/main.tf.json"
 	values := func(dep string) []string {
 		var out []string
@@ -379,8 +381,8 @@ func TestRenovateCustomManagersFindThePins(t *testing.T) {
 		"github.com/rhysd/actionlint": {ci + "=" + actionlint[0], ci + "=" + actionlint[0]},
 		"zizmor":                      {ci + "=" + zizmor[0]},
 		"renovatebot/renovate":        {ci + "=" + renovateVersion(t), rn + "=" + renovateVersion(t)},
-		"opentofu":                    {"internal/render/render.go=" + render.TofuVersion, golden + "=" + render.TofuVersion},
-		"github":                      {"internal/render/render.go=" + render.GitHubProviderVersion, golden + "=" + render.GitHubProviderVersion},
+		"opentofu":                    {"internal/render/render.go=" + render.TofuVersion, awsGolden + "=" + render.TofuVersion, golden + "=" + render.TofuVersion},
+		"github":                      {"internal/render/render.go=" + render.GitHubProviderVersion, awsGolden + "=" + render.GitHubProviderVersion, golden + "=" + render.GitHubProviderVersion},
 	}
 	if !reflect.DeepEqual(found, want) {
 		t.Errorf("regex managers found\n%v\nwant\n%v", found, want)

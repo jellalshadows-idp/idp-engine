@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -31,13 +32,11 @@ func loadFixture(t *testing.T, name string) *claims.Model {
 	return m
 }
 
-func TestRenderGolden(t *testing.T) {
-	files, err := Render(loadFixture(t, "basic"), Options{ModuleRef: "v0.0.0-test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := files["github/main.tf.json"]
-	golden := filepath.Join("testdata", "basic", "expected", "github", "main.tf.json")
+// checkGolden compares a rendered github stack with the golden file of fixture,
+// and rewrites that file first when the test runs with -update.
+func checkGolden(t *testing.T, fixture string, got []byte) {
+	t.Helper()
+	golden := filepath.Join("testdata", fixture, "expected", "github", "main.tf.json")
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(golden), 0o755); err != nil {
 			t.Fatal(err)
@@ -51,16 +50,53 @@ func TestRenderGolden(t *testing.T) {
 		t.Fatalf("%v (run with -update to create it)", err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Errorf("main.tf.json differs from its golden file:\n%s", got)
+		t.Errorf("%s: main.tf.json differs from its golden file:\n%s", fixture, got)
 	}
 }
 
-// TestRenderIgnoresTheAWSPart pins Phase 2a's interim contract: a Component's aws
-// part is validated but renders nothing yet. The aws-registry fixture is basic
-// plus aws.registry and the environments' aws blocks, so its render must be
-// basic's golden file, byte for byte, and still only the github stack. Phase 2b
-// (the env variables) and Phase 2d (the AWS stacks) change this test on purpose.
-func TestRenderIgnoresTheAWSPart(t *testing.T) {
+// renderedEnvironment is one entry of the environments a component module receives.
+type renderedEnvironment struct {
+	Protected bool              `json:"protected"`
+	Variables map[string]string `json:"variables"`
+}
+
+// componentEnvironments decodes the environments that a rendered github stack
+// passes to the module component_<name>.
+func componentEnvironments(t *testing.T, stack []byte, name string) map[string]renderedEnvironment {
+	t.Helper()
+	var doc struct {
+		Module map[string]struct {
+			Environments map[string]renderedEnvironment `json:"environments"`
+		} `json:"module"`
+	}
+	if err := json.Unmarshal(stack, &doc); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := doc.Module["component_"+name]
+	if !ok {
+		t.Fatalf("no module component_%s in:\n%s", name, stack)
+	}
+	return c.Environments
+}
+
+// TestRenderGolden pins the render of a claims repo without any aws part. Phase 2b
+// left this golden file unchanged, byte for byte: a Component without
+// aws.registry passes no variables, so existing stacks plan no change.
+func TestRenderGolden(t *testing.T) {
+	files, err := Render(loadFixture(t, "basic"), Options{ModuleRef: "v0.0.0-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "basic", files["github/main.tf.json"])
+}
+
+// TestRenderEnvVariablesGolden renders the aws-registry fixture: basic plus
+// aws.registry and the environments' aws blocks. Each environment of the
+// Component gets AWS_ROLE_ARN, ECR_REPOSITORY and AWS_REGION (spec §4.4), and
+// pro's are spec §5.3's example, checked verbatim here so that -update cannot
+// change them unnoticed. Only the github stack is rendered until Phase 2d adds
+// the AWS stacks.
+func TestRenderEnvVariablesGolden(t *testing.T) {
 	m := loadFixture(t, "aws-registry")
 	if !m.Components[0].AWS.Registry || m.Platform.Environments["dev"].AWS == nil || m.Platform.Environments["pro"].AWS == nil {
 		t.Fatal("the fixture must set aws.registry and give every environment an aws block")
@@ -72,12 +108,69 @@ func TestRenderIgnoresTheAWSPart(t *testing.T) {
 	if got := slices.Sorted(maps.Keys(files)); !slices.Equal(got, []string{"github/.terraform.lock.hcl", "github/main.tf.json"}) {
 		t.Errorf("rendered files = %v, want only the github stack", got)
 	}
-	want, err := os.ReadFile(filepath.Join("testdata", "basic", "expected", "github", "main.tf.json"))
+	checkGolden(t, "aws-registry", files["github/main.tf.json"])
+	want := map[string]string{
+		"AWS_ROLE_ARN":   "arn:aws:iam::000000000003:role/api-pro-ci",
+		"ECR_REPOSITORY": "000000000003.dkr.ecr.eu-west-1.amazonaws.com/api",
+		"AWS_REGION":     "eu-west-1",
+	}
+	if got := componentEnvironments(t, files["github/main.tf.json"], "api")["pro"].Variables; !maps.Equal(got, want) {
+		t.Errorf("pro variables = %v, want spec §5.3's %v", got, want)
+	}
+}
+
+// TestRenderWithoutRegistryPassesNoVariables keeps Phase 2a's guard for every
+// Component without aws.registry: the environments' aws blocks alone change
+// nothing, so the render is basic's golden file, byte for byte.
+func TestRenderWithoutRegistryPassesNoVariables(t *testing.T) {
+	m := loadFixture(t, "aws-registry")
+	m.Components[0].AWS.Registry = false
+	files, err := Render(m, Options{ModuleRef: "v0.0.0-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(files["github/main.tf.json"], want) {
-		t.Errorf("an aws part changed the github stack:\n%s", files["github/main.tf.json"])
+	checkGolden(t, "basic", files["github/main.tf.json"])
+}
+
+// TestRenderEnvVariablesFollowEachEnvironment gives the Component's environments
+// different accounts and regions, and the platform an aws environment that the
+// Component does not list: each listed environment gets its own values, and the
+// other gets nothing.
+func TestRenderEnvVariablesFollowEachEnvironment(t *testing.T) {
+	m := loadFixture(t, "aws-registry")
+	m.Platform.Environments["pro"] = claims.Environment{Protected: true, AWS: &claims.AWS{AccountID: "000000000003", Region: "us-east-1"}}
+	m.Platform.Environments["staging"] = claims.Environment{AWS: &claims.AWS{AccountID: "000000000002", Region: "eu-central-1"}}
+	files, err := Render(m, Options{ModuleRef: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]renderedEnvironment{
+		"dev": {Protected: false, Variables: map[string]string{
+			"AWS_ROLE_ARN":   "arn:aws:iam::000000000001:role/api-dev-ci",
+			"ECR_REPOSITORY": "000000000001.dkr.ecr.eu-west-1.amazonaws.com/api",
+			"AWS_REGION":     "eu-west-1",
+		}},
+		"pro": {Protected: true, Variables: map[string]string{
+			"AWS_ROLE_ARN":   "arn:aws:iam::000000000003:role/api-pro-ci",
+			"ECR_REPOSITORY": "000000000003.dkr.ecr.us-east-1.amazonaws.com/api",
+			"AWS_REGION":     "us-east-1",
+		}},
+	}
+	if got := componentEnvironments(t, files["github/main.tf.json"], "api"); !reflect.DeepEqual(got, want) {
+		t.Errorf("environments = %+v, want %+v", got, want)
+	}
+}
+
+// TestRenderRejectsARegistryEnvironmentWithoutAWS covers a model that Load
+// rejects (spec §4.7): rendering it must fail, never panic, and never drop the
+// variables, which would plan their deletion.
+func TestRenderRejectsARegistryEnvironmentWithoutAWS(t *testing.T) {
+	m := loadFixture(t, "aws-registry")
+	m.Platform.Environments["pro"] = claims.Environment{Protected: true}
+	files, err := Render(m, Options{ModuleRef: "v1"})
+	want := `render: component "api" has aws.registry, but environment "pro" has no aws block`
+	if err == nil || err.Error() != want || files != nil {
+		t.Errorf("Render = %d files, error %v; want no files and the error %q", len(files), err, want)
 	}
 }
 
@@ -108,10 +201,11 @@ func TestRenderLocalModules(t *testing.T) {
 }
 
 // TestRenderIsDeterministic is spec §8.2's determinism test at the boundary Render
-// consumes: any claim order gives identical bytes. (Load's half, sorted output
-// whatever the read order, is TestLoadSortsClaimsByName in internal/claims.)
+// consumes: any claim order, and any order of a Component's environments, gives
+// identical bytes, env variables included. (Load's half, sorted output whatever
+// the read order, is TestLoadSortsClaimsByName in internal/claims.)
 func TestRenderIsDeterministic(t *testing.T) {
-	m := loadFixture(t, "basic")
+	m := loadFixture(t, "aws-registry")
 	// Two claims of each kind, so their order can actually vary.
 	data := m.Groups[0]
 	data.Name = "data"
@@ -135,6 +229,11 @@ func TestRenderIsDeterministic(t *testing.T) {
 		r.Shuffle(len(shuffled.Components), func(a, b int) {
 			shuffled.Components[a], shuffled.Components[b] = shuffled.Components[b], shuffled.Components[a]
 		})
+		for i := range shuffled.Components {
+			envs := slices.Clone(shuffled.Components[i].Environments)
+			r.Shuffle(len(envs), func(a, b int) { envs[a], envs[b] = envs[b], envs[a] })
+			shuffled.Components[i].Environments = envs
+		}
 		got, err := Render(&shuffled, Options{ModuleRef: "v1"})
 		if err != nil {
 			t.Fatal(err)

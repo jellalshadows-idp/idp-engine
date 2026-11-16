@@ -98,7 +98,8 @@ With `aws.registry: true`, a Component also gets, in each of its environments: a
 
 - `aws.registry: true` needs at least one environment, and each environment it lists needs an `aws` block in `config/platform.yaml`.
 - `aws: {}` and `registry: false` are valid and ask for nothing.
-- **Not rendered yet.** Since Phase 2a the claims accept and validate the `aws` part, but nothing renders from it until Phases 2b to 2d, and the pipelines apply it from Phase 2e.
+- **The variables come first.** Since Phase 2b the github stack carries them, and GitHub creates them when the pipelines apply that stack, after the merge (see "Rendering"). The ECR repository and the role they name are rendered from Phase 2d and applied, to the floci emulator, from Phase 2e.
+- Turning `aws.registry` off, or removing one of the Component's environments, deletes those variables; that reconcile waits for approval in `idp-approval`, like every delete.
 
 The `features` field arrives in Phase 4. Until then it fails validation.
 
@@ -120,7 +121,7 @@ claims/components/api.yaml:6: environment "pro" needs an aws block (accountId an
 - `rendered/github/.terraform.lock.hcl`: the pinned provider checksums;
 - `rendered/.idp-rendered`: a marker. `--out` must not exist, be empty, or hold a previous render, so a mistyped path can never wipe unrelated data.
 
-A Component's `aws` part renders nothing yet: Phase 2b adds its environment variables to the github stack, and Phase 2d its AWS stacks.
+A Component with `aws.registry: true` passes `variables` to its module for each of its environments: `AWS_ROLE_ARN`, `ECR_REPOSITORY` and `AWS_REGION`, computed from the names and the environment's `aws` block (spec §5.3). A Component without it renders exactly as before, so its stack plans no change. Rendering creates nothing: GitHub creates the variables only when the pipelines apply the github stack (reconcile, after the merge), like every other GitHub resource. The AWS stacks, with the ECR repository and the CI role, render from Phase 2d.
 
 `--out` is relative to the current directory, not to `--dir`. The stack's local backend writes its state to `<out>/../tfstate/github.tfstate`, which is where the `wet` branch keeps it (spec §5.4).
 
