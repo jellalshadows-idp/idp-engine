@@ -97,10 +97,15 @@ jobs:
         with:
           tofu_version: 1.13.2
           tofu_wrapper: false
-      - name: render each fixture with local module sources and tofu validate it (proves the JSON syntax, lock file and modules)
+      - name: render each fixture with local module sources and tofu validate every stack (proves the JSON syntax, lock files and modules)
         id: render-validate
-        # basic has no aws part; aws-registry passes each environment's variables.
+        # basic renders only the github stack; aws-registry adds each
+        # environment's variables and the AWS stacks under aws/. Every directory
+        # with a main.tf.json is a stack. -lockfile=readonly fails a stack whose
+        # shipped lock file lacks its provider, and the plugin cache downloads
+        # each provider once.
         env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tofu-plugin-cache
           TF_ENCRYPTION: |
             key_provider "pbkdf2" "ci" {
               passphrase = "render-smoke-only-not-a-secret"
@@ -115,15 +120,21 @@ jobs:
               method = method.aes_gcm.ci
             }
         run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          shopt -s globstar
           for fixture in basic aws-registry; do
             go run ./cmd/idp render --dir "internal/render/testdata/$fixture" --out "$RUNNER_TEMP/rendered/$fixture" --modules-dir modules
-            tofu -chdir="$RUNNER_TEMP/rendered/$fixture/github" init -backend=false -input=false
-            tofu -chdir="$RUNNER_TEMP/rendered/$fixture/github" validate
+            for stack in "$RUNNER_TEMP/rendered/$fixture"/**/main.tf.json; do
+              stack="${stack%/main.tf.json}"
+              tofu -chdir="$stack" init -backend=false -input=false -lockfile=readonly
+              tofu -chdir="$stack" validate
+            done
           done
 
   floci:
-    # Level 3 (spec §8.4): the AWS modules applied to two accounts of one floci,
-    # checked against internal/naming, replayed and destroyed by internal/floci.
+    # Level 3 (spec §8.4): the rendered AWS stacks of the aws-registry fixture
+    # applied to two accounts of one floci, checked against internal/naming,
+    # replayed and destroyed by internal/floci.
     # floci reaches the Docker socket because its ECR runs a registry container
     # (ADR-0004).
     runs-on: ubuntu-24.04
@@ -165,7 +176,7 @@ jobs:
           done
           echo "::error::floci did not report ready on localhost:4566 within 60 seconds"
           exit 1
-      - name: apply, check, replay and destroy the AWS modules on floci
+      - name: apply, check, replay and destroy the rendered AWS stacks on floci
         id: floci-test
         env:
           IDP_FLOCI_ENDPOINT: http://localhost:4566
