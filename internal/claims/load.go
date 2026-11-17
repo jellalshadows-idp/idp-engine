@@ -90,6 +90,35 @@ func (l *loader) loadPlatform() {
 				Message: fmt.Sprintf("naming.requiredPrefix %q is also listed in naming.reservedPrefixes", p)})
 		}
 	}
+	l.checkAWSAccounts(doc)
+}
+
+// checkAWSAccounts checks, in file order, what the AWS stacks need from the
+// environments' aws blocks: an account of the environment's own. Each
+// environment's baseline creates its account's GitHub OIDC provider (spec
+// §5.4), and an account holds one, so a second environment in the same
+// account would create it again.
+func (l *loader) checkAWSAccounts(doc *document) {
+	var envs []string
+	for name, e := range l.model.Platform.Environments {
+		if e.AWS != nil {
+			envs = append(envs, name)
+		}
+	}
+	at := func(env string, path ...string) int {
+		return doc.line(append([]string{"environments", env}, path...))
+	}
+	sort.Slice(envs, func(i, j int) bool { return at(envs[i]) < at(envs[j]) })
+	first := map[string]string{} // account ID → the first environment that uses it
+	for _, env := range envs {
+		aws := l.model.Platform.Environments[env].AWS
+		if other, taken := first[aws.AccountID]; taken {
+			l.add(Diagnostic{File: doc.file, Line: at(env, "aws", "accountId"),
+				Message: fmt.Sprintf("environment %q uses accountId %q, like environment %q: each environment needs its own AWS account, because each environment's baseline creates that account's GitHub OIDC provider (spec §5.4)", env, aws.AccountID, other)})
+			continue
+		}
+		first[aws.AccountID] = env
+	}
 }
 
 // checkClaimsRoot reports anything under claims/ other than groups/ and components/.

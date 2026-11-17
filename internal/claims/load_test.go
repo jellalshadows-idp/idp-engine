@@ -193,6 +193,12 @@ func TestLoadDiagnostics(t *testing.T) {
 			r["claims/components/api.yaml"] = strings.Replace(validComponent, "[dev, pro]", "[dev, staging]", 1) + "aws:\n  registry: true\n"
 		}, []string{`claims/components/api.yaml:5: environment "staging" is not defined in config/platform.yaml`}},
 		{"gitkeep ignored", func(r map[string]string) { r["claims/groups/.gitkeep"] = "" }, nil},
+		{"two environments may not share an aws account", func(r map[string]string) {
+			r["config/platform.yaml"] = strings.Replace(awsPlatform, `"000000000003"`, `"000000000001"`, 1)
+		}, []string{`config/platform.yaml:14: environment "pro" uses accountId "000000000001", like environment "dev": each environment needs its own AWS account, because each environment's baseline creates that account's GitHub OIDC provider (spec §5.4)`}},
+		{"the shared account is reported where the file uses it again", func(r map[string]string) {
+			r["config/platform.yaml"] = "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 5255579\nenvironments:\n  pro:\n    protected: true\n    aws:\n      accountId: \"000000000001\"\n      region: eu-west-1\n  dev:\n    aws:\n      accountId: \"000000000001\"\n      region: eu-west-1\n"
+		}, []string{`config/platform.yaml:14: environment "dev" uses accountId "000000000001", like environment "pro": each environment needs its own AWS account, because each environment's baseline creates that account's GitHub OIDC provider (spec §5.4)`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
