@@ -12,7 +12,9 @@ import (
 
 // The documents that modules/aws/component plans for api in dev, account
 // 000000000001, as OpenTofu's jsonencode writes them (keys sorted). Its tftest
-// asserts the same documents.
+// asserts the same documents. Nothing here reads the module: these constants
+// pin the Go builders offline, and TestFloci ties the builders to the module by
+// comparing them with the policies floci stores.
 const (
 	moduleTrustPolicy = `{"Statement":[{"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"token.actions.githubusercontent.com:aud":"sts.amazonaws.com","token.actions.githubusercontent.com:sub":"repo:acme/api:environment:dev"}},"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::000000000001:oidc-provider/token.actions.githubusercontent.com"}}],"Version":"2012-10-17"}`
 	modulePushPolicy  = `{"Statement":[{"Action":["ecr:GetAuthorizationToken"],"Effect":"Allow","Resource":"*","Sid":"ECRLogin"},{"Action":["ecr:BatchCheckLayerAvailability","ecr:CompleteLayerUpload","ecr:InitiateLayerUpload","ecr:PutImage","ecr:UploadLayerPart"],"Effect":"Allow","Resource":"arn:aws:ecr:eu-west-1:000000000001:repository/api","Sid":"ECRPush"}],"Version":"2012-10-17"}`
@@ -59,6 +61,7 @@ func TestDecodePolicy(t *testing.T) {
 		{name: "NotResource, which widens a policy", raw: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"ecr:PutImage","NotResource":"x"}]}`, bad: "NotResource"},
 		{name: "an unknown top-level element", raw: `{"Version":"2012-10-17","Id":"x","Statement":[]}`, bad: "Id"},
 		{name: "a number for an action", raw: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":7}]}`, bad: "want a string or a list of strings"},
+		{name: "a second document after the policy", raw: moduleTrustPolicy + `{"Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}`, bad: "after the document"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

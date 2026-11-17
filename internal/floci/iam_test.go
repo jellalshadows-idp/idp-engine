@@ -3,7 +3,9 @@ package floci
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/naming"
@@ -27,8 +29,10 @@ func (l *stringList) UnmarshalJSON(b []byte) error {
 }
 
 // statement is one IAM policy statement. Decoding refuses any other element
-// (NotAction, NotResource, NotPrincipal), so a policy cannot widen itself
-// through an element this comparison does not read.
+// (NotAction, NotResource, NotPrincipal) and anything after the document, so a
+// policy cannot widen itself through an element this comparison does not read.
+// A duplicate key is not detected (encoding/json keeps the last one); the
+// module's jsonencode never writes one.
 type statement struct {
 	Sid       string                           `json:"Sid,omitempty"`
 	Effect    string                           `json:"Effect"`
@@ -64,10 +68,22 @@ type policy struct {
 	Statement statements `json:"Statement"`
 }
 
+// strictJSON decodes exactly one JSON value into v, refusing unknown fields and
+// anything after the value.
 func strictJSON(b []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	switch err := dec.Decode(new(json.RawMessage)); {
+	case errors.Is(err, io.EOF):
+		return nil
+	case err == nil:
+		return errors.New("unexpected data after the document")
+	default:
+		return fmt.Errorf("unexpected data after the document: %w", err)
+	}
 }
 
 // decodePolicy reads a policy document as the AWS CLI prints it: an object, or

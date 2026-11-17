@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/naming"
@@ -66,20 +67,58 @@ func (f *floci) tofuOK(t *testing.T, tg target, dir string, args ...string) {
 	}
 }
 
-// awsJSON runs an AWS CLI command against floci as the account of tg and
-// decodes its JSON output into out. It returns false when the command fails,
-// as it does for a resource that does not exist.
-func (f *floci) awsJSON(t *testing.T, tg target, out any, args ...string) bool {
+// awsCLI runs an AWS CLI command against floci as the account of tg and
+// returns its stdout and stderr apart, so a warning on stderr never reaches
+// the JSON decoder, and its exit code. A command that cannot start fails the
+// test.
+func (f *floci) awsCLI(t *testing.T, tg target, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	args = append(args, "--endpoint-url", f.endpoint, "--output", "json")
-	stdout, code := f.run(t, tg, f.root, f.aws, args...)
+	cmd := exec.Command(f.aws, args...)
+	cmd.Dir = f.root
+	cmd.Env = f.env(tg)
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	err := cmd.Run()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return out.String(), errOut.String(), 0
+	case errors.As(err, &exit):
+		return out.String(), errOut.String(), exit.ExitCode()
+	}
+	t.Fatalf("aws %v: %v", args, err)
+	return "", "", -1
+}
+
+// awsJSON runs an AWS CLI command against floci as the account of tg and
+// decodes its JSON output into out. It returns false, and logs the error, when
+// the command fails.
+func (f *floci) awsJSON(t *testing.T, tg target, out any, args ...string) bool {
+	t.Helper()
+	stdout, stderr, code := f.awsCLI(t, tg, args...)
 	if code != 0 {
+		t.Logf("aws %v exited %d:\n%s", args, code, stderr)
 		return false
 	}
-	if err := json.NewDecoder(bytes.NewReader([]byte(stdout))).Decode(out); err != nil {
+	if err := json.NewDecoder(strings.NewReader(stdout)).Decode(out); err != nil {
 		t.Fatalf("aws %v: %v\n%s", args, err, stdout)
 	}
 	return true
+}
+
+// wantMissing runs an AWS CLI read that must fail with NoSuchEntity. A success,
+// or a failure for any other reason, fails the test, so an unreachable or
+// broken floci never passes for a missing resource.
+func (f *floci) wantMissing(t *testing.T, tg target, what string, args ...string) {
+	t.Helper()
+	_, stderr, code := f.awsCLI(t, tg, args...)
+	switch {
+	case code == 0:
+		t.Errorf("%s: found, want NoSuchEntity", what)
+	case !strings.Contains(stderr, "NoSuchEntity"):
+		t.Errorf("%s: aws exited %d without NoSuchEntity:\n%s", what, code, stderr)
+	}
 }
 
 // apply creates one stack of tg's environment the way the pipelines will (spec
@@ -147,10 +186,8 @@ func TestFloci(t *testing.T) {
 	}
 	t.Run("accounts are isolated", func(t *testing.T) {
 		dev, pro := targets[0], targets[1]
-		var role struct{}
-		if f.awsJSON(t, pro, &role, "iam", "get-role", "--role-name", naming.RoleName(component, dev.env)) {
-			t.Errorf("account %s can read the role of account %s (ADR-0004)", pro.accountID, dev.accountID)
-		}
+		f.wantMissing(t, pro, "account "+pro.accountID+" reading the role of account "+dev.accountID+" (ADR-0004)",
+			"iam", "get-role", "--role-name", naming.RoleName(component, dev.env))
 	})
 }
 
@@ -259,8 +296,6 @@ func (f *floci) wantNothingLeft(t *testing.T, tg target) {
 	if !f.awsJSON(t, tg, &repos, "ecr", "describe-repositories") || len(repos.Repositories) != 0 {
 		t.Errorf("%s: repositories left after destroy: %+v", tg.env, repos.Repositories)
 	}
-	var role struct{}
-	if f.awsJSON(t, tg, &role, "iam", "get-role", "--role-name", naming.RoleName(component, tg.env)) {
-		t.Errorf("%s: role %s left after destroy", tg.env, naming.RoleName(component, tg.env))
-	}
+	f.wantMissing(t, tg, tg.env+": role "+naming.RoleName(component, tg.env)+" after destroy",
+		"iam", "get-role", "--role-name", naming.RoleName(component, tg.env))
 }
