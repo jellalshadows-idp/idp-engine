@@ -25,6 +25,7 @@ gh workflow run renovate.yaml --repo jellalshadows-idp/idp-engine --ref main
 | Go | the `go` directive in `go.mod`, which CI and `setup-idp` install | patch updates only |
 | GoReleaser | the GoReleaser action's `version` in `ci.yaml` and `release.yaml` | one |
 | actionlint, zizmor | `ci.yaml` | one each |
+| floci | the `floci` service image of `ci.yaml`, tag and digest | one |
 | Renovate | `renovate.yaml` and the validator image in `ci.yaml` | one |
 
 Runner images (`runs-on`) are not updated. Every update waits 14 days after its release; engine releases do not wait. Renovate opens every pending update in the run, with no limit on pull requests per hour or open at once (`prHourlyLimit: 0`, `prConcurrentLimit: 0`), so the engine bump never waits behind third-party PRs. Pending updates are listed in the "Dependency Dashboard" issue of each repository.
@@ -74,6 +75,10 @@ cd ../../..
 ```
 
 Then set the new version in `lockfiles/lockfiles_test.go` (`TestAWSLockPinsTheProvider`), run `go test ./lockfiles/ ./internal/workflowspec/ ./internal/floci/`, commit as `chore(deps): regenerate the aws provider lock file` and push. The registry signs the checksums of every package of a release, and OpenTofu records them all whatever the `-platform` flags say; the flags keep one command for both providers.
+
+## A floci update
+
+Renovate moves the image's tag and digest together, and the `floci` job is the check. Read floci's release notes for IAM and ECR changes before merging: the floci tests compare names, ARNs and policies, never the registry URL, whose host floci chooses (ADR-0013).
 
 ## An OpenTofu update
 
