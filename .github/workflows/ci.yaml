@@ -144,6 +144,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # floci holds the Docker socket, so this job saves no cache that other
+          # jobs restore.
+          cache: false
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
           tofu_version: 1.13.2
@@ -151,10 +154,11 @@ jobs:
       - name: wait until floci is ready
         id: floci-ready
         # The same check as the image's health probe (docker/healthcheck.sh); it
-        # fails, never continues, when floci does not answer.
+        # fails, never continues, when floci does not answer. --max-time keeps a
+        # floci that accepts but never answers within the 60 seconds.
         run: |
-          for _ in $(seq 1 60); do
-            if [[ "$(curl -fsS http://localhost:4566/_floci/init 2>/dev/null)" == *'"ready":true'* ]]; then
+          until (( SECONDS >= 60 )); do
+            if [[ "$(curl -fsS --max-time 2 http://localhost:4566/_floci/init 2>/dev/null)" == *'"ready":true'* ]]; then
               exit 0
             fi
             sleep 1
@@ -167,7 +171,9 @@ jobs:
           IDP_FLOCI_ENDPOINT: http://localhost:4566
         run: go test -count=1 -timeout=15m -v ./internal/floci/
       - name: floci logs
-        if: failure()
+        id: floci-logs
+        # Also when the job times out, which ends it as cancelled.
+        if: failure() || cancelled()
         env:
           FLOCI_CONTAINER: ${{ job.services.floci.id }}
         run: docker logs "$FLOCI_CONTAINER" 2>&1 | tail -n 300

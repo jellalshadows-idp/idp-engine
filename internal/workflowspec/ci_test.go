@@ -76,6 +76,9 @@ func TestCIFlociJob(t *testing.T) {
 	if j.TimeoutMinutes < 1 || j.TimeoutMinutes > 30 {
 		t.Errorf("ci floci timeout-minutes = %d, want 1 to 30: a hung emulator must not hold a runner for 6 hours", j.TimeoutMinutes)
 	}
+	if j.If != "" || j.ContinueOnError != "" {
+		t.Errorf("ci floci: if %q, continue-on-error %q; the job must run on every PR and fail it (D-2): a skipped job counts as passed", j.If, j.ContinueOnError)
+	}
 	if got := slices.Sorted(maps.Keys(j.Services)); !slices.Equal(got, []string{"floci"}) {
 		t.Fatalf("ci floci services = %v, want floci", got)
 	}
@@ -93,6 +96,11 @@ func TestCIFlociJob(t *testing.T) {
 	for _, s := range j.Steps {
 		if strings.HasPrefix(s.Uses, "opentofu/setup-opentofu@") {
 			tofu = append(tofu, s.With["tofu_version"])
+		}
+		// floci holds the Docker socket, which reaches the runner: its job must
+		// not save a Go module cache that other jobs restore.
+		if strings.HasPrefix(s.Uses, "actions/setup-go@") && s.With["cache"] != "false" {
+			t.Errorf("ci floci setup-go cache = %q, want false", s.With["cache"])
 		}
 	}
 	if !slices.Equal(tofu, []string{ciTofuVersion(t)}) {
@@ -112,6 +120,15 @@ func TestCIFlociJob(t *testing.T) {
 		`echo "::error::floci did not report ready on localhost:4566 within 60 seconds"`,
 		"exit 1",
 	})
+	// A floci that accepts the connection but never answers must not hold the
+	// wait past its 60 seconds.
+	if !strings.Contains(ready.Run, "curl -fsS --max-time 2 ") {
+		t.Error("ci floci-ready: curl lacks --max-time 2")
+	}
+	// The logs explain a hang too, which ends the job as cancelled.
+	if _, logs := mustStep(t, "ci floci", j.Steps, "floci-logs"); logs.If != "failure() || cancelled()" {
+		t.Errorf("ci floci-logs: if %q, want failure() || cancelled()", logs.If)
+	}
 	if test.Env["IDP_FLOCI_ENDPOINT"] != "http://localhost:4566" {
 		t.Errorf("ci floci-test env IDP_FLOCI_ENDPOINT = %q, want http://localhost:4566: without it TestFloci skips", test.Env["IDP_FLOCI_ENDPOINT"])
 	}

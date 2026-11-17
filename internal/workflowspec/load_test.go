@@ -100,19 +100,20 @@ type concurrency struct {
 }
 
 type job struct {
-	Name           string             `yaml:"name"`
-	Needs          strlist            `yaml:"needs"`
-	If             string             `yaml:"if"`
-	Environment    string             `yaml:"environment"`
-	TimeoutMinutes int                `yaml:"timeout-minutes"`
-	Env            strmap             `yaml:"env"`
-	Permissions    perms              `yaml:"permissions"`
-	Outputs        strmap             `yaml:"outputs"`
-	Uses           string             `yaml:"uses"`
-	With           strmap             `yaml:"with"`
-	Secrets        yaml.Node          `yaml:"secrets"`
-	Services       map[string]service `yaml:"services"`
-	Steps          []step             `yaml:"steps"`
+	Name            string             `yaml:"name"`
+	Needs           strlist            `yaml:"needs"`
+	If              string             `yaml:"if"`
+	Environment     string             `yaml:"environment"`
+	TimeoutMinutes  int                `yaml:"timeout-minutes"`
+	ContinueOnError string             `yaml:"continue-on-error"`
+	Env             strmap             `yaml:"env"`
+	Permissions     perms              `yaml:"permissions"`
+	Outputs         strmap             `yaml:"outputs"`
+	Uses            string             `yaml:"uses"`
+	With            strmap             `yaml:"with"`
+	Secrets         yaml.Node          `yaml:"secrets"`
+	Services        map[string]service `yaml:"services"`
+	Steps           []step             `yaml:"steps"`
 }
 
 // service is a job's service container.
