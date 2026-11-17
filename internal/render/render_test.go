@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"io/fs"
 	"maps"
 	"math/rand/v2"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -15,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/claims"
+	"github.com/jellalshadows-idp/idp-engine/internal/naming"
 	"github.com/jellalshadows-idp/idp-engine/lockfiles"
 )
 
@@ -32,11 +35,12 @@ func loadFixture(t *testing.T, name string) *claims.Model {
 	return m
 }
 
-// checkGolden compares a rendered github stack with the golden file of fixture,
-// and rewrites that file first when the test runs with -update.
-func checkGolden(t *testing.T, fixture string, got []byte) {
+// checkGolden compares one rendered file, rel, with its golden file under
+// testdata/<fixture>/expected, and rewrites that file first when the test runs
+// with -update.
+func checkGolden(t *testing.T, fixture, rel string, got []byte) {
 	t.Helper()
-	golden := filepath.Join("testdata", fixture, "expected", "github", "main.tf.json")
+	golden := filepath.Join("testdata", fixture, "expected", filepath.FromSlash(rel))
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(golden), 0o755); err != nil {
 			t.Fatal(err)
@@ -50,8 +54,80 @@ func checkGolden(t *testing.T, fixture string, got []byte) {
 		t.Fatalf("%v (run with -update to create it)", err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Errorf("%s: main.tf.json differs from its golden file:\n%s", fixture, got)
+		t.Errorf("%s: %s differs from its golden file:\n%s", fixture, rel, got)
 	}
+}
+
+// checkGoldens compares every stack of a render with fixture's golden files:
+// each main.tf.json byte for byte, and the set of stacks, so a stack that
+// appears or disappears fails too. -update rewrites the golden files of the
+// rendered stacks; a golden file of a stack that is no longer rendered must be
+// deleted by hand.
+func checkGoldens(t *testing.T, fixture string, files map[string][]byte) {
+	t.Helper()
+	var rendered []string
+	for p := range files {
+		if path.Base(p) == "main.tf.json" {
+			rendered = append(rendered, p)
+		}
+	}
+	slices.Sort(rendered)
+	for _, p := range rendered {
+		checkGolden(t, fixture, p, files[p])
+	}
+	expected := filepath.Join("testdata", fixture, "expected")
+	var golden []string
+	err := filepath.WalkDir(expected, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Name() != "main.tf.json" {
+			return err
+		}
+		rel, err := filepath.Rel(expected, p)
+		golden = append(golden, filepath.ToSlash(rel))
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(golden)
+	if !slices.Equal(rendered, golden) {
+		t.Errorf("%s: rendered stacks %v, golden stacks %v", fixture, rendered, golden)
+	}
+}
+
+// renderedAWSStack is what the tests read of a rendered AWS stack.
+type renderedAWSStack struct {
+	Provider struct {
+		AWS struct {
+			Region string `json:"region"`
+		} `json:"aws"`
+	} `json:"provider"`
+	Module map[string]map[string]any `json:"module"`
+}
+
+// awsStackOf decodes the AWS stack rendered in dir.
+func awsStackOf(t *testing.T, files map[string][]byte, dir string) renderedAWSStack {
+	t.Helper()
+	b, ok := files[dir+"/main.tf.json"]
+	if !ok {
+		t.Fatalf("no stack %s in %v", dir, slices.Sorted(maps.Keys(files)))
+	}
+	var s renderedAWSStack
+	if err := json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// stackDirs lists the stacks of a render: the directories of its main.tf.json files.
+func stackDirs(files map[string][]byte) []string {
+	var out []string
+	for p := range files {
+		if path.Base(p) == "main.tf.json" {
+			out = append(out, path.Dir(p))
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // renderedEnvironment is one entry of the environments a component module receives.
@@ -79,23 +155,28 @@ func componentEnvironments(t *testing.T, stack []byte, name string) map[string]r
 	return c.Environments
 }
 
-// TestRenderGolden pins the render of a claims repo without any aws part. Phase 2b
-// left this golden file unchanged, byte for byte: a Component without
-// aws.registry passes no variables, so existing stacks plan no change.
+// TestRenderGolden pins the render of a claims repo without any aws part:
+// only the github stack, whose golden file Phases 2b and 2d left unchanged,
+// byte for byte. A Component without aws.registry passes no variables, and an
+// environment without an aws block has no AWS stack, so existing claims repos
+// plan no change.
 func TestRenderGolden(t *testing.T) {
 	files, err := Render(loadFixture(t, "basic"), Options{ModuleRef: "v0.0.0-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkGolden(t, "basic", files["github/main.tf.json"])
+	if got := slices.Sorted(maps.Keys(files)); !slices.Equal(got, []string{"github/.terraform.lock.hcl", "github/main.tf.json"}) {
+		t.Errorf("rendered files = %v, want only the github stack", got)
+	}
+	checkGoldens(t, "basic", files)
 }
 
 // TestRenderEnvVariablesGolden renders the aws-registry fixture: basic plus
 // aws.registry and the environments' aws blocks. Each environment of the
 // Component gets AWS_ROLE_ARN, ECR_REPOSITORY and AWS_REGION (spec §4.4), and
 // pro's are spec §5.3's example, checked verbatim here so that -update cannot
-// change them unnoticed. Only the github stack is rendered until Phase 2d adds
-// the AWS stacks.
+// change them unnoticed. TestRenderAWSStacksGolden checks the fixture's AWS
+// stacks.
 func TestRenderEnvVariablesGolden(t *testing.T) {
 	m := loadFixture(t, "aws-registry")
 	if !m.Components[0].AWS.Registry || m.Platform.Environments["dev"].AWS == nil || m.Platform.Environments["pro"].AWS == nil {
@@ -105,10 +186,7 @@ func TestRenderEnvVariablesGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := slices.Sorted(maps.Keys(files)); !slices.Equal(got, []string{"github/.terraform.lock.hcl", "github/main.tf.json"}) {
-		t.Errorf("rendered files = %v, want only the github stack", got)
-	}
-	checkGolden(t, "aws-registry", files["github/main.tf.json"])
+	checkGolden(t, "aws-registry", "github/main.tf.json", files["github/main.tf.json"])
 	want := map[string]string{
 		"AWS_ROLE_ARN":   "arn:aws:iam::000000000003:role/api-pro-ci",
 		"ECR_REPOSITORY": "000000000003.dkr.ecr.eu-west-1.amazonaws.com/api",
@@ -120,8 +198,9 @@ func TestRenderEnvVariablesGolden(t *testing.T) {
 }
 
 // TestRenderWithoutRegistryPassesNoVariables keeps Phase 2a's guard for every
-// Component without aws.registry: the environments' aws blocks alone change
-// nothing, so the render is basic's golden file, byte for byte.
+// Component without aws.registry: the environments' aws blocks alone leave the
+// github stack basic's golden file, byte for byte, and add only each
+// environment's baseline, never a Component stack.
 func TestRenderWithoutRegistryPassesNoVariables(t *testing.T) {
 	m := loadFixture(t, "aws-registry")
 	m.Components[0].AWS.Registry = false
@@ -129,7 +208,151 @@ func TestRenderWithoutRegistryPassesNoVariables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkGolden(t, "basic", files["github/main.tf.json"])
+	checkGolden(t, "basic", "github/main.tf.json", files["github/main.tf.json"])
+	if got, want := stackDirs(files), []string{"aws/dev/_baseline", "aws/pro/_baseline", "github"}; !slices.Equal(got, want) {
+		t.Errorf("stacks = %v, want %v", got, want)
+	}
+}
+
+// TestRenderAWSStacksGolden pins the AWS stacks of the aws-registry fixture
+// (spec §5.4): each environment's baseline and the Component's stack in each
+// of its environments, each with the engine's AWS lock file.
+func TestRenderAWSStacksGolden(t *testing.T) {
+	files, err := Render(loadFixture(t, "aws-registry"), Options{ModuleRef: "v0.0.0-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"aws/dev/_baseline", "aws/dev/components/api", "aws/pro/_baseline", "aws/pro/components/api", "github"}
+	if got := stackDirs(files); !slices.Equal(got, want) {
+		t.Errorf("stacks = %v, want %v", got, want)
+	}
+	if len(files) != 2*len(want) {
+		t.Errorf("rendered %d files, want a main.tf.json and a lock file for each of the %d stacks: %v", len(files), len(want), slices.Sorted(maps.Keys(files)))
+	}
+	for _, dir := range want[:4] {
+		if !bytes.Equal(files[dir+"/.terraform.lock.hcl"], lockfiles.AWS) {
+			t.Errorf("%s must carry the engine's AWS lock file", dir)
+		}
+	}
+	checkGoldens(t, "aws-registry", files)
+}
+
+// TestRenderAWSStacksFollowTheAWSBlocks: every environment with an aws block
+// gets its baseline, used by a Component or not, and an environment without one
+// gets no AWS stack; a registry Component gets a stack in each environment it
+// lists, and only there; a Component without aws.registry gets none.
+func TestRenderAWSStacksFollowTheAWSBlocks(t *testing.T) {
+	m := loadFixture(t, "aws-registry")
+	m.Platform.Environments["staging"] = claims.Environment{AWS: &claims.AWS{AccountID: "000000000002", Region: "eu-central-1"}}
+	m.Platform.Environments["qa"] = claims.Environment{}
+	web := m.Components[0]
+	web.Name, web.Environments = "web", []string{"dev", "qa", "staging"}
+	web.AWS.Registry = false
+	m.Components = append(m.Components, web)
+	files, err := Render(m, Options{ModuleRef: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"aws/dev/_baseline", "aws/dev/components/api", "aws/pro/_baseline", "aws/pro/components/api", "aws/staging/_baseline", "github"}
+	if got := stackDirs(files); !slices.Equal(got, want) {
+		t.Errorf("stacks = %v, want %v", got, want)
+	}
+	if got := awsStackOf(t, files, "aws/staging/_baseline").Provider.AWS.Region; got != "eu-central-1" {
+		t.Errorf("staging baseline region = %q, want its environment's eu-central-1", got)
+	}
+}
+
+// TestRenderAWSStacksUseNamingsIdentities pins spec §5.5's identities in the
+// rendered Component stacks, outside the golden files, so that -update cannot
+// change them unnoticed: pro's module call verbatim, and in every environment
+// the role, the repository and the region that the github stack's variables
+// name, and the account's GitHub OIDC provider.
+func TestRenderAWSStacksUseNamingsIdentities(t *testing.T) {
+	m := loadFixture(t, "aws-registry")
+	files, err := Render(m, Options{ModuleRef: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"source":            "git::https://github.com/jellalshadows-idp/idp-engine.git//modules/aws/component?ref=v1",
+		"github_repository": "acme/api",
+		"environment":       "pro",
+		"repository_name":   "api",
+		"role_name":         "api-pro-ci",
+		"oidc_provider_arn": "arn:aws:iam::000000000003:oidc-provider/token.actions.githubusercontent.com",
+	}
+	if got := awsStackOf(t, files, "aws/pro/components/api").Module; !reflect.DeepEqual(got, map[string]map[string]any{"component": want}) {
+		t.Errorf("pro module = %v, want only component = %v", got, want)
+	}
+	vars := componentEnvironments(t, files["github/main.tf.json"], "api")
+	for _, env := range m.Components[0].Environments {
+		aws := m.Platform.Environments[env].AWS
+		s := awsStackOf(t, files, "aws/"+env+"/components/api")
+		call := s.Module["component"]
+		v := vars[env].Variables
+		if got, want := "arn:aws:iam::"+aws.AccountID+":role/"+call["role_name"].(string), v["AWS_ROLE_ARN"]; got != want {
+			t.Errorf("%s: the stack creates the role %s, the github stack passes AWS_ROLE_ARN %s", env, got, want)
+		}
+		if got, want := aws.AccountID+".dkr.ecr."+aws.Region+".amazonaws.com/"+call["repository_name"].(string), v["ECR_REPOSITORY"]; got != want {
+			t.Errorf("%s: the stack creates the repository %s, the github stack passes ECR_REPOSITORY %s", env, got, want)
+		}
+		if s.Provider.AWS.Region != v["AWS_REGION"] {
+			t.Errorf("%s: the stack's region %s, the github stack passes AWS_REGION %s", env, s.Provider.AWS.Region, v["AWS_REGION"])
+		}
+		if got, want := call["oidc_provider_arn"], naming.OIDCProviderARN(aws.AccountID); got != want {
+			t.Errorf("%s: oidc_provider_arn = %v, want the account's %s (naming.OIDCProviderARN)", env, got, want)
+		}
+		if got := awsStackOf(t, files, "aws/"+env+"/_baseline").Module; !reflect.DeepEqual(got, map[string]map[string]any{"baseline": {"source": "git::https://github.com/jellalshadows-idp/idp-engine.git//modules/aws/baseline?ref=v1"}}) {
+			t.Errorf("%s baseline module = %v, want only the baseline call, with no inputs", env, got)
+		}
+	}
+}
+
+// TestRenderAWSStacksAreThin: an AWS stack holds the pinned versions, a local
+// backend in its own directory, no encryption block, the region and one module
+// call (spec §5.3, ADR-0030), and nothing about floci, which CI adds in
+// floci_override.tf.json (spec §5.6).
+func TestRenderAWSStacksAreThin(t *testing.T) {
+	files, err := Render(loadFixture(t, "aws-registry"), Options{ModuleRef: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range stackDirs(files) {
+		if !strings.HasPrefix(dir, "aws/") {
+			continue
+		}
+		b := files[dir+"/main.tf.json"]
+		var doc struct {
+			Terraform map[string]any            `json:"terraform"`
+			Provider  map[string]any            `json:"provider"`
+			Module    map[string]map[string]any `json:"module"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&doc); err != nil {
+			t.Errorf("%s: %v: a stack holds only terraform, provider and module", dir, err)
+			continue
+		}
+		wantTerraform := map[string]any{
+			"required_version":   TofuVersion,
+			"required_providers": map[string]any{"aws": map[string]any{"source": "hashicorp/aws", "version": AWSProviderVersion}},
+			"backend":            map[string]any{"local": map[string]any{"path": "terraform.tfstate"}},
+		}
+		if !reflect.DeepEqual(doc.Terraform, wantTerraform) {
+			t.Errorf("%s: terraform = %v, want %v", dir, doc.Terraform, wantTerraform)
+		}
+		if want := map[string]any{"aws": map[string]any{"region": "eu-west-1"}}; !reflect.DeepEqual(doc.Provider, want) {
+			t.Errorf("%s: provider = %v, want only the region, %v", dir, doc.Provider, want)
+		}
+		if len(doc.Module) != 1 {
+			t.Errorf("%s: %d module calls, want one", dir, len(doc.Module))
+		}
+		for _, word := range []string{"floci", "localhost", "4566", "endpoint", "skip_", "encryption"} {
+			if bytes.Contains(bytes.ToLower(b), []byte(word)) {
+				t.Errorf("%s mentions %q: emulator settings belong to CI (spec §5.6), and the AWS stacks keep no encrypted state (ADR-0030):\n%s", dir, word, b)
+			}
+		}
+	}
 }
 
 // TestRenderEnvVariablesFollowEachEnvironment gives the Component's environments
@@ -172,6 +395,9 @@ func TestRenderRejectsARegistryEnvironmentWithoutAWS(t *testing.T) {
 	if err == nil || err.Error() != want || files != nil {
 		t.Errorf("Render = %d files, error %v; want no files and the error %q", len(files), err, want)
 	}
+	if stacks, err := awsStacks(m, Options{ModuleRef: "v1"}); err == nil || err.Error() != want || stacks != nil {
+		t.Errorf("awsStacks = %d stacks, error %v; want no stacks and the error %q", len(stacks), err, want)
+	}
 }
 
 func TestRenderCopiesTheLockFile(t *testing.T) {
@@ -184,6 +410,9 @@ func TestRenderCopiesTheLockFile(t *testing.T) {
 	}
 	if !regexp.MustCompile(`version\s*=\s*"` + regexp.QuoteMeta(GitHubProviderVersion) + `"`).Match(lockfiles.GitHub) {
 		t.Errorf("lock file does not pin GitHubProviderVersion %s", GitHubProviderVersion)
+	}
+	if !regexp.MustCompile(`version\s*=\s*"` + regexp.QuoteMeta(AWSProviderVersion) + `"`).Match(lockfiles.AWS) {
+		t.Errorf("the AWS lock file does not pin AWSProviderVersion %s", AWSProviderVersion)
 	}
 }
 
@@ -223,12 +452,26 @@ func TestRenderLocalModules(t *testing.T) {
 			t.Errorf("missing %s", want)
 		}
 	}
+	files, err = Render(loadFixture(t, "aws-registry"), Options{ModulesDir: "../../modules"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for dir, want := range map[string]string{
+		"aws/dev/_baseline":      `"source": "../../../../modules/aws/baseline"`,
+		"aws/dev/components/api": `"source": "../../../../../modules/aws/component"`,
+	} {
+		if !strings.Contains(string(files[dir+"/main.tf.json"]), want) {
+			t.Errorf("%s: missing %s, the same directory seen from the stack", dir, want)
+		}
+	}
 }
 
 // TestRenderIsDeterministic is spec §8.2's determinism test at the boundary Render
 // consumes: any claim order, and any order of a Component's environments, gives
-// identical bytes, env variables included. (Load's half, sorted output whatever
-// the read order, is TestLoadSortsClaimsByName in internal/claims.)
+// identical files, env variables and AWS stacks included. The platform's
+// environments are a map, which Go ranges over in a new order on every render.
+// (Load's half, sorted output whatever the read order, is
+// TestLoadSortsClaimsByName in internal/claims.)
 func TestRenderIsDeterministic(t *testing.T) {
 	m := loadFixture(t, "aws-registry")
 	// Two claims of each kind, so their order can actually vary.
@@ -263,7 +506,7 @@ func TestRenderIsDeterministic(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(got["github/main.tf.json"], want["github/main.tf.json"]) {
+		if !maps.EqualFunc(got, want, bytes.Equal) {
 			t.Fatalf("iteration %d: render output depends on claim order", i)
 		}
 	}

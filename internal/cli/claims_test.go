@@ -2,8 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -119,6 +122,65 @@ func TestRenderLocalModulesAreRelative(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"source": "../../engine/modules/github/group"`) {
 		t.Errorf("local module source not relative to the stack dir:\n%s", data)
+	}
+}
+
+// TestRenderLocalModulesResolveFromEveryStack: every rendered stack, the AWS
+// stacks deeper in the tree included, finds --modules-dir from its own
+// directory, which is what render-smoke validates in CI.
+func TestRenderLocalModulesResolveFromEveryStack(t *testing.T) {
+	root := t.TempDir()
+	out := filepath.Join(root, "out")
+	modules := filepath.Join(root, "engine", "modules")
+	fixture := filepath.Join("..", "render", "testdata", "aws-registry")
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"render", "--dir", fixture, "--out", out, "--modules-dir", modules}, &stdout, &stderr, noEnv); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	var stacks, resolved []string
+	err := filepath.WalkDir(out, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.Name() != "main.tf.json" {
+			return err
+		}
+		dir := filepath.Dir(p)
+		rel, err := filepath.Rel(out, dir)
+		if err != nil {
+			return err
+		}
+		stacks = append(stacks, filepath.ToSlash(rel))
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		var doc struct {
+			Module map[string]struct {
+				Source string `json:"source"`
+			} `json:"module"`
+		}
+		if err := json.Unmarshal(b, &doc); err != nil {
+			return err
+		}
+		for _, call := range doc.Module {
+			mod, err := filepath.Rel(modules, filepath.Join(dir, filepath.FromSlash(call.Source)))
+			if err != nil {
+				return err
+			}
+			if mod = filepath.ToSlash(mod); !slices.Contains(resolved, mod) {
+				resolved = append(resolved, mod)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(stacks)
+	slices.Sort(resolved)
+	if want := []string{"aws/dev/_baseline", "aws/dev/components/api", "aws/pro/_baseline", "aws/pro/components/api", "github"}; !slices.Equal(stacks, want) {
+		t.Errorf("stacks = %v, want %v", stacks, want)
+	}
+	if want := []string{"aws/baseline", "aws/component", "github/component", "github/group"}; !slices.Equal(resolved, want) {
+		t.Errorf("module sources resolve to %v under %s, want %v", resolved, modules, want)
 	}
 }
 

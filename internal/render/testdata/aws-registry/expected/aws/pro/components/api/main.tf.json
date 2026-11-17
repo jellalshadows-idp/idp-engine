@@ -1,0 +1,31 @@
+{
+  "module": {
+    "component": {
+      "environment": "pro",
+      "github_repository": "acme/api",
+      "oidc_provider_arn": "arn:aws:iam::000000000003:oidc-provider/token.actions.githubusercontent.com",
+      "repository_name": "api",
+      "role_name": "api-pro-ci",
+      "source": "git::https://github.com/jellalshadows-idp/idp-engine.git//modules/aws/component?ref=v0.0.0-test"
+    }
+  },
+  "provider": {
+    "aws": {
+      "region": "eu-west-1"
+    }
+  },
+  "terraform": {
+    "backend": {
+      "local": {
+        "path": "terraform.tfstate"
+      }
+    },
+    "required_providers": {
+      "aws": {
+        "source": "hashicorp/aws",
+        "version": "6.71.0"
+      }
+    },
+    "required_version": "1.13.2"
+  }
+}
