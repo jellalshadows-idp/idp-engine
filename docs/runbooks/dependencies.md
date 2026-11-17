@@ -80,6 +80,8 @@ Then set the new version in `lockfiles/lockfiles_test.go` (`TestAWSLockPinsThePr
 
 Renovate moves the image's tag and digest together, and the `floci` job is the check. Read floci's release notes for IAM and ECR changes before merging: the floci tests compare names, ARNs and policies, never the registry URL, whose host floci chooses (ADR-0013).
 
+Review a floci update as a security change too: the `floci` job mounts the runner's Docker socket into the floci container, which gives that image root-equivalent control of the runner for the job's duration. The job holds no secret (`contents: read`, `persist-credentials: false`, fake AWS keys) and saves no Go cache. floci's ECR also pulls its backing registry image, `registry:2`, by tag through that socket; this repository does not pin it (accepted in Phase 2c, D-11).
+
 ## An OpenTofu update
 
 One PR moves every pin. Update the local tool under `$HOME/.idp/tools/` to the same version before running module tests locally.
