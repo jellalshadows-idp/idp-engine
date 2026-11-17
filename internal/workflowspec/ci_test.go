@@ -66,11 +66,12 @@ func TestCIRenderSmokeCoversEveryFixture(t *testing.T) {
 	if got, want := s.Env["TF_PLUGIN_CACHE_DIR"], "${{ runner.temp }}/tofu-plugin-cache"; got != want {
 		t.Errorf("ci render-smoke TF_PLUGIN_CACHE_DIR = %q, want %q", got, want)
 	}
+	// One block, so globstar is on before the loop: without it, ** matches one
+	// directory level and the AWS stacks would be skipped with the step green.
 	wantLines(t, "ci render-smoke", s.Run, []string{
 		`mkdir -p "$TF_PLUGIN_CACHE_DIR"`,
 		"shopt -s globstar",
-	})
-	wantLines(t, "ci render-smoke", s.Run, []string{
+		"for fixture in basic aws-registry; do",
 		`go run ./cmd/idp render --dir "internal/render/testdata/$fixture" --out "$RUNNER_TEMP/rendered/$fixture" --modules-dir modules`,
 		`for stack in "$RUNNER_TEMP/rendered/$fixture"/**/main.tf.json; do`,
 		`stack="${stack%/main.tf.json}"`,

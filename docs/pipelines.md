@@ -87,7 +87,7 @@ Engine releases are `vX.Y.Z` tags ([releases runbook](runbooks/releases.md)). A 
 
 ## Limitations
 
-- Only the `github` stack is reconciled until Phase 2e; the workflows fail when any other stack is affected. The render writes AWS stacks for every environment with an `aws` block since Phase 2d, so a claims repo with one stays on an engine release from before Phase 2d (`idp-claims` pins `v0.1.1`) until the release that applies them, `0.2.0`.
+- Only the `github` stack is reconciled until Phase 2e; the workflows fail when any other stack is affected. The render writes AWS stacks for every environment with an `aws` block since Phase 2d, so a claims repo with one stays on an engine release from before Phase 2d (`idp-claims` pins the `v0.1.1` tag) until the release that applies them, `v0.2.0`.
 - The required check comes from a workflow file in the claims repo, so a pull request can change it. Requiring a review on `.github/` closes that gap; it is the owner's decision ([ADR-0022](adr/0022-required-check-lives-in-the-caller.md)).
 - GitHub disables scheduled workflows in public repos after 60 days without activity. Re-enable the drift check with `gh workflow enable drift.yaml`.
 - Every job lists the engine's tags through the GitHub API before it gets `idp`; when that call fails, the job fails rather than guess whether its commit is a release.

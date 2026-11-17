@@ -25,7 +25,7 @@ Phase 2d renders the AWS stacks (spec §5.4): the `_baseline` of every environme
 ### Negative / costs
 
 - Going to real AWS changes the render: the AWS stacks then need a persistent backend and encryption, and the replay of spec §6.1 changes with them (spec §5.6, amendment A13).
-- The state file is written inside the stack's directory. Phase 2e must run the AWS stacks in a scratch copy, as the `github` stack already runs in `$RUNNER_TEMP/idp/work`, and must never push AWS state to `wet`; `idp diff` would read a `terraform.tfstate` left in a rendered tree as a file of its stack.
+- The state file is written inside the stack's directory. Phase 2e must run the AWS stacks in a scratch copy, as the `github` stack already runs in `$RUNNER_TEMP/idp/work`, and must never push AWS state to `wet`; `idp diff` would read a `terraform.tfstate` left in a rendered tree as a file of its stack. Because the path is relative to the stack's directory, the replay of spec §6.1 (apply the `wet` version, then plan the new one) must run both versions against one state: in the same scratch directory, swapping the configuration, or with `init -backend-config=path=<absolute path>`; otherwise the plan is a full create instead of the real change.
 
 ## Alternatives considered
 

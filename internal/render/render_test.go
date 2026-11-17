@@ -229,7 +229,10 @@ func TestRenderAWSStacksGolden(t *testing.T) {
 	if len(files) != 2*len(want) {
 		t.Errorf("rendered %d files, want a main.tf.json and a lock file for each of the %d stacks: %v", len(files), len(want), slices.Sorted(maps.Keys(files)))
 	}
-	for _, dir := range want[:4] {
+	for _, dir := range want {
+		if !strings.HasPrefix(dir, "aws/") {
+			continue
+		}
 		if !bytes.Equal(files[dir+"/.terraform.lock.hcl"], lockfiles.AWS) {
 			t.Errorf("%s must carry the engine's AWS lock file", dir)
 		}
@@ -381,6 +384,18 @@ func TestRenderEnvVariablesFollowEachEnvironment(t *testing.T) {
 	}
 	if got := componentEnvironments(t, files["github/main.tf.json"], "api"); !reflect.DeepEqual(got, want) {
 		t.Errorf("environments = %+v, want %+v", got, want)
+	}
+	// The AWS stacks follow each environment's region too, so the repository
+	// and the role are created where the github stack's variables point.
+	for env, e := range want {
+		if got := awsStackOf(t, files, "aws/"+env+"/components/api").Provider.AWS.Region; got != e.Variables["AWS_REGION"] {
+			t.Errorf("aws/%s/components/api: region %q, the github stack passes AWS_REGION %q", env, got, e.Variables["AWS_REGION"])
+		}
+	}
+	for env, region := range map[string]string{"dev": "eu-west-1", "pro": "us-east-1", "staging": "eu-central-1"} {
+		if got := awsStackOf(t, files, "aws/"+env+"/_baseline").Provider.AWS.Region; got != region {
+			t.Errorf("aws/%s/_baseline: region %q, want the environment's %q", env, got, region)
+		}
 	}
 }
 
