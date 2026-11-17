@@ -2,7 +2,7 @@
 
 The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. Desired state lives in claims (YAML in Git), with no Kubernetes involved.
 
-> **Status:** Phase 2c is complete: `modules/aws/baseline` (an environment account's GitHub OIDC provider) and `modules/aws/component` (a Component's ECR repository and its push-only CI role) exist, and CI applies them to two accounts of the floci emulator on every PR, checking their identities against `internal/naming`. Each environment needs its own AWS account in the standard partition. No render calls the modules yet. See the [phase 2c log](docs/phases/phase-2c.md) and [docs/claims.md](docs/claims.md). Phase 2d (rendering the AWS stacks) is next.
+> **Status:** Phase 2d is complete: `idp render` writes the AWS stacks, a baseline for every environment with an `aws` block and a stack for every Component with `aws.registry` in each of its environments, with the identities `internal/naming` computes and their state kept in the job, never in `wet` ([ADR-0030](docs/adr/0030-aws-stack-state-stays-in-the-job.md)). CI validates every rendered stack, applies the rendered AWS stacks to two accounts of the floci emulator on every PR, and `idp diff` reports them by their nested paths. The pipelines do not apply them yet. See the [phase 2d log](docs/phases/phase-2d.md) and [docs/claims.md](docs/claims.md). Phase 2e (the workflows' AWS plan and apply) is next.
 
 **What exists today:** `idp-claims` runs the pipelines at an engine release; `idp-claims-e2e` is checked by the end-to-end harness nightly and on every release PR.
 
@@ -33,7 +33,7 @@ Runbooks: [releases](docs/runbooks/releases.md), [dependency updates](docs/runbo
 - AWS is **emulated** with [floci](https://floci.io). No real cloud account is used.
 - Every repository is **public**: on the GitHub Free plan, rulesets and environment reviewers exist only for public repos.
 - **No secrets** flow through the platform.
-- The pipelines reconcile **GitHub only** (teams, repositories, rulesets, environments and, since Phase 2b, the environment variables of a Component with `aws.registry`). The AWS modules that create the ECR repository and the CI role exist since Phase 2c and are tested against floci in CI; they are rendered from Phase 2d and applied from Phase 2e.
+- The pipelines reconcile **GitHub only** (teams, repositories, rulesets, environments and, since Phase 2b, the environment variables of a Component with `aws.registry`). The AWS stacks that create the OIDC provider, the ECR repository and the CI role are rendered since Phase 2d and tested against floci in CI; the pipelines apply them from Phase 2e, so a claims repo with an `aws` block stays on `v0.1.1` until `v0.2.0`.
 - A reconcile that needs approval holds the claims repo's pipelines until someone decides.
 
 ## License
