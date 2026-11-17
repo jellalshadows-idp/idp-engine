@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [github/group, github/component]
+        module: [github/group, github/component, aws/baseline, aws/component]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,10 +71,14 @@ jobs:
           tofu_version: 1.13.2
           tofu_wrapper: false
       - name: tofu fmt and test
+        id: tofu-test
         working-directory: modules/${{ matrix.module }}
+        # modules/<provider>/<name> takes the lock file lockfiles/<provider>.terraform.lock.hcl.
+        env:
+          MODULE: ${{ matrix.module }}
         run: |
           tofu fmt -check -recursive
-          cp "$GITHUB_WORKSPACE/lockfiles/github.terraform.lock.hcl" .terraform.lock.hcl
+          cp "$GITHUB_WORKSPACE/lockfiles/${MODULE%%/*}.terraform.lock.hcl" .terraform.lock.hcl
           tofu init -input=false -lockfile=readonly
           tofu test
 
@@ -93,14 +97,9 @@ jobs:
         with:
           tofu_version: 1.13.2
           tofu_wrapper: false
-      - name: render the fixtures with local module sources
+      - name: render each fixture with local module sources and tofu validate it (proves the JSON syntax, lock file and modules)
+        id: render-validate
         # basic has no aws part; aws-registry passes each environment's variables.
-        run: |
-          for fixture in basic aws-registry; do
-            go run ./cmd/idp render --dir "internal/render/testdata/$fixture" --out "$RUNNER_TEMP/rendered/$fixture" --modules-dir modules
-          done
-      - name: tofu validate the rendered stacks (proves the JSON syntax, lock file and modules)
-        working-directory: ${{ runner.temp }}/rendered
         env:
           TF_ENCRYPTION: |
             key_provider "pbkdf2" "ci" {
@@ -117,9 +116,67 @@ jobs:
             }
         run: |
           for fixture in basic aws-registry; do
-            tofu -chdir="$fixture/github" init -backend=false -input=false
-            tofu -chdir="$fixture/github" validate
+            go run ./cmd/idp render --dir "internal/render/testdata/$fixture" --out "$RUNNER_TEMP/rendered/$fixture" --modules-dir modules
+            tofu -chdir="$RUNNER_TEMP/rendered/$fixture/github" init -backend=false -input=false
+            tofu -chdir="$RUNNER_TEMP/rendered/$fixture/github" validate
           done
+
+  floci:
+    # Level 3 (spec §8.4): the AWS modules applied to two accounts of one floci,
+    # checked against internal/naming, replayed and destroyed by internal/floci.
+    # floci reaches the Docker socket because its ECR runs a registry container
+    # (ADR-0004).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      floci:
+        image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
+        ports:
+          - "4566:4566"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # floci holds the Docker socket, so this job saves no cache that other
+          # jobs restore.
+          cache: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.13.2
+          tofu_wrapper: false
+      - name: wait until floci is ready
+        id: floci-ready
+        # The same check as the image's health probe (docker/healthcheck.sh); it
+        # fails, never continues, when floci does not answer. --max-time keeps a
+        # floci that accepts but never answers within the 60 seconds.
+        run: |
+          until (( SECONDS >= 60 )); do
+            if [[ "$(curl -fsS --max-time 2 http://localhost:4566/_floci/init 2>/dev/null)" == *'"ready":true'* ]]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::floci did not report ready on localhost:4566 within 60 seconds"
+          exit 1
+      - name: apply, check, replay and destroy the AWS modules on floci
+        id: floci-test
+        env:
+          IDP_FLOCI_ENDPOINT: http://localhost:4566
+        run: go test -count=1 -timeout=15m -v ./internal/floci/
+      - name: floci logs
+        id: floci-logs
+        # Also when the job times out, which ends it as cancelled.
+        if: failure() || cancelled()
+        env:
+          FLOCI_CONTAINER: ${{ job.services.floci.id }}
+        run: docker logs "$FLOCI_CONTAINER" 2>&1 | tail -n 300
 
   release-snapshot:
     runs-on: ubuntu-24.04

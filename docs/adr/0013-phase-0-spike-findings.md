@@ -14,7 +14,7 @@ All three spikes were measured against real systems (GitHub for S1 and S2, the f
 
 ## Pins adopted (all at least 14 days old on 2026-10-08)
 
-OpenTofu 1.12.6 · integrations/github 6.13.0 · hashicorp/aws 6.66.0 · floci 2.1.0 (digest in the Phase 0 plan) · actions as pinned in `.github/workflows/ci.yaml`. The spike runner was `ubuntu-24.04` with OpenTofu 1.12.6.
+OpenTofu 1.12.6 · integrations/github 6.13.0 · hashicorp/aws 6.66.0 · floci 2.1.0 (digest in the Phase 0 plan) · actions as pinned in `.github/workflows/ci.yaml`. The spike runner was `ubuntu-24.04` with OpenTofu 1.12.6. *(Amended in Phase 2c, 2026-11-17: that floci digest is the linux/amd64 image's, not the multi-arch index's. CI now runs floci 2.4.0, pinned by its index digest, which Renovate tracks, and hashicorp/aws 6.71.0.)*
 
 ## S1 — encrypted state through Git
 
@@ -117,7 +117,7 @@ Notes:
 
 - **The ECR URL format differs from AWS.** floci returns `<account>.dkr.ecr.<region>.localhost:4566/<name>`, not `<account>.dkr.ecr.<region>.amazonaws.com/<name>`. This is a cosmetic emulator difference. **Deterministic identities (ADR-0006) are unaffected**: they are computed from the platform config by convention, not read back from the emulator, so the value the GitHub stack receives is the conventional one. Docs and tests must remember that anything compared against emulator output uses the `localhost:4566` host form.
 - **The plugin cache gave no gain at 1-second resolution.** Cached init (7 s) was not faster than cold init (6 s). With whole-second timing and a single sample this is noise-level; the honest reading is "no benefit observed", so the replay estimate below does not assume one.
-- **Not verified by the spike:** that the apply actually exercised `sts:AssumeRoleWithWebIdentity`. Only resource creation and policy storage were tested. The OIDC provider existing and the role carrying its trust policy is confirmed; a real assume-role is left to the Phase 2 floci integration tests. *(Amended in Phase 2a, 2026-11-03.)* The owner put a real assume-role out of scope for v1: v1 has no real AWS account (spec §2.2, §7.6), and Phase 2 runs against floci only. The trust policy's `sub` and `aud` will be asserted by the AWS module tests (Phase 2c, spec §8.3). *(Amended in Phase 2b, 2026-11-03; this said that the module tests assert them.)*
+- **Not verified by the spike:** that the apply actually exercised `sts:AssumeRoleWithWebIdentity`. Only resource creation and policy storage were tested. The OIDC provider existing and the role carrying its trust policy is confirmed; a real assume-role is left to the Phase 2 floci integration tests. *(Amended in Phase 2a, 2026-11-03.)* The owner put a real assume-role out of scope for v1: v1 has no real AWS account (spec §2.2, §7.6), and Phase 2 runs against floci only. The trust policy's `sub` and `aud` are asserted by the AWS module tests (spec §8.3) and, on the created role, by the floci test (spec §8.4). *(Amended in Phase 2b, 2026-11-03, before those tests existed, and in Phase 2c, 2026-11-17, when they arrived.)*
 - Multi-account selection by the 12-digit access key ID (ADR-0004) works: the account with ID `000000000003` could not read the role created in `000000000001`.
 
 ### Spike fixes (measurement only)

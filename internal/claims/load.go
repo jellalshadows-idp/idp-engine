@@ -90,6 +90,72 @@ func (l *loader) loadPlatform() {
 				Message: fmt.Sprintf("naming.requiredPrefix %q is also listed in naming.reservedPrefixes", p)})
 		}
 	}
+	l.checkAWSAccounts(doc)
+}
+
+// checkAWSAccounts checks, in file order, what the AWS stacks need from the
+// environments' aws blocks: a region of the standard aws partition, and an
+// account of the environment's own. Each environment's baseline creates its
+// account's GitHub OIDC provider (spec §5.4), and an account holds one, so a
+// second environment in the same account would create it again.
+func (l *loader) checkAWSAccounts(doc *document) {
+	var envs []string
+	for name, e := range l.model.Platform.Environments {
+		if e.AWS != nil {
+			envs = append(envs, name)
+		}
+	}
+	at := func(env string, path ...string) int {
+		return doc.line(append([]string{"environments", env}, path...))
+	}
+	// By line, then by name: environments written on one line (a flow mapping)
+	// share it, and map iteration must not decide which one is reported.
+	sort.Slice(envs, func(i, j int) bool {
+		if li, lj := at(envs[i]), at(envs[j]); li != lj {
+			return li < lj
+		}
+		return envs[i] < envs[j]
+	})
+	first := map[string]string{} // account ID → the first environment that uses it
+	for _, env := range envs {
+		aws := l.model.Platform.Environments[env].AWS
+		if p := partitionOf(aws.Region); p != "" {
+			l.add(Diagnostic{File: doc.file, Line: at(env, "aws", "region"),
+				Message: fmt.Sprintf("environment %q has region %q, in the %s partition: only the standard aws partition is supported, because the AWS identities are computed with arn:aws: ARNs and the amazonaws.com host (spec §5.5)", env, aws.Region, p)})
+		}
+		if other, taken := first[aws.AccountID]; taken {
+			l.add(Diagnostic{File: doc.file, Line: at(env, "aws", "accountId"),
+				Message: fmt.Sprintf("environment %q uses accountId %q, like environment %q: each environment needs its own AWS account, because each environment's baseline creates that account's GitHub OIDC provider (spec §5.4)", env, aws.AccountID, other)})
+			continue
+		}
+		first[aws.AccountID] = env
+	}
+}
+
+// nonStandardPartitions are the AWS partitions other than aws, with the region
+// prefix that places a region in each (botocore's partitions.json, which the
+// AWS SDKs and floci use). floci answers a request in its region's partition,
+// so such a region would create ARNs that differ from the ones internal/naming
+// computes.
+var nonStandardPartitions = []struct{ prefix, partition string }{
+	{"cn-", "aws-cn"},
+	{"eusc-", "aws-eusc"},
+	{"eu-isoe-", "aws-iso-e"},
+	{"us-gov-", "aws-us-gov"},
+	{"us-iso-", "aws-iso"},
+	{"us-isob-", "aws-iso-b"},
+	{"us-isof-", "aws-iso-f"},
+}
+
+// partitionOf returns the partition of a region outside the standard aws
+// partition, or "" for a region in it.
+func partitionOf(region string) string {
+	for _, p := range nonStandardPartitions {
+		if strings.HasPrefix(region, p.prefix) {
+			return p.partition
+		}
+	}
+	return ""
 }
 
 // checkClaimsRoot reports anything under claims/ other than groups/ and components/.

@@ -229,10 +229,10 @@ func TestRenderIsDeterministic(t *testing.T) {
 		r.Shuffle(len(shuffled.Components), func(a, b int) {
 			shuffled.Components[a], shuffled.Components[b] = shuffled.Components[b], shuffled.Components[a]
 		})
-		for i := range shuffled.Components {
-			envs := slices.Clone(shuffled.Components[i].Environments)
+		for c := range shuffled.Components {
+			envs := slices.Clone(shuffled.Components[c].Environments)
 			r.Shuffle(len(envs), func(a, b int) { envs[a], envs[b] = envs[b], envs[a] })
-			shuffled.Components[i].Environments = envs
+			shuffled.Components[c].Environments = envs
 		}
 		got, err := Render(&shuffled, Options{ModuleRef: "v1"})
 		if err != nil {

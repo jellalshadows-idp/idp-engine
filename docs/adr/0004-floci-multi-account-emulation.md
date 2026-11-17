@@ -40,7 +40,7 @@ AWS is emulated with **floci, one instance serving every environment**, and emul
 ### Follow-ups
 
 - Phase 0 measures floci replay time per stack (ADR-0013); Phase 2 delivers the AWS part and floci integration tests (§10).
-- Level 3 includes a replay test: apply the old version, plan the new one, assert the exact diff (§8.4).
+- Level 3 includes a replay test: apply the old version, plan the new one, assert the exact diff (§8.4). *(Amended in Phase 2c, 2026-11-17: level 3 replays the applied version, which must plan no change; the replay across versions comes with the first change to a released module, spec amendment A12.)*
 
 ## Alternatives considered
 
