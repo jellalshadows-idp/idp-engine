@@ -80,8 +80,13 @@ func Diff(newRoot, wetRoot string, all bool) (Result, error) {
 }
 
 // readStacks maps every stack directory under root (slash path) to its files.
-// .terraform directories are skipped; files outside any stack (the render
-// marker) are ignored. A missing root returns an error wrapping fs.ErrNotExist.
+// A stack is a directory below root that holds StackFile, at any depth: github,
+// or aws/dev/components/api. root itself is never a stack, so a StackFile
+// directly under root is ignored, like every file outside a stack (the render
+// marker). A file belongs to the deepest stack that contains it, so a stack
+// nested in another owns its own files. .terraform directories are skipped, and
+// anything but a directory or a regular file, a symbolic link included, is an
+// error. A missing root returns an error wrapping fs.ErrNotExist.
 func readStacks(root string) (map[string]stackFiles, error) {
 	info, err := os.Stat(root)
 	if err != nil {

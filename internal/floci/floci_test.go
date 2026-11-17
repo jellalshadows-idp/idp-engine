@@ -71,7 +71,7 @@ func (f *floci) tofuOK(t *testing.T, tg target, dir string, args ...string) {
 // returns its stdout and stderr apart, so a warning on stderr never reaches
 // the JSON decoder, and its exit code. A command that cannot start fails the
 // test.
-func (f *floci) awsCLI(t *testing.T, tg target, args ...string) (stdout, stderr string, code int) {
+func (f *floci) awsCLI(t testing.TB, tg target, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	args = append(args, "--endpoint-url", f.endpoint, "--output", "json")
 	cmd := exec.Command(f.aws, args...)
@@ -109,8 +109,8 @@ func (f *floci) awsJSON(t *testing.T, tg target, out any, args ...string) bool {
 
 // wantMissing runs an AWS CLI read that must fail with NoSuchEntity. A success,
 // or a failure for any other reason, fails the test, so an unreachable or
-// broken floci never passes for a missing resource.
-func (f *floci) wantMissing(t *testing.T, tg target, what string, args ...string) {
+// broken floci never passes for a missing resource (TestWantMissing).
+func (f *floci) wantMissing(t testing.TB, tg target, what string, args ...string) {
 	t.Helper()
 	_, stderr, code := f.awsCLI(t, tg, args...)
 	switch {
@@ -121,36 +121,39 @@ func (f *floci) wantMissing(t *testing.T, tg target, what string, args ...string
 	}
 }
 
-// apply creates one stack of tg's environment the way the pipelines will (spec
-// §6.1): init with the shipped lock file, apply, then replay, a plan of the
-// same version that must find nothing to change (spec §8.4). It registers the
-// stack's destroy before applying, so whatever an apply created is destroyed,
-// even when the test fails.
-func (f *floci) apply(t *testing.T, tg target, module string, inputs map[string]any) {
+// apply creates one rendered stack of tg's environment, a slash path under
+// rendered/, the way the pipelines will (spec §5.6, §6.1): it adds
+// floci_override.tf.json, inits with the rendered lock file, applies, then
+// replays, a plan of the same version that must find nothing to change (spec
+// §8.4). It registers the stack's destroy before applying, so whatever an apply
+// created is destroyed, even when the test fails.
+func (f *floci) apply(t *testing.T, tg target, stack string) {
 	t.Helper()
-	dir := filepath.Join(f.root, tg.env, module)
-	if err := writeStack(dir, module, tg, f.endpoint, inputs); err != nil {
+	dir := filepath.Join(f.root, "rendered", filepath.FromSlash(stack))
+	if err := writeOverride(dir, f.endpoint); err != nil {
 		t.Fatal(err)
 	}
 	f.tofuOK(t, tg, dir, "init", "-input=false", "-lockfile=readonly", "-no-color")
 	t.Cleanup(func() {
 		if out, code := f.run(t, tg, dir, f.tofu, "destroy", "-input=false", "-auto-approve", "-no-color"); code != 0 {
-			t.Errorf("%s %s: destroy exited %d:\n%s", tg.env, module, code, out)
+			t.Errorf("%s: destroy exited %d:\n%s", stack, code, out)
 		}
 	})
 	f.tofuOK(t, tg, dir, "apply", "-input=false", "-auto-approve", "-no-color")
 	if out, code := f.run(t, tg, dir, f.tofu, "plan", "-input=false", "-detailed-exitcode", "-no-color"); code != 0 {
-		t.Errorf("%s %s: the replay plan exited %d, want 0 (no changes):\n%s", tg.env, module, code, out)
+		t.Errorf("%s: the replay plan exited %d, want 0 (no changes):\n%s", stack, code, out)
 	}
 }
 
-// TestFloci is the level-3 test of the AWS modules (spec §8.4). Against one
-// floci it applies, as each account, the environment's baseline and then its
-// Component stack, with the inputs internal/naming computes. It checks through
-// the AWS API that the created identities are naming's (ADR-0006), that the
-// trust and push policies are exactly spec §4.4's, and that one account cannot
-// see another's role (ADR-0004). It destroys everything and checks that
-// nothing is left (spec §6.3).
+// TestFloci is the level-3 test of the AWS modules and the AWS stacks that
+// render them (spec §8.4). It renders the aws-registry fixture with local
+// module sources and, against one floci, applies as each account the
+// environment's rendered baseline and then its rendered Component stack, each
+// with only floci_override.tf.json added. It checks through the AWS API that
+// the created identities are naming's (ADR-0006), that the trust and push
+// policies are exactly spec §4.4's, and that one account cannot see another's
+// role (ADR-0004). It destroys everything and checks that nothing is left
+// (spec §6.3).
 func TestFloci(t *testing.T) {
 	endpoint := os.Getenv(endpointEnv)
 	if endpoint == "" {
@@ -170,6 +173,9 @@ func TestFloci(t *testing.T) {
 	if err := os.CopyFS(filepath.Join(f.root, "modules", "aws"), os.DirFS(modulesDir)); err != nil {
 		t.Fatal(err)
 	}
+	if err := renderFixture(f.root); err != nil {
+		t.Fatal(err)
+	}
 
 	// Registered first, so it runs last, after every destroy.
 	t.Cleanup(func() {
@@ -178,8 +184,9 @@ func TestFloci(t *testing.T) {
 		}
 	})
 	for _, tg := range targets {
-		f.apply(t, tg, "baseline", map[string]any{})
-		f.apply(t, tg, "component", componentInputs(tg))
+		for _, stack := range stacks(tg) {
+			f.apply(t, tg, stack)
+		}
 	}
 	for _, tg := range targets {
 		t.Run(tg.env, func(t *testing.T) { f.wantCreated(t, tg) })

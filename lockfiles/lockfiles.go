@@ -11,8 +11,8 @@ import _ "embed"
 //go:embed github.terraform.lock.hcl
 var GitHub []byte
 
-// AWS is the lock file of the AWS stacks (hashicorp/aws). The floci tests copy
-// it into the stacks they apply, as the render will from Phase 2d.
+// AWS is the lock file of the AWS stacks (hashicorp/aws). The render copies it
+// into every AWS stack it writes, as it copies GitHub into the github stack.
 //
 //go:embed aws.terraform.lock.hcl
 var AWS []byte

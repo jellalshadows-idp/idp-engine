@@ -56,7 +56,7 @@ environments:
 | `environments.<env>.aws.region` | yes, in `aws` | | An AWS region of the standard `aws` partition, such as `eu-west-1`. A region of another partition, such as GovCloud (`us-gov-*`) or China (`cn-*`), fails validation: the identities are computed for the standard partition (`arn:aws:` ARNs and the `amazonaws.com` registry host), and floci would create the resources in the other one |
 | `modules.allowedSources` | no | | Allowed Workspace module prefixes; used from Phase 3 |
 
-An `aws` block is shaped like real AWS: an account ID and a region, never an emulator endpoint (the schema rejects any other key). In v1, AWS is the floci emulator in CI (spec §5.6), so the IDs can be fake ones like those above. An environment needs an `aws` block only when a Component with `aws.registry: true` lists it.
+An `aws` block is shaped like real AWS: an account ID and a region, never an emulator endpoint (the schema rejects any other key). In v1, AWS is the floci emulator in CI (spec §5.6), so the IDs can be fake ones like those above. An environment needs an `aws` block only when a Component with `aws.registry: true` lists it. Every environment with one gets its baseline stack, which creates the account's GitHub OIDC provider, whether or not a Component uses it (see "Rendering").
 
 ## Group (`claims/groups/<name>.yaml`)
 
@@ -98,7 +98,7 @@ With `aws.registry: true`, a Component also gets, in each of its environments: a
 
 - `aws.registry: true` needs at least one environment, and each environment it lists needs an `aws` block in `config/platform.yaml`.
 - `aws: {}` and `registry: false` are valid and ask for nothing.
-- **The variables come first.** Since Phase 2b the github stack carries them, and GitHub creates them when the pipelines apply that stack, after the merge (see "Rendering"). The ECR repository and the role they name are rendered from Phase 2d and applied, to the floci emulator, from Phase 2e.
+- **The variables come first.** Since Phase 2b the github stack carries them, and GitHub creates them when the pipelines apply that stack, after the merge (see "Rendering"). Since Phase 2d the render also writes the AWS stack that creates the ECR repository and the role they name; the pipelines apply it, to the floci emulator, from Phase 2e.
 - Turning `aws.registry` off, or removing one of the Component's environments, deletes those variables; that reconcile waits for approval in `idp-approval`, like every delete.
 
 The `features` field arrives in Phase 4. Until then it fails validation.
@@ -126,11 +126,15 @@ config/platform.yaml:11: environment "pro" uses accountId "000000000001", like e
 
 - `rendered/github/main.tf.json`: the provider, the local backend at `../../tfstate/github.tfstate`, enforced state and plan encryption, and one module call per claim, pinned to the engine's release tag;
 - `rendered/github/.terraform.lock.hcl`: the pinned provider checksums;
+- `rendered/aws/<env>/_baseline/`: for every environment with an `aws` block, a stack that calls `modules/aws/baseline`, the account's GitHub OIDC provider;
+- `rendered/aws/<env>/components/<name>/`: for every Component with `aws.registry: true`, in each of its environments, a stack that calls `modules/aws/component` with the repository, the role and the OIDC provider that `internal/naming` computes, the same names the github stack's variables carry;
 - `rendered/.idp-rendered`: a marker. `--out` must not exist, be empty, or hold a previous render, so a mistyped path can never wipe unrelated data.
 
-A Component with `aws.registry: true` passes `variables` to its module for each of its environments: `AWS_ROLE_ARN`, `ECR_REPOSITORY` and `AWS_REGION`, computed from the names and the environment's `aws` block (spec §5.3). A Component without it renders exactly as before, so its stack plans no change. Rendering creates nothing: GitHub creates the variables only when the pipelines apply the github stack (reconcile, after the merge), like every other GitHub resource. The AWS stacks, with the ECR repository and the CI role, render from Phase 2d.
+A Component with `aws.registry: true` passes `variables` to its module for each of its environments: `AWS_ROLE_ARN`, `ECR_REPOSITORY` and `AWS_REGION`, computed from the names and the environment's `aws` block (spec §5.3). A Component without it renders exactly as before, so its stack plans no change. Rendering creates nothing: GitHub creates the variables only when the pipelines apply the github stack (reconcile, after the merge), like every other GitHub resource.
 
-`--out` is relative to the current directory, not to `--dir`. The stack's local backend writes its state to `<out>/../tfstate/github.tfstate`, which is where the `wet` branch keeps it (spec §5.4).
+Each AWS stack holds the pinned OpenTofu and `hashicorp/aws` versions, the provider with the environment's region and nothing else, the local backend at `terraform.tfstate` in its own directory, no encryption block, and the engine's AWS lock file. Its state stays in the job that runs it and is never committed to `wet` ([ADR-0030](adr/0030-aws-stack-state-stays-in-the-job.md)). The stacks never mention floci: CI adds `floci_override.tf.json` (spec §5.6). A claims repo without `aws` blocks renders exactly as before. The pipelines apply the AWS stacks only from Phase 2e; until then, a claims repo with an `aws` block stays on an engine release from before Phase 2d ([pipelines](pipelines.md#limitations)).
+
+`--out` is relative to the current directory, not to `--dir`. The github stack's local backend writes its state to `<out>/../tfstate/github.tfstate`, which is where the `wet` branch keeps it (spec §5.4).
 
 Claim text is data: the render escapes `${` and `%{` (as `$${` and `%%{`) in every free-text value that comes from a claim, so OpenTofu never evaluates a template in it. The other claim values (names, logins, roles, topics, environment names) cannot contain those characters: the schemas forbid them.
 

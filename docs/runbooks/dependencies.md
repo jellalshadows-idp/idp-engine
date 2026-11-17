@@ -20,7 +20,7 @@ gh workflow run renovate.yaml --repo jellalshadows-idp/idp-engine --ref main
 | The engine's reusable workflows | the four caller workflows of `idp-claims`; the templates in `examples/claims-repo/` | group "idp engine", no waiting period |
 | OpenTofu | `setup-idp`, `ci.yaml`, `TofuVersion` in `internal/render/render.go` and the golden renders | group "opentofu" |
 | The GitHub provider | `modules/github/*/versions.tf`, `GitHubProviderVersion` in `render.go` and the golden renders | group "github provider", label `needs-lockfile` |
-| The AWS provider | `modules/aws/*/versions.tf` | group "aws provider", label `needs-lockfile` |
+| The AWS provider | `modules/aws/*/versions.tf`, `AWSProviderVersion` in `render.go` and the golden AWS stacks | group "aws provider", label `needs-lockfile` |
 | Go modules | `go.mod` and `go.sum` (`go mod tidy`) | one per module |
 | Go | the `go` directive in `go.mod`, which CI and `setup-idp` install | patch updates only |
 | GoReleaser | the GoReleaser action's `version` in `ci.yaml` and `release.yaml` | one |
@@ -63,7 +63,7 @@ The four platforms are the runners (linux amd64) and the owner's machines. Then 
 
 ## An AWS provider update (`needs-lockfile`)
 
-Renovate moves the pins in `modules/aws/*/versions.tf` but not `lockfiles/aws.terraform.lock.hcl`, so the PR's `go` job fails (`TestModulesPinTheirLockedProvider`), and so do `modules (aws/baseline)`, `modules (aws/component)` and `floci` (`tofu init -lockfile=readonly`). Regenerate the lock the same way, from the component module:
+Renovate moves the pins in `modules/aws/*/versions.tf`, `AWSProviderVersion` and the golden AWS stacks, but not `lockfiles/aws.terraform.lock.hcl`, so the PR's `go` job fails (`TestModulesPinTheirLockedProvider`, `TestRenderCopiesTheLockFile`), and so do `modules (aws/baseline)`, `modules (aws/component)`, `render-smoke` and `floci` (`tofu init -lockfile=readonly`). Regenerate the lock the same way, from the component module:
 
 ```bash
 gh pr checkout <number> --repo jellalshadows-idp/idp-engine
@@ -74,7 +74,7 @@ mv .terraform.lock.hcl ../../../lockfiles/aws.terraform.lock.hcl
 cd ../../..
 ```
 
-Then set the new version in `lockfiles/lockfiles_test.go` (`TestAWSLockPinsTheProvider`), run `go test ./lockfiles/ ./internal/workflowspec/ ./internal/floci/`, commit as `chore(deps): regenerate the aws provider lock file` and push. The registry signs the checksums of every package of a release, and OpenTofu records them all whatever the `-platform` flags say; the flags keep one command for both providers.
+Then set the new version in `lockfiles/lockfiles_test.go` (`TestAWSLockPinsTheProvider`), run `go test ./lockfiles/ ./internal/render/ ./internal/workflowspec/ ./internal/floci/`, commit as `chore(deps): regenerate the aws provider lock file` and push. The registry signs the checksums of every package of a release, and OpenTofu records them all whatever the `-platform` flags say; the flags keep one command for both providers.
 
 ## A floci update
 

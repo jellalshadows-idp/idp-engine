@@ -33,3 +33,4 @@ An ADR records one decision that shapes this platform: the context that forced i
 | 0027 | [The end-to-end harness](0027-end-to-end-harness.md) | Accepted |
 | 0028 | [Releases, and how the workflows get idp](0028-releases-and-how-the-workflows-get-idp.md) | Accepted |
 | 0029 | [Self-hosted Renovate with the bot App](0029-self-hosted-renovate.md) | Accepted |
+| 0030 | [The AWS stacks keep their state in the job, unencrypted](0030-aws-stack-state-stays-in-the-job.md) | Accepted |

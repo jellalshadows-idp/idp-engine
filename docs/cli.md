@@ -46,13 +46,13 @@ idp render [--dir DIR] [--out DIR] [--module-ref REF] [--modules-dir DIR]
 - `--dir`: claims repo root (default `.`).
 - `--out`: output directory (default `rendered`). It is created, or replaced if it holds a previous render.
 - `--module-ref`: the idp-engine git ref that module sources pin. Default: this build's version.
-- `--modules-dir`: use local module sources from this directory instead (validation only). It must be on the same volume as `--out`.
+- `--modules-dir`: use local module sources from this directory instead (validation only). It must be on the same volume as `--out`. Every stack, the AWS stacks deeper in the tree included, points at it from its own directory.
 
 A development build has no version to pin, so it needs `--module-ref` or `--modules-dir`.
 
 Reads: the claims under `--dir` (validated first, like `validate`).
 
-Writes: the rendered tree under `--out`, including the `.idp-rendered` marker file, and one `render: wrote PATH` line per file. `idp diff` requires that marker.
+Writes: the rendered tree under `--out`, including the `.idp-rendered` marker file, and one `render: wrote PATH` line per file. `idp diff` requires that marker. The tree holds the `github` stack and, since Phase 2d, an AWS stack for every environment with an `aws` block (`aws/<env>/_baseline`) and for every Component with `aws.registry: true` in each of its environments (`aws/<env>/components/<name>`), each with its lock file ([claims reference](claims.md#rendering)).
 
 Exit codes: 0 rendered; 1 the render or the write failed; 2 usage error (including a development build with neither flag); 3 invalid claims, nothing rendered.
 
@@ -77,7 +77,17 @@ Each stack is reported with one status:
 | `unchanged` | in both, byte for byte |
 | `orphan` | only in wet: its claims are gone |
 
-A stack is a directory that holds `main.tf.json`. `.terraform` directories are skipped.
+A stack is a directory below `--new` or `--wet` that holds `main.tf.json`, at any depth: `github`, or `aws/dev/components/api`. A file belongs to the deepest stack that holds it. The root itself is never a stack, and files outside every stack, such as the marker, are ignored. `.terraform` directories are skipped; anything but a directory or a regular file, a symbolic link included, fails the command.
+
+For example, after the environment `staging` was removed from the platform config and one file of `api`'s `dev` stack changed:
+
+```text
+aws/dev/_baseline: unchanged
+aws/dev/components/api: changed
+aws/staging/_baseline: orphan
+github: unchanged
+diff: 2 affected stack(s)
+```
 
 Reads: both trees.
 

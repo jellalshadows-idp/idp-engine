@@ -319,6 +319,7 @@ func TestRenovateCustomManagers(t *testing.T) {
 		{"renovatebot/renovate", "github-releases", "", ""},
 		{"opentofu", "github-releases", "opentofu/opentofu", ""},
 		{"github", "terraform-provider", "integrations/github", "https://registry.opentofu.org"},
+		{"aws", "terraform-provider", "hashicorp/aws", "https://registry.opentofu.org"},
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("custom managers = %v, want %v", got, want)
@@ -364,9 +365,22 @@ func TestRenovateCustomManagersFindThePins(t *testing.T) {
 		slices.Sort(v)
 	}
 	ci, rn := ".github/workflows/ci.yaml", renovatePath
-	// Every golden render carries both pins, so Renovate must move them all.
+	// Every golden github stack carries the OpenTofu and GitHub provider pins,
+	// and every golden AWS stack the OpenTofu and AWS provider pins, so Renovate
+	// must move them all. The list is exact: a new golden stack is added here.
 	awsGolden := "internal/render/testdata/aws-registry/expected/github/main.tf.json"
 	golden := "internal/render/testdata/basic/expected/github/main.tf.json"
+	var awsStacks []string
+	for _, s := range []string{"dev/_baseline", "dev/components/api", "pro/_baseline", "pro/components/api"} {
+		awsStacks = append(awsStacks, "internal/render/testdata/aws-registry/expected/aws/"+s+"/main.tf.json")
+	}
+	pins := func(version string, files ...string) []string {
+		var out []string
+		for _, f := range files {
+			out = append(out, f+"="+version)
+		}
+		return slices.Sorted(slices.Values(out))
+	}
 	values := func(dep string) []string {
 		var out []string
 		for _, e := range found[dep] {
@@ -383,27 +397,45 @@ func TestRenovateCustomManagersFindThePins(t *testing.T) {
 		"github.com/rhysd/actionlint": {ci + "=" + actionlint[0], ci + "=" + actionlint[0]},
 		"zizmor":                      {ci + "=" + zizmor[0]},
 		"renovatebot/renovate":        {ci + "=" + renovateVersion(t), rn + "=" + renovateVersion(t)},
-		"opentofu":                    {"internal/render/render.go=" + render.TofuVersion, awsGolden + "=" + render.TofuVersion, golden + "=" + render.TofuVersion},
-		"github":                      {"internal/render/render.go=" + render.GitHubProviderVersion, awsGolden + "=" + render.GitHubProviderVersion, golden + "=" + render.GitHubProviderVersion},
+		"opentofu":                    pins(render.TofuVersion, append([]string{"internal/render/render.go", awsGolden, golden}, awsStacks...)...),
+		"github":                      pins(render.GitHubProviderVersion, "internal/render/render.go", awsGolden, golden),
+		"aws":                         pins(render.AWSProviderVersion, append([]string{"internal/render/render.go"}, awsStacks...)...),
 	}
 	if !reflect.DeepEqual(found, want) {
 		t.Errorf("regex managers found\n%v\nwant\n%v", found, want)
 	}
 }
 
+// TestOneOpenTofuAndProviderVersion: CI's OpenTofu is the renderer's, and every
+// module pins its provider at the version the renderer writes into the stacks
+// that call it, so one Renovate group moves them together.
 func TestOneOpenTofuAndProviderVersion(t *testing.T) {
 	if got := ciTofuVersion(t); got != render.TofuVersion {
 		t.Errorf("CI tests with OpenTofu %s, the renderer requires %s: the opentofu group moves them together, so they must start equal", got, render.TofuVersion)
 	}
-	for _, m := range []string{"group", "component"} {
-		b, err := os.ReadFile(filepath.Join(repoRoot, "modules", "github", m, "versions.tf"))
+	rendered := map[string]string{"github": render.GitHubProviderVersion, "aws": render.AWSProviderVersion}
+	modules := moduleDirs(t)
+	if len(modules) == 0 {
+		t.Fatal("no modules/*/*/versions.tf")
+	}
+	for _, m := range modules {
+		provider := strings.SplitN(m, "/", 2)[0]
+		want, ok := rendered[provider]
+		if !ok {
+			t.Errorf("modules/%s: the renderer pins no %s provider version", m, provider)
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(repoRoot, "modules", filepath.FromSlash(m), "versions.tf"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		// Anchored to the line start, so required_version = ">= 1.12.0" does not match.
-		sub := regexp.MustCompile(`(?m)^[ \t]*version[ \t]*=[ \t]*"([^"]+)"`).FindSubmatch(b)
-		if sub == nil || string(sub[1]) != render.GitHubProviderVersion {
-			t.Errorf("modules/github/%s pins the provider at %q, the renderer at %s", m, sub, render.GitHubProviderVersion)
+		got := "no version"
+		if sub := lockedVersion.FindSubmatch(b); sub != nil {
+			got = string(sub[1])
+		}
+		if got != want {
+			t.Errorf("modules/%s pins the provider at %s, the renderer at %s", m, got, want)
 		}
 	}
 }

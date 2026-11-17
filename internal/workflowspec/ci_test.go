@@ -58,11 +58,27 @@ func TestCIRenderSmokeCoversEveryFixture(t *testing.T) {
 	if got := slices.Sorted(slices.Values(lists[0])); !slices.Equal(got, want) {
 		t.Errorf("render-smoke fixtures = %v, want every fixture with a golden render: %v", got, want)
 	}
+	// Every stack of every render is validated, the AWS stacks under aws/
+	// included: each directory with a main.tf.json, found at any depth. The
+	// shipped lock file must already hold the stack's provider, and the plugin
+	// cache downloads each provider once for all the stacks.
 	_, s := mustStep(t, "ci render-smoke", mustJob(t, loadWorkflow(t, ciPath), "render-smoke").Steps, "render-validate")
+	if got, want := s.Env["TF_PLUGIN_CACHE_DIR"], "${{ runner.temp }}/tofu-plugin-cache"; got != want {
+		t.Errorf("ci render-smoke TF_PLUGIN_CACHE_DIR = %q, want %q", got, want)
+	}
+	// One block, so globstar is on before the loop: without it, ** matches one
+	// directory level and the AWS stacks would be skipped with the step green.
 	wantLines(t, "ci render-smoke", s.Run, []string{
+		`mkdir -p "$TF_PLUGIN_CACHE_DIR"`,
+		"shopt -s globstar",
+		"for fixture in basic aws-registry; do",
 		`go run ./cmd/idp render --dir "internal/render/testdata/$fixture" --out "$RUNNER_TEMP/rendered/$fixture" --modules-dir modules`,
-		`tofu -chdir="$RUNNER_TEMP/rendered/$fixture/github" init -backend=false -input=false`,
-		`tofu -chdir="$RUNNER_TEMP/rendered/$fixture/github" validate`,
+		`for stack in "$RUNNER_TEMP/rendered/$fixture"/**/main.tf.json; do`,
+		`stack="${stack%/main.tf.json}"`,
+		`tofu -chdir="$stack" init -backend=false -input=false -lockfile=readonly`,
+		`tofu -chdir="$stack" validate`,
+		"done",
+		"done",
 	})
 }
 
@@ -93,15 +109,24 @@ func TestCIFlociJob(t *testing.T) {
 		t.Errorf("floci env %v, options %q; want floci's defaults", svc.Env, svc.Options)
 	}
 	var tofu []string
+	setupGo := 0
 	for _, s := range j.Steps {
 		if strings.HasPrefix(s.Uses, "opentofu/setup-opentofu@") {
 			tofu = append(tofu, s.With["tofu_version"])
 		}
 		// floci holds the Docker socket, which reaches the runner: its job must
 		// not save a Go module cache that other jobs restore.
-		if strings.HasPrefix(s.Uses, "actions/setup-go@") && s.With["cache"] != "false" {
-			t.Errorf("ci floci setup-go cache = %q, want false", s.With["cache"])
+		if strings.HasPrefix(s.Uses, "actions/setup-go@") {
+			setupGo++
+			if s.With["cache"] != "false" {
+				t.Errorf("ci floci setup-go cache = %q, want false", s.With["cache"])
+			}
 		}
+	}
+	// Exactly one: without it the job would test with the runner's own Go, and
+	// the cache check above would pass with nothing to check (Phase 2c, R3-002).
+	if setupGo != 1 {
+		t.Errorf("ci floci has %d setup-go steps, want exactly one", setupGo)
 	}
 	if !slices.Equal(tofu, []string{ciTofuVersion(t)}) {
 		t.Errorf("ci floci installs OpenTofu %v, want once the modules job's %s", tofu, ciTofuVersion(t))

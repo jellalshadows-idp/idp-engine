@@ -20,14 +20,14 @@ AWS is emulated with **floci, one instance serving every environment**, and emul
 - It sets `AWS_ACCESS_KEY_ID=<accountId>` per job, using the account ID from `config/platform.yaml`. floci isolates resources per account, so ARNs come out right for each env.
 - It writes `floci_override.tf.json` with the endpoint and provider flags. Override files are native to OpenTofu.
 - Rendered stacks do not know floci exists. The platform config holds account IDs and regions, never emulator ports (§4.6).
-- Each job brings up its own floci and replays state from `wet` (§6.1, §6.2). Going to real AWS means replacing this CI step with OIDC credentials; claims and renders do not change.
+- Each job brings up its own floci and replays state from `wet` (§6.1, §6.2). Going to real AWS means replacing this CI step with OIDC credentials; claims and renders do not change. *(Amended in Phase 2d, 2026-11-17: what a job replays from `wet` is the rendered AWS stacks, never their state, which stays in the job (ADR-0030); going to real AWS also gives those stacks a persistent, encrypted backend, a render change.)*
 
 ## Consequences
 
 ### Positive
 
 - One emulator for all envs, with correct per-env ARNs and account isolation.
-- The same rendered stacks run unchanged against real AWS later, so the emulation is a CI detail rather than a design fork.
+- The same rendered stacks run unchanged against real AWS later, so the emulation is a CI detail rather than a design fork. *(Amended in Phase 2d, 2026-11-17: except their backend, ADR-0030.)*
 - No real credentials: floci uses fake 12-digit keys (§7.6).
 
 ### Negative / costs
