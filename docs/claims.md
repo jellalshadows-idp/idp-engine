@@ -52,8 +52,8 @@ environments:
 | `environments.<env>` | yes (≥ 1) | | Env names match `^[a-z][a-z0-9]{0,9}$` |
 | `environments.<env>.protected` | no | `false` | Protected envs require the owner team's approval |
 | `environments.<env>.aws` | no | | The environment's AWS account. Required for every environment of a Component with `aws.registry: true` |
-| `environments.<env>.aws.accountId` | yes, in `aws` | | 12 digits, quoted (`"000000000001"`), so YAML keeps it a string with its leading zeros |
-| `environments.<env>.aws.region` | yes, in `aws` | | An AWS region of the standard `aws` partition, such as `eu-west-1`. The schema checks only the shape, so GovCloud (`us-gov-*`) and China (`cn-*`) regions pass it, but they are not supported: the identities are computed for the standard partition (`arn:aws:` ARNs and the `amazonaws.com` registry host) |
+| `environments.<env>.aws.accountId` | yes, in `aws` | | 12 digits, quoted (`"000000000001"`), so YAML keeps it a string with its leading zeros. Each environment needs its own account: its baseline creates the account's GitHub OIDC provider, and an account holds one |
+| `environments.<env>.aws.region` | yes, in `aws` | | An AWS region of the standard `aws` partition, such as `eu-west-1`. A region of another partition, such as GovCloud (`us-gov-*`) or China (`cn-*`), fails validation: the identities are computed for the standard partition (`arn:aws:` ARNs and the `amazonaws.com` registry host), and floci would create the resources in the other one |
 | `modules.allowedSources` | no | | Allowed Workspace module prefixes; used from Phase 3 |
 
 An `aws` block is shaped like real AWS: an account ID and a region, never an emulator endpoint (the schema rejects any other key). In v1, AWS is the floci emulator in CI (spec §5.6), so the IDs can be fake ones like those above. An environment needs an `aws` block only when a Component with `aws.registry: true` lists it.
@@ -107,10 +107,17 @@ The `features` field arrives in Phase 4. Until then it fails validation.
 
 `idp validate --dir <claims repo>` reports every problem at once as `file:line: message` (`file: message` when a problem has no line, such as a missing file). Inside GitHub Actions (`GITHUB_ACTIONS=true`) it also prints GitHub annotations, so errors show inline on the PR. It exits 0 when the claims are valid, 3 when it found problems, 1 when it could not run (for example an unreadable directory), and 2 on a usage error ([ADR-0016](adr/0016-exit-codes.md)).
 
-Beyond the schemas, the checks include: each name matches its file name; the owner Group exists; every environment exists in `config/platform.yaml`; a Component with `aws.registry: true` lists at least one environment, and each of them has an `aws` block. For the Component above, in a platform whose `pro` has no `aws` block:
+Beyond the schemas, the checks include: each name matches its file name; the owner Group exists; every environment exists in `config/platform.yaml`; a Component with `aws.registry: true` lists at least one environment, and each of them has an `aws` block; no two environments share an `accountId`; and every region is in the standard `aws` partition. For the Component above, in a platform whose `pro` has no `aws` block:
 
 ```text
 claims/components/api.yaml:6: environment "pro" needs an aws block (accountId and region) in config/platform.yaml, because aws.registry is true
+```
+
+For the platform above with `pro` set to `aws: { accountId: "000000000001", region: us-gov-west-1 }`, both problems are reported at the later environment:
+
+```text
+config/platform.yaml:11: environment "pro" has region "us-gov-west-1", in the aws-us-gov partition: only the standard aws partition is supported, because the AWS identities are computed with arn:aws: ARNs and the amazonaws.com host (spec §5.5)
+config/platform.yaml:11: environment "pro" uses accountId "000000000001", like environment "dev": each environment needs its own AWS account, because each environment's baseline creates that account's GitHub OIDC provider (spec §5.4)
 ```
 
 ## Rendering

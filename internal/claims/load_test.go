@@ -199,6 +199,13 @@ func TestLoadDiagnostics(t *testing.T) {
 		{"the shared account is reported where the file uses it again", func(r map[string]string) {
 			r["config/platform.yaml"] = "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 5255579\nenvironments:\n  pro:\n    protected: true\n    aws:\n      accountId: \"000000000001\"\n      region: eu-west-1\n  dev:\n    aws:\n      accountId: \"000000000001\"\n      region: eu-west-1\n"
 		}, []string{`config/platform.yaml:14: environment "dev" uses accountId "000000000001", like environment "pro": each environment needs its own AWS account, because each environment's baseline creates that account's GitHub OIDC provider (spec §5.4)`}},
+		{"regions outside the standard aws partition", func(r map[string]string) {
+			p := strings.Replace(awsPlatform, "region: eu-west-1", "region: cn-north-1", 1)
+			r["config/platform.yaml"] = strings.Replace(p, "\"000000000003\"\n      region: eu-west-1", "\"000000000003\"\n      region: us-gov-west-1", 1)
+		}, []string{
+			`config/platform.yaml:10: environment "dev" has region "cn-north-1", in the aws-cn partition: only the standard aws partition is supported, because the AWS identities are computed with arn:aws: ARNs and the amazonaws.com host (spec §5.5)`,
+			`config/platform.yaml:15: environment "pro" has region "us-gov-west-1", in the aws-us-gov partition: only the standard aws partition is supported, because the AWS identities are computed with arn:aws: ARNs and the amazonaws.com host (spec §5.5)`,
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -213,6 +220,31 @@ func TestLoadDiagnostics(t *testing.T) {
 				t.Errorf("diagnostics =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
 			}
 		})
+	}
+}
+
+// TestPartitionOf follows the region rules of botocore's partitions.json, which
+// the AWS SDKs and floci use to place a region in its partition.
+func TestPartitionOf(t *testing.T) {
+	for region, want := range map[string]string{
+		"eu-west-1":       "",
+		"us-east-1":       "",
+		"ap-southeast-2":  "",
+		"il-central-1":    "",
+		"mx-central-1":    "",
+		"cn-north-1":      "aws-cn",
+		"cn-northwest-1":  "aws-cn",
+		"us-gov-west-1":   "aws-us-gov",
+		"us-gov-east-1":   "aws-us-gov",
+		"us-iso-east-1":   "aws-iso",
+		"us-isob-east-1":  "aws-iso-b",
+		"eu-isoe-west-1":  "aws-iso-e",
+		"us-isof-south-1": "aws-iso-f",
+		"eusc-de-east-1":  "aws-eusc",
+	} {
+		if got := partitionOf(region); got != want {
+			t.Errorf("partitionOf(%q) = %q, want %q", region, got, want)
+		}
 	}
 }
 
