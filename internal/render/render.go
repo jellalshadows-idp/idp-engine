@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/claims"
@@ -32,7 +33,8 @@ type Options struct {
 	ModuleRef string
 	// ModulesDir replaces git sources with local paths, relative to the github stack
 	// directory and starting with ./ or ../. CI uses it to validate a render before
-	// its ref exists.
+	// its ref exists. The AWS stacks, deeper in the tree, get the same directory
+	// expressed from their own.
 	ModulesDir string
 }
 
@@ -67,7 +69,7 @@ func githubStack(m *claims.Model, opts Options) (map[string]any, error) {
 			members = append(members, map[string]any{"user": literal(mem.User), "role": literal(mem.Role)})
 		}
 		modules["group_"+g.Name] = map[string]any{
-			"source":      moduleSource(opts, "group"),
+			"source":      moduleSource(opts, "github", "github/group"),
 			"name":        literal(g.Name),
 			"description": literal(g.Description),
 			"members":     members,
@@ -91,7 +93,7 @@ func githubStack(m *claims.Model, opts Options) (map[string]any, error) {
 			topics = append(topics, literal(t))
 		}
 		modules["component_"+c.Name] = map[string]any{
-			"source":             moduleSource(opts, "component"),
+			"source":             moduleSource(opts, "github", "github/component"),
 			"name":               literal(c.Name),
 			"description":        literal(c.Description),
 			"topics":             topics,
@@ -145,11 +147,20 @@ func literal(s string) string {
 	return strings.NewReplacer("${", "$${", "%{", "%%{").Replace(s)
 }
 
-func moduleSource(opts Options, module string) string {
-	if opts.ModulesDir != "" {
-		return strings.TrimSuffix(opts.ModulesDir, "/") + "/github/" + module
+// moduleSource is where the stack in stackDir, a slash path relative to the
+// output root, finds the engine's module <provider>/<name>: the engine's git
+// repository at ModuleRef, or ModulesDir. ModulesDir is relative to the github
+// stack, so a deeper stack climbs to the output root and descends into github
+// first. The github stack's sources are ModulesDir as given.
+func moduleSource(opts Options, stackDir, module string) string {
+	if opts.ModulesDir == "" {
+		return fmt.Sprintf("git::https://%s.git//modules/%s?ref=%s", version.Repo, module, opts.ModuleRef)
 	}
-	return fmt.Sprintf("git::https://%s.git//modules/github/%s?ref=%s", version.Repo, module, opts.ModuleRef)
+	dir := strings.TrimSuffix(opts.ModulesDir, "/")
+	if stackDir != "github" {
+		dir = path.Join(strings.Repeat("../", strings.Count(stackDir, "/")+1)+"github", dir)
+	}
+	return dir + "/" + module
 }
 
 // marshal encodes with sorted keys (encoding/json sorts map keys), two-space

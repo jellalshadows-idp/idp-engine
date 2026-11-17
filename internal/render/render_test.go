@@ -187,6 +187,31 @@ func TestRenderCopiesTheLockFile(t *testing.T) {
 	}
 }
 
+// TestModuleSource: ModulesDir is relative to the github stack, so a deeper
+// stack climbs to the output root and descends into github first. Every form
+// resolves to the same directory from its own stack, and the github stack's
+// sources stay ModulesDir as given, byte for byte.
+func TestModuleSource(t *testing.T) {
+	tests := []struct{ modulesDir, stackDir, module, want string }{
+		{"../../modules", "github", "github/group", "../../modules/github/group"},
+		{"../../modules/", "github", "github/group", "../../modules/github/group"},
+		{"./mods", "github", "github/component", "./mods/github/component"},
+		{"../../modules", "aws/dev/_baseline", "aws/baseline", "../../../../modules/aws/baseline"},
+		{"../../modules/", "aws/dev/_baseline", "aws/baseline", "../../../../modules/aws/baseline"},
+		{"./mods", "aws/dev/_baseline", "aws/baseline", "../../../github/mods/aws/baseline"},
+		{"../../modules", "aws/dev/components/api", "aws/component", "../../../../../modules/aws/component"},
+		{"./mods", "aws/dev/components/api", "aws/component", "../../../../github/mods/aws/component"},
+	}
+	for _, tt := range tests {
+		if got := moduleSource(Options{ModulesDir: tt.modulesDir}, tt.stackDir, tt.module); got != tt.want {
+			t.Errorf("moduleSource(%q, %q, %q) = %q, want %q", tt.modulesDir, tt.stackDir, tt.module, got, tt.want)
+		}
+	}
+	if got, want := moduleSource(Options{ModuleRef: "v1"}, "aws/dev/_baseline", "aws/baseline"), "git::https://github.com/jellalshadows-idp/idp-engine.git//modules/aws/baseline?ref=v1"; got != want {
+		t.Errorf("git source = %q, want %q", got, want)
+	}
+}
+
 func TestRenderLocalModules(t *testing.T) {
 	files, err := Render(loadFixture(t, "basic"), Options{ModulesDir: "../../modules"})
 	if err != nil {
