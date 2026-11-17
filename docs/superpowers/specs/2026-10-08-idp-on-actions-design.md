@@ -360,8 +360,9 @@ Rendered stacks do not know floci exists. In CI, the workflow:
 - Writes `floci_override.tf.json` (endpoint and provider flags). Override files are
   native to OpenTofu.
 
-Going to real AWS means replacing this step with OIDC credentials. Claims and
-renders do not change.
+Going to real AWS means replacing this step with OIDC credentials, and giving the AWS
+stacks a persistent, encrypted backend, which their render does not have in v1
+(ADR-0030). Claims do not change. *(Amendment A13, 2026-11-17.)*
 
 ### 5.7 Features
 **Format** (owned by `idp-engine`, `apiVersion: idp/v1`):
@@ -428,11 +429,13 @@ Renovate bumps the ref and the comment. Each workflow sets `permissions: {}`, an
 job asks for what it needs. Every reusable job gets `idp` for the reusable
 workflow's own commit, so the workflow, the CLI and the module refs are one version
 (ADR-0021): a release commit installs its verified release binary, and any other
-commit is built from source (ADR-0028; *Amendment A9, 2026-10-18*). Until Phase 2
-renders and reconciles the AWS stacks (Phases 2d and 2e, §10), the only stack is
-`github`, and until Phase 4 there are no
-features to fetch or adopt: the workflows fail if any other stack is affected.
-*(Amendment A6, 2026-10-11; Amendment A10, 2026-11-03.)*
+commit is built from source (ADR-0028; *Amendment A9, 2026-10-18*). Until Phase 2e
+plans and applies the AWS stacks (§10), the workflows reconcile only the `github`
+stack and fail if any other stack is affected. The render writes the AWS stacks of
+every env with an `aws` block since Phase 2d (§5.4), so until then a claims repo with
+one stays on an engine release from before Phase 2d. Until Phase 4 there are no
+features to fetch or adopt.
+*(Amendment A6, 2026-10-11; Amendment A10, 2026-11-03; Amendment A13, 2026-11-17.)*
 
 ### 6.1 PR (`pull_request` → `main`)
 Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
@@ -583,10 +586,14 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
   *(Amendment A7, 2026-10-12.)*
 
 ### 7.2 Encrypted state
-- The render emits `encryption { state { enforced = true } plan { enforced = true } }`.
+- The render emits `encryption { state { enforced = true } plan { enforced = true } }`
+  in the `github` stack, whose state `wet` keeps (§5.4).
   The key material (a PBKDF2 passphrase of at least 16 characters, with AES-GCM)
   comes from `TF_ENCRYPTION`, filled from a secret. If the variable is missing,
   OpenTofu refuses to write plaintext.
+- The AWS stacks emit no `encryption` block: their state stays in the job's working
+  copy and is gone with the emulator it describes (§5.5, ADR-0030). *(Amendment A13,
+  2026-11-17.)*
 - Workflows get `TF_ENCRYPTION` from `idp encryption-env`, which validates
   `IDP_STATE_PASSPHRASE` first and fails with a message naming it. The key
   provider and method are named `idp`; the name is frozen (ADR-0020).
@@ -703,9 +710,10 @@ spec. For example:
 - `archive_on_destroy` follows the platform config.
 
 ### 8.4 Level 3: floci
-A Go test (`internal/floci`, run by CI's `floci` job) applies `modules/aws/baseline`
-and then `modules/aws/component` to two accounts of one floci service container, with
-the inputs `internal/naming` computes, as rendered stacks will pass them. It checks
+A Go test (`internal/floci`, run by CI's `floci` job) renders the renderer's
+`aws-registry` fixture and applies its AWS stacks, each env's `_baseline` and then its
+Component stack, to two accounts of one floci service container, adding only
+`floci_override.tf.json`, as CI does (§5.6). *(Amendment A13, 2026-11-17.)* It checks
 through the AWS API that the created identities are naming's (ADR-0006) and that the
 trust and push policies are exactly §4.4's, then destroys everything and checks that
 nothing is left. Its **replay test** plans the applied version again and requires no
