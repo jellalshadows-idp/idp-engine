@@ -108,7 +108,14 @@ func (l *loader) checkAWSAccounts(doc *document) {
 	at := func(env string, path ...string) int {
 		return doc.line(append([]string{"environments", env}, path...))
 	}
-	sort.Slice(envs, func(i, j int) bool { return at(envs[i]) < at(envs[j]) })
+	// By line, then by name: environments written on one line (a flow mapping)
+	// share it, and map iteration must not decide which one is reported.
+	sort.Slice(envs, func(i, j int) bool {
+		if li, lj := at(envs[i]), at(envs[j]); li != lj {
+			return li < lj
+		}
+		return envs[i] < envs[j]
+	})
 	first := map[string]string{} // account ID → the first environment that uses it
 	for _, env := range envs {
 		aws := l.model.Platform.Environments[env].AWS

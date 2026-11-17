@@ -199,6 +199,9 @@ func TestLoadDiagnostics(t *testing.T) {
 		{"the shared account is reported where the file uses it again", func(r map[string]string) {
 			r["config/platform.yaml"] = "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 5255579\nenvironments:\n  pro:\n    protected: true\n    aws:\n      accountId: \"000000000001\"\n      region: eu-west-1\n  dev:\n    aws:\n      accountId: \"000000000001\"\n      region: eu-west-1\n"
 		}, []string{`config/platform.yaml:14: environment "dev" uses accountId "000000000001", like environment "pro": each environment needs its own AWS account, because each environment's baseline creates that account's GitHub OIDC provider (spec §5.4)`}},
+		{"environments on one line are taken in name order", func(r map[string]string) {
+			r["config/platform.yaml"] = "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 5255579\nenvironments: {pro: {aws: {accountId: \"000000000001\", region: eu-west-1}}, dev: {aws: {accountId: \"000000000001\", region: eu-west-1}}}\n"
+		}, []string{`config/platform.yaml:6: environment "pro" uses accountId "000000000001", like environment "dev": each environment needs its own AWS account, because each environment's baseline creates that account's GitHub OIDC provider (spec §5.4)`}},
 		{"regions outside the standard aws partition", func(r map[string]string) {
 			p := strings.Replace(awsPlatform, "region: eu-west-1", "region: cn-north-1", 1)
 			r["config/platform.yaml"] = strings.Replace(p, "\"000000000003\"\n      region: eu-west-1", "\"000000000003\"\n      region: us-gov-west-1", 1)
