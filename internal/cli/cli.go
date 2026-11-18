@@ -15,6 +15,7 @@ Commands:
   validate        Validate a claims repo (schema + semantic checks)
   render          Render a claims repo into OpenTofu stacks
   diff            List the stacks whose render differs from the wet branch
+  stacks          Split the affected stacks into the github stack and the AWS matrix
   plan-summary    Summarize OpenTofu plans as a PR comment and a fingerprint
   gate            Decide whether a reconcile applies automatically or waits for approval
   comment         Create or update the sticky plan comment on a pull request
@@ -48,6 +49,8 @@ func Run(args []string, stdout, stderr io.Writer, env Env) int {
 		return runRender(args[1:], stdout, stderr, env)
 	case "diff":
 		return runDiff(args[1:], stdout, stderr, env)
+	case "stacks":
+		return runStacks(args[1:], stdout, stderr, env)
 	case "plan-summary":
 		return runPlanSummary(args[1:], stdout, stderr, env)
 	case "gate":
