@@ -429,13 +429,14 @@ Renovate bumps the ref and the comment. Each workflow sets `permissions: {}`, an
 job asks for what it needs. Every reusable job gets `idp` for the reusable
 workflow's own commit, so the workflow, the CLI and the module refs are one version
 (ADR-0021): a release commit installs its verified release binary, and any other
-commit is built from source (ADR-0028; *Amendment A9, 2026-10-18*). Until Phase 2e
-plans and applies the AWS stacks (§10), the workflows reconcile only the `github`
-stack and fail if any other stack is affected. The render writes the AWS stacks of
-every env with an `aws` block since Phase 2d (§5.4), so until then a claims repo with
-one stays on an engine release from before Phase 2d. Until Phase 4 there are no
-features to fetch or adopt.
-*(Amendment A6, 2026-10-11; Amendment A10, 2026-11-03; Amendment A13, 2026-11-17.)*
+commit is built from source (ADR-0028; *Amendment A9, 2026-10-18*). Since Phase 2e
+the workflows plan and apply the `github` stack and the AWS stacks the render writes
+(§5.4): each env's `_baseline` and each registry Component's stack, against floci.
+Any other affected stack, such as a Workspace, fails the run until Phase 3. A job
+that runs floci holds no secret (ADR-0031). Until Phase 4 there are no features to
+fetch or adopt.
+*(Amendment A6, 2026-10-11; Amendment A10, 2026-11-03; Amendment A13, 2026-11-17;
+Amendment A14, 2026-11-18.)*
 
 ### 6.1 PR (`pull_request` → `main`)
 Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
@@ -452,6 +453,14 @@ Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
    2. Apply the `wet` version of the stack, if it existed and is not `observe`.
    3. Plan the new version. An orphan is planned as a destroy, using its **old**
       config from `wet`.
+
+   Both versions run against one state, in one scratch copy with the configuration
+   swapped (ADR-0030). A job runs as the env's account from the claims, or, for an
+   env the claims removed, from its stacks in `wet`. floci reaches the runner's
+   Docker socket, so the job holds no secret: it gets the renders as an artifact and
+   hands back only its reduced plan, the addresses and actions that the fingerprint
+   reads (ADR-0031). `idp plan-summary` runs over the reduced plans of every stack in
+   the secret-less `comment` job. *(Amendment A14, 2026-11-18.)*
 5. **policy** (`idp plan-summary` over `tofu show -json`) enforces the §4.5 table.
 6. **sticky comment** on the PR, posted with `GITHUB_TOKEN` and
    `pull-requests: write`:
@@ -499,6 +508,12 @@ button. Concurrency: group `idp-wet`, `cancel-in-progress: false`, `queue: max`.
       *(Amendment A8, 2026-10-13.)*
       Example: A and B merge back to back. B's PR plan showed A+B. After A applies,
       B's plan shows only B, which is a subset, so it runs automatically.
+
+   Since Phase 2e this step runs as three jobs: `plan` (1.1 to 1.3 for the `github`
+   stack, in `idp-write`), `plan-aws` (one job per AWS stack, as in §6.1 step 4), and
+   `gate` (1.4 and 1.5 over the reduced plans of every stack, with read scopes of
+   `GITHUB_TOKEN` and no secret), which saves the gated fingerprint for `apply-aws`
+   (ADR-0031). *(Amendment A14, 2026-11-18.)*
 2. **approve** runs only when `gate == approval`. It references environment
    `idp-approval` (required reviewers, set by bootstrap to the platform admins;
    deployment branch `main`; **no secrets**). Required reviewers gate each job that
@@ -509,7 +524,9 @@ button. Concurrency: group `idp-wet`, `cancel-in-progress: false`, `queue: max`.
    Each job replays and re-plans in its own floci. It requires the fingerprint to
    **equal** the one that was gated, then applies and writes evidence to the job
    summary. `observe` Workspaces are never applied: for them, a successful plan
-   counts as success.
+   counts as success. A job holds no secret (ADR-0031), its state never leaves it
+   (ADR-0030), and it marks its stack applied, as an artifact, only after a
+   successful apply. *(Amendment A14, 2026-11-18.)*
 4. **apply-github** references environment `idp-write` (deployment branch `main`;
    no reviewers; it holds the `idp-writer` key). It runs after `apply-aws`
    (`if: always()` plus the same gate condition). Stacks are independent (§5.5), so
@@ -524,7 +541,12 @@ button. Concurrency: group `idp-wet`, `cancel-in-progress: false`, `queue: max`.
         signed by GitHub and attributed to the writer App (ADR-0019).
       - the GitHub tfstate, **always**, even if the apply failed, because real
         resources may have changed;
-      - `rendered/` for the stacks that applied successfully;
+      - `rendered/` for the stacks that applied successfully: the `github` stack's
+        when its apply succeeded or had nothing to apply, and each AWS stack that
+        `apply-aws` marked applied. An orphan's render is deleted only when its
+        destroy applied. `wet` holds no state but the `github` stack's, and
+        `idp wet-push` refuses any other state file (ADR-0030). *(Amendment A14,
+        2026-11-18.)*
       - the manifest.
 
       A stack that failed keeps its old render in `wet`, so the next run sees the
@@ -572,6 +594,9 @@ Any delete or replace goes through `idp-approval`.
 - It also runs on `workflow_dispatch`. A run fails only when the check cannot run;
   drift itself is reported by the issue and a warning annotation.
   *(Amendment A6, 2026-10-11.)*
+- It checks the `github` stack only. An AWS stack's state lives only in its job's
+  floci (ADR-0030), so there is nothing to compare until the platform targets a real
+  account (§2.2). *(Amendment A14, 2026-11-18.)*
 
 ## 7. State and security
 
@@ -859,7 +884,7 @@ Two additions to later phases, and the candidates after `1.0.0` *(Amendment A15,
 |---|---|---|---|
 | 1 | A Group member who is not yet in the org gets an invitation, and the membership stays "pending", which could leave a permanent plan diff | Fallback: validation requires members to already be org members (checked with the reader token) | Closed: no fallback needed. The plan exits 0 both with the invitation pending and after acceptance. See [ADR-0013](../../adr/0013-phase-0-spike-findings.md) |
 | 2 | A GitHub apply takes longer than the 1-hour installation token | Measure in Phase 0. Fallback: the provider's `app_auth` with the key file inside `idp-write` | Closed: 32 s for 10 resources is 3.2 s per resource; 3.2 s x 450 is about 24 min, under the 30 min threshold. Keep minted installation tokens, no `app_auth`. See [ADR-0013](../../adr/0013-phase-0-spike-findings.md) |
-| 3 | floci replay time multiplied by the number of stacks drives CI minutes | Measure in Phase 0. Only affected stacks are planned | Measured in S3: about 26 s per stack (init 7 + apply 13 + plan 6) plus 6 s floci readiness per job. Acceptable |
+| 3 | floci replay time multiplied by the number of stacks drives CI minutes | Measure in Phase 0. Only affected stacks are planned. Phase 2e runs one job per affected AWS stack, ten at a time, and `idp stacks` refuses more than the 256 jobs a matrix runs (*Amendment A14, 2026-11-18*) | Measured in S3: about 26 s per stack (init 7 + apply 13 + plan 6) plus 6 s floci readiness per job. Acceptable |
 | 4 | floci fidelity gaps (IAM/ECR) | The OIDC provider is already confirmed to exist in floci. Gaps get documented and skipped in level 3 | No gaps found for IAM, OIDC and ECR in S3. ECR URL uses the `localhost:4566` host form (cosmetic). Real `AssumeRoleWithWebIdentity` not exercised; out of scope for v1, which has no real AWS account (§2.2, §7.6): the AWS module tests assert the trust policy's `sub` and `aud` (§8.3), and the floci test asserts them on the created role (§8.4) (owner decision; *Amendment A10, 2026-11-03; reworded by Amendment A11, 2026-11-03, and Amendment A12, 2026-11-17*) |
 | 5 | `userManaged` adoption edge cases (file deleted between adopt and apply) | `overwrite_on_create = false` on `user_managed`, so the apply fails loudly and the next reconcile retries | Not in Phase 0 scope: covered in Phase 4 (Features) |
 | 6 | Cron disabled after 60 days of inactivity | Renovate activity. Documented | Not in Phase 0 scope: covered in Phase 1 (drift pipeline) and Phase 5 (docs) |
