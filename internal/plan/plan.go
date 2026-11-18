@@ -49,15 +49,7 @@ type Plan struct {
 // Parse reads the JSON of tofu show -json for one stack. An action it does not
 // know fails the parse: an unknown action is never treated as harmless.
 func Parse(stack string, r io.Reader) (*Plan, error) {
-	var raw struct {
-		FormatVersion   string `json:"format_version"`
-		ResourceChanges []struct {
-			Address string `json:"address"`
-			Change  struct {
-				Actions []string `json:"actions"`
-			} `json:"change"`
-		} `json:"resource_changes"`
-	}
+	var raw reduced
 	if err := json.NewDecoder(r).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("plan %s: %w", stack, err)
 	}

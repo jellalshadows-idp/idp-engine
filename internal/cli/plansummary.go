@@ -37,6 +37,7 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 	runURL := fs.String("run-url", "", "link to the workflow run, shown in the comment")
 	commentOut := fs.String("comment-out", "", "write the PR comment Markdown here")
 	fpOut := fs.String("fingerprint-out", "", "write the fingerprint JSON here")
+	planDir := fs.String("plan-dir", "", "read each affected stack's plan from this directory, as <stack with each / as .>.json, as idp plan-reduce and idp aws-stack plan write them (instead of --plan)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -60,6 +61,15 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 			return exitUsage
 		}
 		listed[s] = true
+	}
+	if *planDir != "" {
+		if len(plans) > 0 {
+			fmt.Fprintln(stderr, "idp plan-summary: give --plan or --plan-dir, not both")
+			return exitUsage
+		}
+		for _, s := range affected {
+			plans = append(plans, s+"="+planFileIn(*planDir, s))
+		}
 	}
 	if !plan.ValidSHA(*headSHA) {
 		fmt.Fprintf(stderr, "idp plan-summary: --head-sha %q is not a full commit SHA\n", *headSHA)
@@ -110,9 +120,8 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	total := 0
 	for _, p := range parsed {
-		c := p.Counts()
-		total += c.Total()
-		fmt.Fprintf(stdout, "%s: +%d ~%d -%d ±%d\n", p.Stack, c.Create, c.Update, c.Delete, c.Replace)
+		total += p.Counts().Total()
+		fmt.Fprintln(stdout, countsLine(p))
 	}
 	destructive := len(fp.Destructive()) > 0
 	fmt.Fprintf(stdout, "plan-summary: %d change(s), destructive: %t\n", total, destructive)
