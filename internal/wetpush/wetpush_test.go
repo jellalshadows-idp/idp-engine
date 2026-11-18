@@ -197,6 +197,32 @@ func TestSyncRefusesToDeleteAFilePath(t *testing.T) {
 	}
 }
 
+// TestSyncCommitsNoStateButGitHubs: wet is public, and the only state it holds
+// is the github stack's, encrypted. An AWS stack's state stays in its job
+// (ADR-0030), so a state file anywhere else under a synced path is refused
+// before any write, even when a workflow names its directory by mistake.
+func TestSyncCommitsNoStateButGitHubs(t *testing.T) {
+	for _, c := range []struct{ path, file string }{
+		{"rendered/aws/dev/_baseline", "rendered/aws/dev/_baseline/terraform.tfstate"},
+		{"rendered/aws/dev/components/api", "rendered/aws/dev/components/api/terraform.tfstate.backup"},
+		{"rendered/github", "rendered/github/github.tfstate"},
+		{"tfstate/aws.tfstate", "tfstate/aws.tfstate"},
+	} {
+		fake, p := setup(t, nil)
+		root := writeLocal(t, map[string]string{c.file: "{}"})
+		_, err := p.Sync(context.Background(), root, []string{c.path}, "m")
+		want := "refusing to commit " + c.file + ": wet holds no state but tfstate/github.tfstate (ADR-0030)"
+		if err == nil || err.Error() != want || len(fake.Writes) != 0 {
+			t.Errorf("%s: err = %v, writes = %v; want %q and no writes", c.file, err, fake.Writes, want)
+		}
+	}
+	fake, p := setup(t, nil)
+	root := writeLocal(t, map[string]string{"tfstate/github.tfstate": "state"})
+	if _, err := p.Sync(context.Background(), root, []string{"tfstate/github.tfstate"}, "m"); err != nil || len(fake.Writes) == 0 {
+		t.Errorf("github's state: err = %v, writes = %v; want it committed", err, fake.Writes)
+	}
+}
+
 func TestBlobSHAMatchesGit(t *testing.T) {
 	// echo -n "hello" | git hash-object --stdin
 	if got := blobSHA([]byte("hello")); got != "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0" {
