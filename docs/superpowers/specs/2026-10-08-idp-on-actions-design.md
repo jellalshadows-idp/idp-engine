@@ -835,13 +835,23 @@ use what that phase measured. Each phase ships an engine minor release.
 | 0 | Bootstrap + spike | Orgs, Apps and repos exist. An ADR with measurements: encrypted state round-trip via Git, the GitHub provider with an App token, apply duration vs the 1-hour token, floci replay time per stack, and pending-invite behavior |
 | 1 → `0.1.0` | Group + Component (GitHub part), all pipelines (§6), **E2E harness born**, releases and Renovate; `0.1.0` ships at the end of Phase 1e *(Amendment A9)* | E2E creates, modifies and deletes an `e2e-` repo and team through `idp-claims-e2e` |
 | 2 → `0.2.0` | Component AWS part: baseline, ECR + role, deterministic env variables | E2E checks the env variables, and floci integration is green |
-| 3 → `0.3.0` | Workspace: allowlist, policies, orphans, `idp-modules/s3-bucket` | E2E covers the two-step delete and the `apply`-policy rejection |
-| 4 → `0.4.0` | Features: `idp-features` + the 3 features, managed and userManaged | Golden tests, plus E2E with one managed and one userManaged file |
+| 3 → `0.3.0` | Workspace: allowlist, policies, orphans, `idp-modules/s3-bucket`; each reconcile's apply outcome posted on the merged PR *(A15)* | E2E covers the two-step delete and the `apply`-policy rejection |
+| 4 → `0.4.0` | Features: `idp-features` + the 3 features, managed and userManaged; Renovate bumps the feature versions in claims *(A15)* | Golden tests, plus E2E with one managed and one userManaged file |
 | 5 → `1.0.0` | Polish: complete docs, tested runbooks | An external person bootstraps a new org using only the README |
 
 Phase 1 is delivered as five plans, each shipping working software: **1a** claims → render (validation, the GitHub stack, the `github/group` and `github/component` modules); **1b** the pipeline subcommands (`diff`, `plan-summary`, `gate`, `comment`, `issue`, `wet-push`, `encryption-env`, drift-ready `bootstrap check`); **1c** the reusable workflows and a live smoke run in `idp-claims-e2e`; **1d** the E2E harness, its credentials and the hardening carried from 1b and 1c; **1e** releases (release-please, GoReleaser, attestations), Renovate, the `v0.1.0` release and onboarding `idp-claims`. *(2026-10-09, re-split 2026-10-10 and 2026-10-13.)*
 
 Phase 2 is delivered as six plans, each written after the previous one ships: **2a** the AWS model of the Platform and the Component, `internal/naming` and the AWS validation; **2b** the deterministic env variables in `modules/github/component`; **2c** `modules/aws/{baseline,component}` (the OIDC provider, the ECR repository and the CI role), the AWS lock file and the floci CI job; **2d** rendering the AWS stacks; **2e** the workflows' AWS plan and apply against floci; **2f** the E2E env-variable checks, the `0.2.0` release and the phase log. *(Amendment A10, 2026-11-03.)*
+
+Two additions to later phases, and the candidates after `1.0.0` *(Amendment A15, 2026-11-19)*:
+- **Phase 3** also posts each reconcile's apply outcome on the merged PR, in a comment with its own marker (`<!-- idp-apply -->`). The PR's author sees what was applied without opening the run. The gate never reads that comment: it trusts only `<!-- idp-plan -->` (§6.2).
+- **Phase 4** also lets Renovate bump the feature versions pinned in claims, so each feature upgrade arrives as a PR whose plan shows the exact file changes, like every other change (§6).
+- **After `1.0.0`**, without a phase yet:
+  - renaming a Group or Component without destroying it, through rendered `moved` blocks (§2.2 keeps renames out of v1);
+  - importing existing repositories and teams through rendered `import` blocks. The fingerprint then needs its own import action, which always requires approval: OpenTofu plans an import as a no-op or an update, which the gate would otherwise let through;
+  - self-service through an issue form and an `idp new` command that opens the claims PR, so every request still goes through a PR and its plan;
+  - a `catalog-info` feature for service catalogs;
+  - policy as code over the plans.
 
 ## 11. Risks (verified in Phase 0 or by E2E)
 
