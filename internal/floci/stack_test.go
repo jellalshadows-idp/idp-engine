@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -44,7 +43,7 @@ func TestTheFixtureIsTheTestPlatform(t *testing.T) {
 
 // TestRenderFixture: the render TestFloci applies holds exactly the AWS stacks
 // it applies, each with the engine's AWS lock file, a module source in the
-// modules it copies, and nothing of floci's, which writeOverride adds.
+// modules it copies, and nothing of floci's, which awsstack.WriteOverride adds.
 func TestRenderFixture(t *testing.T) {
 	root := t.TempDir()
 	if err := renderFixture(root); err != nil {
@@ -99,30 +98,6 @@ func TestRenderFixture(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("rendered AWS stacks = %v, TestFloci applies %v", got, want)
-	}
-}
-
-func TestWriteOverride(t *testing.T) {
-	dir := t.TempDir()
-	if err := writeOverride(dir, "http://localhost:4566"); err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.ReadFile(filepath.Join(dir, "floci_override.tf.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got map[string]any
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]any{"provider": map[string]any{"aws": map[string]any{
-		"endpoints":                   map[string]any{"ecr": "http://localhost:4566", "iam": "http://localhost:4566", "sts": "http://localhost:4566"},
-		"skip_credentials_validation": true,
-		"skip_metadata_api_check":     "true",
-		"skip_requesting_account_id":  true,
-	}}}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("floci_override.tf.json = %v, want %v", got, want)
 	}
 }
 

@@ -105,8 +105,8 @@ func (p Pusher) Sync(ctx context.Context, root string, paths []string, message s
 		return Result{}, err
 	}
 	for _, rel := range sortedKeys(local) {
-		if isState(rel) && rel != githubState {
-			return Result{}, fmt.Errorf("refusing to commit %s: wet holds no state but %s (ADR-0030)", rel, githubState)
+		if IsState(rel) && rel != GitHubState {
+			return Result{}, fmt.Errorf("refusing to commit %s: wet holds no state but %s (ADR-0030)", rel, GitHubState)
 		}
 	}
 	for _, p := range paths {
@@ -189,13 +189,13 @@ func validatePaths(paths []string) error {
 	return nil
 }
 
-// githubState is the one state file wet holds: the github stack's, encrypted
+// GitHubState is the one state file wet holds: the github stack's, encrypted
 // (spec §5.4, §7.2). An AWS stack's state stays in its job (ADR-0030).
-const githubState = "tfstate/github.tfstate"
+const GitHubState = "tfstate/github.tfstate"
 
-// isState reports whether a file holds OpenTofu state: a name ending in
+// IsState reports whether a file holds OpenTofu state: a name ending in
 // .tfstate, or a copy of one such as terraform.tfstate.backup, in any case.
-func isState(rel string) bool {
+func IsState(rel string) bool {
 	name := strings.ToLower(path.Base(rel))
 	return strings.HasSuffix(name, ".tfstate") || strings.Contains(name, ".tfstate.")
 }
