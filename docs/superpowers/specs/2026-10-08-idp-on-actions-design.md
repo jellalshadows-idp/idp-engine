@@ -455,13 +455,20 @@ Concurrency: `idp-plan-<pr-number>`, `cancel-in-progress: true`.
       config from `wet`.
 
    Both versions run against one state, in one scratch copy with the configuration
-   swapped (ADR-0030). A job runs as the env's account from the claims, or, for an
-   env the claims removed, from its stacks in `wet`. floci reaches the runner's
+   swapped (ADR-0030). A job runs as the env's account from the claims. For an env
+   whose `aws` block the claims removed, it runs as the account that the env's
+   Component stacks in `wet` name, and as `000000000000` when it had none, since a
+   baseline names no account. An env whose `accountId` changes is replayed as the
+   new account, so its plan shows updates, not a move: v1 moves no stack between
+   accounts. floci reaches the runner's
    Docker socket, so the job holds no secret: it gets the renders as an artifact and
    hands back only its reduced plan, the addresses and actions that the fingerprint
    reads (ADR-0031). `idp plan-summary` runs over the reduced plans of every stack in
-   the secret-less `comment` job. *(Amendment A14, 2026-11-18.)*
-5. **policy** (`idp plan-summary` over `tofu show -json`) enforces the §4.5 table.
+   the secret-less `comment` job. Every artifact a later job trusts comes from a
+   job without floci and is downloaded by the ID its producer outputs, never by name
+   (ADR-0031). *(Amendment A14, 2026-11-18.)*
+5. **policy** (`idp plan-summary` over each stack's reduced `tofu show -json`,
+   *A14*) enforces the §4.5 table.
 6. **sticky comment** on the PR, posted with `GITHUB_TOKEN` and
    `pull-requests: write`:
    - A summary per stack (`+N ~M -D`), with destructive actions flagged.
