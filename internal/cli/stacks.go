@@ -124,14 +124,16 @@ var oidcAccount = regexp.MustCompile(`^arn:aws:iam::([0-9]{12}):oidc-provider/`)
 
 // wetAccount is the account of an environment the claims no longer give one:
 // the account its wet Component stacks name, or placeholderAccount when it has
-// no Component stack. A Component stack that names no account is an error: a
-// replay in the wrong account would plan a create instead of the real change.
+// no Component stack. A Component stack that names no account, or Component
+// stacks that name different ones, are an error: a replay in the wrong account
+// would plan a create instead of the real change.
 func wetAccount(wet, envName string) (string, error) {
 	stacks, err := filepath.Glob(filepath.Join(wet, "aws", envName, "components", "*", wetdiff.StackFile))
 	if err != nil {
 		return "", err
 	}
 	sort.Strings(stacks)
+	account, from := placeholderAccount, ""
 	for _, p := range stacks {
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -152,7 +154,10 @@ func wetAccount(wet, envName string) (string, error) {
 		if m == nil {
 			return "", fmt.Errorf("%s: module.component.oidc_provider_arn %q names no account (spec §5.5)", p, arn)
 		}
-		return m[1], nil
+		if from != "" && m[1] != account {
+			return "", fmt.Errorf("%s names account %s, but %s names %s", p, m[1], from, account)
+		}
+		account, from = m[1], p
 	}
-	return placeholderAccount, nil
+	return account, nil
 }

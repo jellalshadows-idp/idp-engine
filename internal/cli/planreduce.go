@@ -13,9 +13,9 @@ import (
 	"github.com/jellalshadows-idp/idp-engine/internal/wetdiff"
 )
 
-// planFileIn is where a stack's reduced plan lives in a plan directory: idp
-// plan-reduce and idp aws-stack plan write it there, and idp plan-summary
-// --plan-dir reads it (spec §6.1 step 5).
+// planFileIn is where idp plan-reduce and idp aws-stack plan write a stack's
+// reduced plan in their output directory, the file its idp-plan-<stack> artifact
+// uploads (spec §6.1 step 5).
 func planFileIn(dir, stack string) string { return filepath.Join(dir, wetdiff.Escape(stack)+".json") }
 
 // countsLine is a stack's one-line summary: +create ~update -delete ±replace.

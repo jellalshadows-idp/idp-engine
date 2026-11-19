@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -38,7 +39,7 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 	runURL := fs.String("run-url", "", "link to the workflow run, shown in the comment")
 	commentOut := fs.String("comment-out", "", "write the PR comment Markdown here")
 	fpOut := fs.String("fingerprint-out", "", "write the fingerprint JSON here")
-	planDir := fs.String("plan-dir", "", "read each affected stack's plan from this directory, as <stack with each / as .>.json, as idp plan-reduce and idp aws-stack plan write them (instead of --plan)")
+	planDir := fs.String("plan-dir", "", "read each affected stack's plan from this directory, at idp-plan-<s>/<s>.json with <s> the stack with each / as ., as download-artifact lays out the idp-plan-<s> artifacts without merge-multiple (instead of --plan)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -75,7 +76,7 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 				fmt.Fprintf(stderr, "idp plan-summary: --plan-dir reads only github, aws/<env>/_baseline and aws/<env>/components/<name>; got %q\n", s)
 				return exitUsage
 			}
-			plans = append(plans, s+"="+planFileIn(*planDir, s))
+			plans = append(plans, s+"="+downloadedPlanIn(*planDir, s))
 		}
 	}
 	if !plan.ValidSHA(*headSHA) {
@@ -139,6 +140,16 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(stderr, err)
 	}
 	return exitOK
+}
+
+// downloadedPlanIn is where idp plan-summary --plan-dir reads a stack's reduced
+// plan: in the directory of its own idp-plan-<stack> artifact, as download-artifact
+// lays out several artifacts without merge-multiple. A file that another artifact
+// holds is never read, so a job that runs floci cannot shadow the github stack's
+// plan (ADR-0031).
+func downloadedPlanIn(dir, stack string) string {
+	name := wetdiff.Escape(stack)
+	return filepath.Join(dir, "idp-plan-"+name, name+".json")
 }
 
 func parsePlanFile(stack, file string) (*plan.Plan, error) {

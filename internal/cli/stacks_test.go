@@ -155,6 +155,22 @@ func TestStacksAccountOfAnEnvironmentWithoutAnAWSBlock(t *testing.T) {
 	}
 }
 
+// TestStacksRefusesWetStacksThatDisagreeOnTheAccount: every Component stack of
+// an environment names one account; stacks that disagree fail the run instead of
+// replaying all of them as whichever sorts first.
+func TestStacksRefusesWetStacksThatDisagreeOnTheAccount(t *testing.T) {
+	wet := t.TempDir()
+	api := filepath.Join(wet, "aws", "qa", "components", "api", "main.tf.json")
+	web := filepath.Join(wet, "aws", "qa", "components", "web", "main.tf.json")
+	writeFileAll(t, api, `{"module":{"component":{"oidc_provider_arn":"arn:aws:iam::000000000008:oidc-provider/token.actions.githubusercontent.com"}}}`)
+	writeFileAll(t, web, `{"module":{"component":{"oidc_provider_arn":"arn:aws:iam::000000000009:oidc-provider/token.actions.githubusercontent.com"}}}`)
+	code, _, stderr, output := runStacksCmd(t, "--affected", `["aws/qa/_baseline"]`, "--dir", awsFixture, "--wet", wet)
+	want := fmt.Sprintf("idp stacks: %s names account 000000000009, but %s names 000000000008\n", web, api)
+	if code != 1 || stderr != want || output != "" {
+		t.Errorf("exit %d, stderr %q, GITHUB_OUTPUT %q; want 1, %q and no output", code, stderr, output, want)
+	}
+}
+
 // TestStacksRefusesAWetStackThatNamesNoAccount: a wet Component stack whose
 // oidc_provider_arn names no account fails the run instead of replaying it in
 // the wrong account, where it would plan a create instead of the real change.

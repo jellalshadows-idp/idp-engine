@@ -61,10 +61,18 @@ func TestPlanReduceUsageErrors(t *testing.T) {
 func TestPlanSummaryReadsAPlanDir(t *testing.T) {
 	dir := t.TempDir()
 	plans := filepath.Join(dir, "plans")
-	for stack, fixture := range map[string]string{"github": "mixed.json", "aws/dev/components/api": "creates.json"} {
+	// Each artifact lands in its own directory, as download-artifact lays them
+	// out without merge-multiple. A github.json that an AWS stack's artifact, or
+	// the directory itself, holds is never read (ADR-0031).
+	for _, c := range []struct{ stack, fixture, artifact string }{
+		{"github", "mixed.json", "idp-plan-github"},
+		{"aws/dev/components/api", "creates.json", "idp-plan-aws.dev.components.api"},
+		{"github", "creates.json", "idp-plan-aws.dev.components.api"},
+		{"github", "creates.json", ""},
+	} {
 		var stdout, stderr bytes.Buffer
-		if code := Run([]string{"plan-reduce", "--stack", stack, "--plan", planFixture(fixture), "--out-dir", plans}, &stdout, &stderr, noEnv); code != 0 {
-			t.Fatalf("plan-reduce %s: exit %d, stderr %q", stack, code, stderr.String())
+		if code := Run([]string{"plan-reduce", "--stack", c.stack, "--plan", planFixture(c.fixture), "--out-dir", filepath.Join(plans, c.artifact)}, &stdout, &stderr, noEnv); code != 0 {
+			t.Fatalf("plan-reduce %s: exit %d, stderr %q", c.stack, code, stderr.String())
 		}
 	}
 	comment, fp := filepath.Join(dir, "c.md"), filepath.Join(dir, "fp.json")
