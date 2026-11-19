@@ -157,3 +157,25 @@ func TestWetRootUsageErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestWetRootLeavesOutStateFiles: wet-push refuses any state but the github
+// stack's, and that refusal would drop the github state's commit too, so a state
+// file inside a render never reaches the wet root (ADR-0030). It is named on
+// stderr and left out; the rest of the commit goes on.
+func TestWetRootLeavesOutStateFiles(t *testing.T) {
+	dir, flags := wetRootInputs(t, "aws/dev/components/api")
+	api := filepath.Join(dir, "new", "aws", "dev", "components", "api")
+	writeFileAll(t, filepath.Join(api, "terraform.tfstate"), "aws state")
+	writeFileAll(t, filepath.Join(api, "sub", "x.TfState.backup"), "aws state")
+	code, _, stderr, _ := wetRoot(t, append(flags, "--github-state", filepath.Join(dir, "work", "github.tfstate"), "--github-render")...)
+	want := "idp wet-root: left out rendered/aws/dev/components/api/sub/x.TfState.backup: wet holds no state but tfstate/github.tfstate (ADR-0030)\n" +
+		"idp wet-root: left out rendered/aws/dev/components/api/terraform.tfstate: wet holds no state but tfstate/github.tfstate (ADR-0030)\n"
+	if code != 0 || stderr != want {
+		t.Fatalf("exit %d, stderr %q; want 0 and %q", code, stderr, want)
+	}
+	root := filepath.Join(dir, "wet-root")
+	wantFile(t, filepath.Join(root, "tfstate", "github.tfstate"), "encrypted state")
+	wantFile(t, filepath.Join(root, "rendered", "aws", "dev", "components", "api", "main.tf.json"), `{"stack":"aws/dev/components/api"}`)
+	wantNoFile(t, filepath.Join(root, "rendered", "aws", "dev", "components", "api", "terraform.tfstate"))
+	wantNoFile(t, filepath.Join(root, "rendered", "aws", "dev", "components", "api", "sub", "x.TfState.backup"))
+}

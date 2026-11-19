@@ -16,6 +16,7 @@ import (
 
 	"github.com/jellalshadows-idp/idp-engine/internal/actions"
 	"github.com/jellalshadows-idp/idp-engine/internal/wetdiff"
+	"github.com/jellalshadows-idp/idp-engine/internal/wetpush"
 )
 
 // runWetRoot prepares apply-github's wet commit (spec §6.2 step 4): a root
@@ -88,7 +89,7 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 		} else if err != nil {
 			return fail(stderr, err)
 		}
-		if err := os.CopyFS(filepath.Join(*out, filepath.FromSlash(rel)), os.DirFS(src)); err != nil {
+		if err := copyRender(filepath.Join(*out, filepath.FromSlash(rel)), src, rel, stderr); err != nil {
 			return fail(stderr, err)
 		}
 		notes[rel] = "the applied render"
@@ -107,6 +108,33 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(stderr, err)
 	}
 	return exitOK
+}
+
+// copyRender copies a stack's render from src to dst and leaves out any state
+// file, naming it on stderr: wet-push refuses one, and its refusal would drop the
+// github state's commit too (ADR-0030). rel is the render's path in wet.
+func copyRender(dst, src, rel string, stderr io.Writer) error {
+	srcFS := os.DirFS(src)
+	return fs.WalkDir(srcFS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, filepath.FromSlash(p))
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(target, 0o755)
+		case !d.Type().IsRegular():
+			return fmt.Errorf("%s: not a regular file", path.Join(rel, p))
+		case wetpush.IsState(p):
+			fmt.Fprintf(stderr, "idp wet-root: left out %s: wet holds no state but %s (ADR-0030)\n", path.Join(rel, p), githubStatePath)
+			return nil
+		}
+		b, err := fs.ReadFile(srcFS, p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, 0o644)
+	})
 }
 
 // githubStatePath is the one state file wet holds (spec §5.4).
