@@ -137,7 +137,7 @@ idp aws-stack apply --stack STACK --account ID --new DIR --wet DIR --work DIR --
 - `--account`: the 12-digit account the stack runs as, from `idp stacks`.
 - `--new`: the fresh render's root. A stack missing from it is an orphan.
 - `--wet`: the wet branch's `rendered/` directory. It may not exist yet.
-- `--work`: a scratch directory outside both renders, with no `rendered/` in it yet. OpenTofu runs only there; the renders are never written.
+- `--work`: a scratch directory outside both renders, with no `rendered/` in it yet; a relative path is made absolute. OpenTofu runs only there; the renders are never written, and a render that holds anything but files and directories, such as a symbolic link, is refused.
 - `--endpoint`: floci's endpoint, written into each stack's `floci_override.tf.json` (spec §5.6).
 - `--out-dir` (plan): where to write the stack's reduced plan, as `idp plan-reduce` does.
 - `--fingerprint` (apply): the fingerprint the gate decided on.
@@ -159,7 +159,7 @@ idp: aws/dev/components/api: the plan differs from the gated one, so nothing was
 
 OpenTofu runs with `AWS_ACCESS_KEY_ID` set to the account (ADR-0004), a fixed secret access key that floci does not check, `TF_IN_AUTOMATION=1` and `TF_INPUT=0`; its output goes to stderr. The command refuses to run when `TF_ENCRYPTION` or `IDP_STATE_PASSPHRASE` is set: a job that runs floci shares the runner's Docker socket, so it holds no secret (ADR-0031).
 
-Writes: `plan` writes the reduced plan, prints `STACK: +create ~update -delete ±replace`, and sets the step output `changes`. `apply` prints the same line with `: applied`, writes the file `STACK` (each `/` as `.`) into `--applied-dir`, holding the stack and a newline, and appends the evidence to the job summary: the changes it applied, or why nothing was applied.
+Writes: `plan` writes the reduced plan, prints `STACK: +create ~update -delete ±replace`, and sets the step output `changes`. `apply` prints the same line with `: applied`, writes the file `STACK` (each `/` as `.`) into `--applied-dir`, holding the stack and a newline, and appends the evidence to the job summary: the changes it applied, or why nothing was applied. When the final `tofu apply` itself fails, part of the plan may have applied: the command says so (`idp: STACK: tofu apply failed, part of the plan may have been applied: ...`), writes no marker, and the summary says the apply failed partway; the stack's render stays old in wet, so the next reconcile re-plans it.
 
 Exit codes: 0 done; 1 OpenTofu failed, the plan differs from the gated one, a secret is set, or a stack, render or work directory is not usable; 2 usage error.
 
@@ -289,19 +289,20 @@ Exit codes: 0 done (including nothing to close); 1 GitHub failed; 2 usage error 
 Prepares the wet commit of a reconcile (spec §6.2 step 4).
 
 ```text
-idp wet-root --out DIR --wet-base SHA --new DIR [--applied-dir DIR] [--github-state FILE [--github-render]]
+idp wet-root --out DIR --wet-base SHA --new DIR --wet DIR [--applied-dir DIR] [--github-state FILE [--github-render]]
 ```
 
 - `--out`: the wet root to write. It must not exist yet.
 - `--wet-base`: the wet commit the reconcile planned against, written to `wet-base` for the `recover` workflow.
 - `--new`: the reconcile's render.
+- `--wet`: the wet branch's `rendered/` tree the reconcile planned against. It may not exist.
 - `--applied-dir`: the markers of `idp aws-stack apply`, one per AWS stack that applied. It may be missing.
 - `--github-state`: the `github` stack's state. Committed when the file exists, even when the apply failed.
 - `--github-render`: commit the `github` stack's render: its apply succeeded or had nothing to apply. It needs `--github-state`.
 
-Writes, under `--out`: `wet-base`, `tfstate/github.tfstate`, `rendered/github` when asked, `rendered/STACK` for each AWS stack that applied, and `wet-paths`, the paths for `idp wet-push`, one per line. An applied orphan's path is listed with no render, so `wet-push` deletes it; a stack that did not apply keeps its old render in wet. A state file inside a render is left out and named on stderr (`idp wet-root: left out PATH: ...`): `wet-push` refuses one, and its refusal would drop the `github` state's commit too (ADR-0030). Prints one `PATH: why` line per path and `wet-root: N path(s) to commit`; step output `paths`, the count.
+Writes, under `--out`: `wet-base`, `tfstate/github.tfstate`, `rendered/github` when asked, `rendered/STACK` for each AWS stack that applied, and `wet-paths`, the paths for `idp wet-push`, one per line. An applied orphan's path is listed with no render, so `wet-push` deletes it; a stack that did not apply keeps its old render in wet. An applied orphan baseline keeps its render in wet while a Component stack of its environment stays there (one that did not apply, or that applied and is still rendered), since a Component stack needs its baseline: it is named on stderr (`idp wet-root: kept rendered/aws/ENV/_baseline in wet: ...`), and the next reconcile retries its destroy. `rendered/github` is never deleted: with `--github-render` and no `github` stack in `--new`, it is left out and named on stderr. A marker that is not one `idp aws-stack apply` writes is left out and named on stderr too (`idp wet-root: left out FILE: not an applied-stack marker: ...`), so a bad marker never drops the `github` state's commit (ADR-0031). A state file inside a render is left out and named on stderr (`idp wet-root: left out PATH: ...`): `wet-push` refuses one, and its refusal would drop the `github` state's commit too (ADR-0030). Prints one `PATH: why` line per path and `wet-root: N path(s) to commit`; step output `paths`, the count.
 
-Exit codes: 0 done; 1 a marker is not one `idp aws-stack apply` writes, `--out` exists, or a file could not be read or written; 2 usage error.
+Exit codes: 0 done, including when something was left out or kept; 1 `--out` exists, or a file could not be read or written; 2 usage error.
 
 ## wet-push
 
