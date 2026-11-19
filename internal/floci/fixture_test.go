@@ -1,9 +1,7 @@
 package floci
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/claims"
@@ -69,22 +67,4 @@ func renderFixture(root string) error {
 		return err
 	}
 	return render.WriteTree(filepath.Join(root, "rendered"), files)
-}
-
-// writeOverride writes into a rendered AWS stack what CI adds for floci (spec
-// §5.6): floci_override.tf.json, with the endpoint and the provider flags that
-// OpenTofu merges into the stack's provider block.
-func writeOverride(dir, endpoint string) error {
-	b, err := json.MarshalIndent(map[string]any{
-		"provider": map[string]any{"aws": map[string]any{
-			"endpoints":                   map[string]any{"ecr": endpoint, "iam": endpoint, "sts": endpoint},
-			"skip_credentials_validation": true,
-			"skip_metadata_api_check":     "true",
-			"skip_requesting_account_id":  true,
-		}},
-	}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, "floci_override.tf.json"), append(b, '\n'), 0o644)
 }

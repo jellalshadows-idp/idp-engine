@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jellalshadows-idp/idp-engine/internal/awsstack"
 	"github.com/jellalshadows-idp/idp-engine/internal/naming"
 )
 
@@ -122,7 +123,7 @@ func (f *floci) wantMissing(t testing.TB, tg target, what string, args ...string
 }
 
 // apply creates one rendered stack of tg's environment, a slash path under
-// rendered/, the way the pipelines will (spec §5.6, §6.1): it adds
+// rendered/, the way the pipelines do (spec §5.6, §6.1): it adds
 // floci_override.tf.json, inits with the rendered lock file, applies, then
 // replays, a plan of the same version that must find nothing to change (spec
 // §8.4). It registers the stack's destroy before applying, so whatever an apply
@@ -130,7 +131,7 @@ func (f *floci) wantMissing(t testing.TB, tg target, what string, args ...string
 func (f *floci) apply(t *testing.T, tg target, stack string) {
 	t.Helper()
 	dir := filepath.Join(f.root, "rendered", filepath.FromSlash(stack))
-	if err := writeOverride(dir, f.endpoint); err != nil {
+	if err := awsstack.WriteOverride(dir, f.endpoint); err != nil {
 		t.Fatal(err)
 	}
 	f.tofuOK(t, tg, dir, "init", "-input=false", "-lockfile=readonly", "-no-color")
