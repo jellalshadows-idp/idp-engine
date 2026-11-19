@@ -55,6 +55,8 @@ func TestFlociJobsHoldNoSecret(t *testing.T) {
 	}
 	want := []string{
 		".github/workflows/pr.yaml plan-aws",
+		".github/workflows/reconcile.yaml apply-aws",
+		".github/workflows/reconcile.yaml plan-aws",
 	}
 	if slices.Sort(found); !slices.Equal(found, want) {
 		t.Errorf("jobs that run floci = %v, want %v", found, want)
