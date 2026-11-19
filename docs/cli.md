@@ -196,7 +196,7 @@ idp plan-summary --stacks JSON --head-sha SHA --comment-out FILE --fingerprint-o
 - `--fingerprint-out`: where to write the fingerprint JSON.
 - `--run-url`: link to the workflow run, shown in the comment.
 - `--plan STACK=FILE`: the `tofu show -json` output of one stack. Repeatable; a stack may be given only once.
-- `--plan-dir DIR`: instead of `--plan`, read each affected stack's plan from `DIR/idp-plan-S/S.json`, where `S` is the stack with each `/` as `.`: the layout `actions/download-artifact` gives the `idp-plan-S` artifacts when it does not merge them, so a file that another artifact holds is never read (ADR-0031). Only `github`, `aws/<env>/_baseline` and `aws/<env>/components/<name>` can be read this way. A missing file fails the command.
+- `--plan-dir DIR`: instead of `--plan`, read each affected stack's plan from `DIR/idp-plan-S/S.json`, where `S` is the stack with each `/` as `.`: the pipelines lay each plan out there: the `github` plan downloaded by its artifact ID into a directory of its own, and each AWS plan copied there from a separate download directory, so a file that another artifact holds is never read (ADR-0031). Only `github`, `aws/<env>/_baseline` and `aws/<env>/components/<name>` can be read this way. A missing file fails the command.
 
 Reads: each plan file. A plan with an action the fingerprint does not know is a failure, never treated as harmless ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)).
 
