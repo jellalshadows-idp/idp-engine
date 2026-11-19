@@ -19,10 +19,18 @@ type stubTofu struct {
 	show string
 	env  []string
 	runs []string
+	// failOn, when set, makes the runs it returns true for fail with errBoom
+	// after they are recorded.
+	failOn func(args []string) bool
 }
+
+var errBoom = errors.New("boom")
 
 func (s *stubTofu) Tofu(dir string, args ...string) ([]byte, error) {
 	s.runs = append(s.runs, strings.Join(args, " "))
+	if s.failOn != nil && s.failOn(args) {
+		return nil, errBoom
+	}
 	if args[0] == "show" {
 		return []byte(s.show), nil
 	}
@@ -132,6 +140,64 @@ func TestAWSStackApplyRefusal(t *testing.T) {
 		t.Errorf("applied dir: %v, want none", err)
 	}
 	if got, _ := os.ReadFile(summary); string(got) != "### `aws/dev/components/api`\n\nNothing was applied:\n\n```\n"+refusal+"\n```\n\n" {
+		t.Errorf("summary = %q", got)
+	}
+}
+
+// runApply runs idp aws-stack apply against the stub, with a gate that matches
+// its plan, and returns the exit code, stderr and the paths it may have written.
+func runApply(t *testing.T) (code int, stderr, applied, summary string) {
+	t.Helper()
+	dir, flags := awsStackDirs(t)
+	gated := filepath.Join(dir, "gated.json")
+	applied, summary = filepath.Join(dir, "applied"), filepath.Join(dir, "summary.md")
+	writeFileAll(t, gated, `{"aws/dev/components/api":[{"address":"module.component.aws_iam_role.ci","action":"update"}]}`)
+	var out, errb bytes.Buffer
+	code = Run(append(append([]string{"aws-stack", "apply"}, flags...), "--fingerprint", gated, "--applied-dir", applied),
+		&out, &errb, envOf(map[string]string{"GITHUB_STEP_SUMMARY": summary}))
+	return code, errb.String(), applied, summary
+}
+
+// TestAWSStackApplyFailsPartway: a failed final tofu apply may have applied
+// part of the plan; it exits 1, marks nothing (the render stays old in wet, so
+// the next reconcile re-plans the stack), and the summary does not claim that
+// nothing was applied.
+func TestAWSStackApplyFailsPartway(t *testing.T) {
+	s := useStubTofu(t, updateRole)
+	s.failOn = func(args []string) bool { return args[0] == "apply" && !slices.Contains(args, "-auto-approve") }
+	code, stderr, applied, summary := runApply(t)
+	failure := "aws/dev/components/api: tofu apply failed, part of the plan may have been applied: boom"
+	if code != 1 || stderr != "idp: "+failure+"\n" {
+		t.Errorf("exit %d, stderr %q", code, stderr)
+	}
+	if _, err := os.Stat(applied); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("applied dir: %v, want none", err)
+	}
+	want := "### `aws/dev/components/api`\n\nThe apply failed partway, so part of the plan may have been applied. The stack's render stays old in wet, so the next reconcile re-plans it:\n\n```\n" + failure + "\n```\n\n"
+	if got, _ := os.ReadFile(summary); string(got) != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+}
+
+// TestAWSStackApplyReplayFails: a replay failing applied nothing of the new
+// version: no plan runs, nothing is marked, and the summary says nothing was
+// applied.
+func TestAWSStackApplyReplayFails(t *testing.T) {
+	s := useStubTofu(t, updateRole)
+	s.failOn = func(args []string) bool { return args[0] == "apply" && slices.Contains(args, "-auto-approve") }
+	code, stderr, applied, summary := runApply(t)
+	if code != 1 || stderr != "idp: boom\n" {
+		t.Errorf("exit %d, stderr %q", code, stderr)
+	}
+	for _, run := range s.runs {
+		if strings.HasPrefix(run, "plan ") {
+			t.Errorf("a plan ran after the failed replay: %q", run)
+		}
+	}
+	if _, err := os.Stat(applied); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("applied dir: %v, want none", err)
+	}
+	if got, _ := os.ReadFile(summary); string(got) != "### `aws/dev/components/api`\n\nNothing was applied:\n\n```\nboom\n```\n\n" {
 		t.Errorf("summary = %q", got)
 	}
 }

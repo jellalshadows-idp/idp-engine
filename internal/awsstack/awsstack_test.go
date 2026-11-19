@@ -25,7 +25,12 @@ type fakeTofu struct {
 	work  string
 	show  string
 	calls []string
+	// failOn, when set, makes the runs it returns true for (the directory
+	// under Work, the args) fail with errBoom after they are recorded.
+	failOn func(rel string, args []string) bool
 }
+
+var errBoom = errors.New("boom")
 
 func (f *fakeTofu) Tofu(dir string, args ...string) ([]byte, error) {
 	f.t.Helper()
@@ -50,6 +55,9 @@ func (f *fakeTofu) Tofu(dir string, args ...string) ([]byte, error) {
 	}
 	line := fmt.Sprintf("%s [%s, %s]: %s", rel, doc.V, state, strings.ReplaceAll(strings.Join(args, " "), f.work, "$WORK"))
 	f.calls = append(f.calls, filepath.ToSlash(line))
+	if f.failOn != nil && f.failOn(filepath.ToSlash(rel), args) {
+		return nil, errBoom
+	}
 	switch {
 	case args[0] == "apply" && slices.Contains(args, "-auto-approve"):
 		if err := os.WriteFile(filepath.Join(dir, "terraform.tfstate"), []byte("state of "+doc.V), 0o644); err != nil {
@@ -265,6 +273,7 @@ func TestPlanRefuses(t *testing.T) {
 		"a workspace":      {stack: "aws/dev/workspaces/db", fresh: base, want: `"aws/dev/workspaces/db" is not an AWS stack this engine version reconciles (aws/<env>/_baseline, aws/<env>/components/<name>)`},
 		"in neither":       {stack: "aws/dev/components/web", fresh: base, want: "aws/dev/components/web: in neither the new render nor wet"},
 		"without baseline": {stack: "aws/dev/components/api", fresh: map[string]string{"aws/dev/components/api": "new"}, want: "aws/dev/components/api: no baseline aws/dev/_baseline in wet or in the new render"},
+		"work in wet":      {stack: "aws/dev/components/api", fresh: base, edit: func(c *Config) { c.Work = filepath.Join(c.Wet, "aws", "work") }, want: "is inside the render"},
 		"work in a render": {stack: "aws/dev/components/api", fresh: base, edit: func(c *Config) { c.Work = filepath.Join(c.New, "aws", "work") }, want: "is inside the render"},
 		"used work":        {stack: "aws/dev/components/api", fresh: base, edit: func(c *Config) { _ = os.MkdirAll(filepath.Join(c.Work, "rendered"), 0o755) }, want: "already holds a rendered tree"},
 	} {
@@ -280,6 +289,101 @@ func TestPlanRefuses(t *testing.T) {
 				t.Errorf("err = %v, tofu runs %v; want %q and none", err, f.calls, c.want)
 			}
 		})
+	}
+}
+
+// finalApply is the saved plan's apply, as opposed to a replay's.
+func finalApply(_ string, args []string) bool {
+	return args[0] == "apply" && !slices.Contains(args, "-auto-approve")
+}
+
+// TestApplyReportsAFailedApply: tofu apply failing may have applied part of
+// the plan, so the error says so and can be told apart from a refusal.
+func TestApplyReportsAFailedApply(t *testing.T) {
+	cfg := renders(t,
+		map[string]string{"aws/dev/_baseline": "new base", "aws/dev/components/api": "new"},
+		map[string]string{"aws/dev/_baseline": "wet base", "aws/dev/components/api": "wet"})
+	cfg.Stack = "aws/dev/components/api"
+	f := &fakeTofu{t: t, work: cfg.Work, show: roleUpdate, failOn: finalApply}
+	gated := plan.Fingerprint{cfg.Stack: {{Address: "module.component.aws_iam_role.ci", Action: plan.Update}}}
+	res, err := Apply(cfg, f, gated)
+	want := "aws/dev/components/api: tofu apply failed, part of the plan may have been applied: boom"
+	if err == nil || err.Error() != want || !errors.Is(err, ErrApplyFailed) || !errors.Is(err, errBoom) || res != nil {
+		t.Errorf("res = %v, err = %v; want nil and %q wrapping ErrApplyFailed", res, err, want)
+	}
+}
+
+// TestApplyRefusalsAreNotApplyFailures: only the final tofu apply failing is an
+// ErrApplyFailed; a refused plan applied nothing.
+func TestApplyRefusalsAreNotApplyFailures(t *testing.T) {
+	cfg := renders(t,
+		map[string]string{"aws/dev/_baseline": "new base", "aws/dev/components/api": "new"},
+		map[string]string{"aws/dev/_baseline": "wet base", "aws/dev/components/api": "wet"})
+	cfg.Stack = "aws/dev/components/api"
+	f := &fakeTofu{t: t, work: cfg.Work, show: roleUpdate}
+	if _, err := Apply(cfg, f, plan.Fingerprint{cfg.Stack: {}}); err == nil || errors.Is(err, ErrApplyFailed) {
+		t.Errorf("refusal err = %v, want one that is not ErrApplyFailed", err)
+	}
+}
+
+// TestPlanStopsWhenTheReplayFails: a failed replay apply leaves a partial
+// state, so the new version is never planned against it.
+func TestPlanStopsWhenTheReplayFails(t *testing.T) {
+	cfg := renders(t,
+		map[string]string{"aws/dev/_baseline": "new base", "aws/dev/components/api": "new"},
+		map[string]string{"aws/dev/_baseline": "wet base", "aws/dev/components/api": "wet"})
+	cfg.Stack = "aws/dev/components/api"
+	f := &fakeTofu{t: t, work: cfg.Work, show: roleUpdate, failOn: func(rel string, args []string) bool {
+		return rel == "rendered/aws/dev/components/api" && args[0] == "apply"
+	}}
+	res, err := Plan(cfg, f)
+	if err != errBoom || res != nil {
+		t.Errorf("res = %v, err = %v; want nil and boom", res, err)
+	}
+	wantCalls(t, f,
+		"rendered/aws/dev/_baseline [wet base, no state]: init -input=false -lockfile=readonly",
+		"rendered/aws/dev/_baseline [wet base, no state]: apply -input=false -auto-approve",
+		"rendered/aws/dev/components/api [wet, no state]: init -input=false -lockfile=readonly",
+		"rendered/aws/dev/components/api [wet, no state]: apply -input=false -auto-approve",
+	)
+}
+
+// TestPlanWithARelativeWork: tofu resolves -out against the stack directory,
+// so the saved plan's path is absolute even when --work is relative.
+func TestPlanWithARelativeWork(t *testing.T) {
+	cfg := renders(t, map[string]string{"aws/dev/_baseline": "new base"}, nil)
+	cfg.Stack = "aws/dev/_baseline"
+	parent, err := filepath.EvalSymlinks(filepath.Dir(cfg.Work))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeTofu{t: t, work: filepath.Join(parent, "work"), show: noChanges}
+	t.Chdir(parent)
+	cfg.Work = "work"
+	if _, err := Plan(cfg, f); err != nil {
+		t.Fatal(err)
+	}
+	wantCalls(t, f,
+		"rendered/aws/dev/_baseline [new base, no state]: init -input=false -lockfile=readonly",
+		"rendered/aws/dev/_baseline [new base, no state]: plan -input=false -lock=false -out=$WORK/aws.dev._baseline.tfplan",
+		"rendered/aws/dev/_baseline [new base, no state]: show -json $WORK/aws.dev._baseline.tfplan",
+	)
+}
+
+// TestPlanRefusesASymlinkInARender: a render holds files and directories only;
+// a link could point tofu, or the override write, outside the scratch copy.
+func TestPlanRefusesASymlinkInARender(t *testing.T) {
+	cfg := renders(t, map[string]string{"aws/dev/_baseline": "new base"}, nil)
+	cfg.Stack = "aws/dev/_baseline"
+	stack := filepath.Join(cfg.New, "aws", "dev", "_baseline")
+	if err := os.Symlink(filepath.Join(stack, "main.tf.json"), filepath.Join(stack, "link.tf.json")); err != nil {
+		t.Skipf("cannot create a symlink here (needs privileges on Windows; CI on Linux runs it): %v", err)
+	}
+	f := &fakeTofu{t: t, work: cfg.Work, show: noChanges}
+	_, err := Plan(cfg, f)
+	want := filepath.Join(stack, "link.tf.json") + ": not a regular file: a render holds only files and directories"
+	if err == nil || err.Error() != want || len(f.calls) != 0 {
+		t.Errorf("err = %v, tofu runs %v; want %q and none", err, f.calls, want)
 	}
 }
 

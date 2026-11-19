@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -114,7 +115,11 @@ func awsStackApply(cfg awsstack.Config, run awsstack.Runner, gatedFile, appliedD
 	heading := "### `" + cfg.Stack + "`\n\n"
 	res, err := awsstack.Apply(cfg, run, gated)
 	if err != nil {
-		if err := actions.AddSummary(env("GITHUB_STEP_SUMMARY"), heading+"Nothing was applied:\n\n```\n"+err.Error()+"\n```\n"); err != nil {
+		lead := "Nothing was applied:"
+		if errors.Is(err, awsstack.ErrApplyFailed) {
+			lead = "The apply failed partway, so part of the plan may have been applied. The stack's render stays old in wet, so the next reconcile re-plans it:"
+		}
+		if err := actions.AddSummary(env("GITHUB_STEP_SUMMARY"), heading+lead+"\n\n```\n"+err.Error()+"\n```\n"); err != nil {
 			fmt.Fprintln(stderr, "idp:", err)
 		}
 		return fail(stderr, err)

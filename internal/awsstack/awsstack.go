@@ -22,6 +22,10 @@ import (
 	"github.com/jellalshadows-idp/idp-engine/internal/wetdiff"
 )
 
+// ErrApplyFailed marks an Apply whose final tofu apply failed: unlike a refusal
+// or a failed replay or plan, part of the plan may have been applied.
+var ErrApplyFailed = errors.New("tofu apply failed, part of the plan may have been applied")
+
 // Runner runs OpenTofu in a directory and returns what it prints on stdout.
 type Runner interface {
 	Tofu(dir string, args ...string) ([]byte, error)
@@ -62,6 +66,11 @@ var stateFiles = map[string]bool{".terraform": true, "terraform.tfstate": true, 
 func Plan(cfg Config, run Runner) (*Result, error) {
 	env, baseline, err := parse(cfg.Stack)
 	if err != nil {
+		return nil, err
+	}
+	// tofu runs in the stack directory and resolves a relative -out there, so
+	// every path built from Work is absolute.
+	if cfg.Work, err = filepath.Abs(cfg.Work); err != nil {
 		return nil, err
 	}
 	if err := checkWork(cfg); err != nil {
@@ -157,7 +166,7 @@ func Apply(cfg Config, run Runner, gated plan.Fingerprint) (*Result, error) {
 		return nil, err
 	}
 	if _, err := run.Tofu(res.dir, "apply", "-input=false", res.saved); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w: %w", cfg.Stack, ErrApplyFailed, err)
 	}
 	return res, nil
 }
@@ -247,10 +256,37 @@ func isStack(dir string) (bool, error) {
 
 // stage copies a rendered stack into dir and adds floci's override.
 func stage(src, dir, endpoint string) error {
-	if err := os.CopyFS(dir, os.DirFS(src)); err != nil {
+	if err := copyTree(src, dir); err != nil {
 		return err
 	}
 	return WriteOverride(dir, endpoint)
+}
+
+// copyTree copies src's directories and regular files into dir and refuses
+// anything else: a link could point tofu, or WriteOverride, outside the scratch
+// copy.
+func copyTree(src, dir string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dir, rel)
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(target, 0o755)
+		case !d.Type().IsRegular():
+			return fmt.Errorf("%s: not a regular file: a render holds only files and directories", p)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, 0o644)
+	})
 }
 
 // swap replaces the configuration in dir with src's and keeps the state, the
