@@ -166,7 +166,7 @@ func TestWetRootLeavesOutADirectoryMarker(t *testing.T) {
 	wantFile(t, filepath.Join(dir, "wet-root", "tfstate", "github.tfstate"), "encrypted state")
 }
 
-const keptAPI = "idp wet-root: kept rendered/aws/staging/_baseline in wet: rendered/aws/staging/components/api stays there, and a Component stack needs its baseline (spec §6.2 step 4)\n"
+const keptAPI = "idp wet-root: kept rendered/aws/staging/_baseline in wet: a Component stack needs its baseline, and these Component renders stay there: rendered/aws/staging/components/api (spec §6.2 step 4)\n"
 
 func wetRender(t *testing.T, dir, stack string) {
 	t.Helper()
@@ -177,6 +177,7 @@ func wetRender(t *testing.T, dir, stack string) {
 // stays in wet while a Component of its environment does (spec §6.2 step 4).
 func TestWetRootKeepsAnOrphanBaselineWhileAComponentStays(t *testing.T) {
 	dir, flags := wetRootInputs(t, "aws/staging/_baseline")
+	wetRender(t, dir, "aws/staging/_baseline")
 	wetRender(t, dir, "aws/staging/components/api")
 	code, stdout, stderr, output := wetRoot(t, flags...)
 	if code != 0 || stderr != keptAPI || stdout != "wet-root: 0 path(s) to commit\n" || output != "paths=0\n" {
@@ -190,11 +191,12 @@ func TestWetRootKeepsAnOrphanBaselineWhileAComponentStays(t *testing.T) {
 // destroy applied leaves wet; those that did not apply stay, sorted.
 func TestWetRootKeepsTheBaselineForTheComponentsThatStay(t *testing.T) {
 	dir, flags := wetRootInputs(t, "aws/staging/_baseline", "aws/staging/components/api")
+	wetRender(t, dir, "aws/staging/_baseline")
 	for _, c := range []string{"api", "web", "db"} {
 		wetRender(t, dir, "aws/staging/components/"+c)
 	}
 	code, stdout, stderr, _ := wetRoot(t, flags...)
-	want := "idp wet-root: kept rendered/aws/staging/_baseline in wet: rendered/aws/staging/components/db, rendered/aws/staging/components/web stays there, and a Component stack needs its baseline (spec §6.2 step 4)\n"
+	want := "idp wet-root: kept rendered/aws/staging/_baseline in wet: a Component stack needs its baseline, and these Component renders stay there: rendered/aws/staging/components/db, rendered/aws/staging/components/web (spec §6.2 step 4)\n"
 	if code != 0 || stderr != want || stdout != "rendered/aws/staging/components/api: deleted, the orphan's destroy applied\nwet-root: 1 path(s) to commit\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and %q", code, stdout, stderr, want)
 	}
@@ -205,6 +207,7 @@ func TestWetRootKeepsTheBaselineForTheComponentsThatStay(t *testing.T) {
 // with the last Component of its environment, in the same commit.
 func TestWetRootDeletesAnOrphanBaselineWhenItsComponentsLeave(t *testing.T) {
 	dir, flags := wetRootInputs(t, "aws/staging/_baseline", "aws/staging/components/api")
+	wetRender(t, dir, "aws/staging/_baseline")
 	wetRender(t, dir, "aws/staging/components/api")
 	code, stdout, stderr, _ := wetRoot(t, flags...)
 	want := "rendered/aws/staging/_baseline: deleted, the orphan's destroy applied\nrendered/aws/staging/components/api: deleted, the orphan's destroy applied\nwet-root: 2 path(s) to commit\n"
@@ -286,4 +289,56 @@ func TestWetRootLeavesOutAMissingGitHubRender(t *testing.T) {
 		t.Errorf("exit %d, stdout %q, stderr %q; want 0, %q and %q", code, stdout, stderr, wantStdout, wantStderr)
 	}
 	wantFile(t, filepath.Join(dir, "wet-root", "wet-paths"), "tfstate/github.tfstate\n")
+}
+
+// TestWetRootKeepsAnOrphanBaselineThatWetDoesNotHold: an orphan is a stack wet
+// holds, so a --wet without its render is not the tree the reconcile planned
+// against, and cannot tell which Component stacks stay: the render is kept.
+func TestWetRootKeepsAnOrphanBaselineThatWetDoesNotHold(t *testing.T) {
+	dir, flags := wetRootInputs(t, "aws/staging/_baseline")
+	code, stdout, stderr, _ := wetRoot(t, flags...)
+	want := "idp wet-root: kept rendered/aws/staging/_baseline in wet: --wet holds no render of it, so it is not the tree the reconcile planned against (spec §6.2 step 4)\n"
+	if code != 0 || stderr != want || stdout != "wet-root: 0 path(s) to commit\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and %q", code, stdout, stderr, want)
+	}
+	wantFile(t, filepath.Join(dir, "wet-root", "wet-paths"), "")
+}
+
+// TestWetRootCommitsAnAppliedBaselineWhileComponentsStay: a baseline still in
+// the new render is no orphan: its applied render commits, whatever Component
+// renders wet holds.
+func TestWetRootCommitsAnAppliedBaselineWhileComponentsStay(t *testing.T) {
+	dir, flags := wetRootInputs(t, "aws/dev/_baseline")
+	wetRender(t, dir, "aws/dev/_baseline")
+	wetRender(t, dir, "aws/dev/components/api")
+	code, stdout, stderr, _ := wetRoot(t, flags...)
+	if code != 0 || stderr != "" || stdout != "rendered/aws/dev/_baseline: the applied render\nwet-root: 1 path(s) to commit\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	wantFile(t, filepath.Join(dir, "wet-root", "rendered", "aws", "dev", "_baseline", "main.tf.json"), `{"stack":"aws/dev/_baseline"}`)
+}
+
+// TestWetRootKeepsTheBaselineForAnAppliedComponentStillRendered: a Component
+// that applied and is still rendered stays in wet, and so does its baseline.
+func TestWetRootKeepsTheBaselineForAnAppliedComponentStillRendered(t *testing.T) {
+	dir, flags := wetRootInputs(t, "aws/staging/_baseline", "aws/staging/components/api")
+	writeFileAll(t, filepath.Join(dir, "new", "aws", "staging", "components", "api", "main.tf.json"), `{"stack":"aws/staging/components/api"}`)
+	wetRender(t, dir, "aws/staging/_baseline")
+	wetRender(t, dir, "aws/staging/components/api")
+	code, stdout, stderr, _ := wetRoot(t, flags...)
+	if code != 0 || stderr != keptAPI || stdout != "rendered/aws/staging/components/api: the applied render\nwet-root: 1 path(s) to commit\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and %q", code, stdout, stderr, keptAPI)
+	}
+}
+
+// TestWetRootIgnoresAFileAmongComponents: a Component render is a directory;
+// a stray file in wet's components directory is not one, and fails nothing.
+func TestWetRootIgnoresAFileAmongComponents(t *testing.T) {
+	dir, flags := wetRootInputs(t, "aws/staging/_baseline")
+	wetRender(t, dir, "aws/staging/_baseline")
+	writeFileAll(t, filepath.Join(dir, "wet", "aws", "staging", "components", "README"), "notes")
+	code, stdout, stderr, _ := wetRoot(t, flags...)
+	if code != 0 || stderr != "" || stdout != "rendered/aws/staging/_baseline: deleted, the orphan's destroy applied\nwet-root: 1 path(s) to commit\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
 }

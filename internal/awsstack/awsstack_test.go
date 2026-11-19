@@ -409,3 +409,23 @@ func TestPlanKeepsTheRenderUntouched(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanStopsWhenTheBaselineReplayFails: a Component stack's plan replays its
+// baseline first; when that apply fails, nothing else runs.
+func TestPlanStopsWhenTheBaselineReplayFails(t *testing.T) {
+	cfg := renders(t,
+		map[string]string{"aws/dev/_baseline": "new base", "aws/dev/components/api": "new"},
+		map[string]string{"aws/dev/_baseline": "wet base", "aws/dev/components/api": "wet"})
+	cfg.Stack = "aws/dev/components/api"
+	f := &fakeTofu{t: t, work: cfg.Work, show: roleUpdate, failOn: func(rel string, args []string) bool {
+		return rel == "rendered/aws/dev/_baseline" && args[0] == "apply"
+	}}
+	res, err := Plan(cfg, f)
+	if err != errBoom || res != nil {
+		t.Errorf("res = %v, err = %v; want nil and boom", res, err)
+	}
+	wantCalls(t, f,
+		"rendered/aws/dev/_baseline [wet base, no state]: init -input=false -lockfile=readonly",
+		"rendered/aws/dev/_baseline [wet base, no state]: apply -input=false -auto-approve",
+	)
+}

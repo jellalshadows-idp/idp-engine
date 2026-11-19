@@ -89,7 +89,7 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(stderr, err)
 	}
 	for _, baseline := range slices.Sorted(maps.Keys(kept)) {
-		fmt.Fprintf(stderr, "idp wet-root: kept rendered/%s in wet: %s stays there, and a Component stack needs its baseline (spec §6.2 step 4)\n", baseline, strings.Join(kept[baseline], ", "))
+		fmt.Fprintf(stderr, "idp wet-root: kept rendered/%s in wet: %s (spec §6.2 step 4)\n", baseline, kept[baseline])
 	}
 	for _, stack := range applied {
 		if _, ok := kept[stack]; ok {
@@ -142,45 +142,73 @@ func hasRender(root, stack string) (bool, error) {
 }
 
 // keptBaselines finds the applied orphan baselines whose render must stay in
-// wet: a Component of the baseline's environment keeps a render in wet after
-// this commit, and a Component stack cannot plan without its baseline (spec
-// §6.2 step 4). A Component render leaves wet only when it is applied and has
-// no render in fresh. The result maps each kept baseline stack to the rendered/
-// paths of the Component renders that stay, sorted. wet may not exist.
-func keptBaselines(wet, fresh string, applied []string) (map[string][]string, error) {
-	kept := map[string][]string{}
+// wet, each with why (spec §6.2 step 4): a Component of the baseline's
+// environment keeps a render in wet after this commit, and a Component stack
+// cannot plan without its baseline; or wet holds no render of the baseline, so
+// it is not the tree the reconcile planned against, and cannot tell. wet may
+// not exist.
+func keptBaselines(wet, fresh string, applied []string) (map[string]string, error) {
+	kept := map[string]string{}
 	for _, stack := range applied {
 		env, ok := strings.CutSuffix(stack, "/_baseline")
 		if !ok {
 			continue
 		}
-		if has, err := hasRender(fresh, stack); err != nil || has {
-			if err != nil {
-				return nil, err
-			}
-			continue
-		}
-		entries, err := os.ReadDir(filepath.Join(wet, filepath.FromSlash(env), "components"))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		rendered, err := hasRender(fresh, stack)
+		if err != nil {
 			return nil, err
 		}
-		for _, e := range entries {
-			component := path.Join(env, "components", e.Name())
-			inWet, err := hasRender(wet, component)
-			if err != nil {
-				return nil, err
-			}
-			inNew, err := hasRender(fresh, component)
-			if err != nil {
-				return nil, err
-			}
-			if inWet && !(slices.Contains(applied, component) && !inNew) {
-				kept[stack] = append(kept[stack], "rendered/"+component)
-			}
+		if rendered {
+			continue // no orphan: its applied render commits
 		}
-		slices.Sort(kept[stack])
+		inWet, err := hasRender(wet, stack)
+		if err != nil {
+			return nil, err
+		}
+		if !inWet {
+			kept[stack] = "--wet holds no render of it, so it is not the tree the reconcile planned against"
+			continue
+		}
+		staying, err := stayingComponents(wet, fresh, env, applied)
+		if err != nil {
+			return nil, err
+		}
+		if len(staying) > 0 {
+			kept[stack] = "a Component stack needs its baseline, and these Component renders stay there: " + strings.Join(staying, ", ")
+		}
 	}
 	return kept, nil
+}
+
+// stayingComponents lists, sorted, the rendered/ paths of env's Component
+// renders in wet that this commit leaves there: a Component render leaves wet
+// only when it applied and has no render in fresh.
+func stayingComponents(wet, fresh, env string, applied []string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(wet, filepath.FromSlash(env), "components"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	var staying []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue // a Component render is a directory
+		}
+		component := path.Join(env, "components", e.Name())
+		inWet, err := hasRender(wet, component)
+		if err != nil {
+			return nil, err
+		}
+		inNew, err := hasRender(fresh, component)
+		if err != nil {
+			return nil, err
+		}
+		leaves := slices.Contains(applied, component) && !inNew
+		if inWet && !leaves {
+			staying = append(staying, "rendered/"+component)
+		}
+	}
+	slices.Sort(staying)
+	return staying, nil
 }
 
 // copyRender copies a stack's render from src to dst and leaves out any state
