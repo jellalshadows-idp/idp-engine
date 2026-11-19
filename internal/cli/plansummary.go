@@ -148,8 +148,7 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 // holds is never read, so a job that runs floci cannot shadow the github stack's
 // plan (ADR-0031).
 func downloadedPlanIn(dir, stack string) string {
-	name := wetdiff.Escape(stack)
-	return filepath.Join(dir, "idp-plan-"+name, name+".json")
+	return planFileIn(filepath.Join(dir, "idp-plan-"+wetdiff.Escape(stack)), stack)
 }
 
 func parsePlanFile(stack, file string) (*plan.Plan, error) {
