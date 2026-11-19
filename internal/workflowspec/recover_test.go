@@ -50,15 +50,28 @@ func TestRecoverChecksTheRunAndTheWetBase(t *testing.T) {
 	wantRun(t, "recover issue-check", issue,
 		`.title == "Wet push failed" and .user.login == "github-actions[bot]"`,
 		`test("/actions/runs/" + $id + "([^0-9]|$)")`,
-		`if [ "$named" != 1 ]; then`,
+		`if [ "$(jq length <<<"$named")" != 1 ]; then`,
+		// The ID the issue body names is the only artifact the recovery trusts.
+		`idp-wet-root artifact id: ([0-9]+)`,
+		`if [ -z "$artifact_id" ]; then`,
+		`names no idp-wet-root artifact: that run saved no wet root artifact, or it predates this engine version, so the workflow cannot recover it. Follow the runbook instead (docs/runbooks/pipelines.md#a-wet-push-failed).`,
+		`echo "artifact-id=$artifact_id" >> "$GITHUB_OUTPUT"`,
 	)
 	iDL, dl := mustStep(t, "recover", r.Steps, "download")
 	wantWith(t, "recover download", dl, map[string]string{
-		"name":         "idp-wet-root",
-		"run-id":       "${{ inputs.run-id }}",
-		"github-token": "${{ github.token }}",
-		"path":         "${{ runner.temp }}/idp/wet-root",
+		"artifact-ids":   "${{ steps.issue-check.outputs.artifact-id }}",
+		"run-id":         "${{ inputs.run-id }}",
+		"github-token":   "${{ github.token }}",
+		"merge-multiple": "true",
+		"path":           "${{ runner.temp }}/idp/wet-root",
 	})
+	// A floci job of the failed run could have uploaded idp-wet-root first, so
+	// the download never goes by name or pattern (ADR-0031).
+	for _, k := range []string{"name", "pattern"} {
+		if _, ok := dl.With[k]; ok {
+			t.Errorf("recover download sets %s: the wet root goes by the artifact ID the issue names", k)
+		}
+	}
 	iBase, base := mustStep(t, "recover", r.Steps, "base")
 	wantRun(t, "recover base", base, `[[ "$base" =~ ^[0-9a-f]{40}$ ]]`, `if [ "$base" != "$head" ]; then`)
 	iTok, tok := mustStep(t, "recover", r.Steps, "push-token")
@@ -73,7 +86,7 @@ func TestRecoverChecksTheRunAndTheWetBase(t *testing.T) {
 	// holds only the github stack.
 	wantRun(t, "recover push", push,
 		`if [ -f "$root/wet-paths" ]; then`,
-		`while IFS= read -r name; do paths+=(--path "$name"); done < "$root/wet-paths"`,
+		`while IFS= read -r name || [ -n "$name" ]; do paths+=(--path "$name"); done < "$root/wet-paths"`,
 		`paths=(--path tfstate/github.tfstate)`,
 		`if [ "${#paths[@]}" = 0 ]; then`,
 		`idp wet-push --repo "$GITHUB_REPOSITORY" --root "$root"`,

@@ -40,11 +40,12 @@ gh workflow run reconcile.yaml --repo <repo> --ref main
 - **A `plan-aws <stack>` job failed**: the gate did not run and nothing was applied. Read its log, fix the cause, then dispatch.
 - **`plan` failed in "split the affected stacks"**: the change affects a stack this engine version does not reconcile (a Workspace, until Phase 3), or more than 256 AWS stacks. Revert the claims change, or split it into smaller PRs.
 - **The run opened a "Wet push failed" issue** (its wet-commit token or its commit to wet failed): do not dispatch. Follow [A wet push failed](#a-wet-push-failed); until the recovery runs, every reconcile refuses to plan.
+- **The run was cancelled**: a cancelled run starts no new job, so the jobs after the one running do not start; an `apply-aws` leg that had not started applies nothing, and the next reconcile plans it again.
 - **The run was cancelled during `apply-github`**: if it opened a "Wet push failed" issue, follow [A wet push failed](#a-wet-push-failed); the recovery accepts cancelled runs. **The runner was lost** (the run opened no "Wet push failed" issue, whether or not it has an `idp-wet-root` artifact): compare the newest `wet` commit with the run's log before dispatching; if resources were applied but never committed, the state has to be rebuilt with `import` blocks (spec §7.7), so open an issue in the engine repo.
 
 ## A wet push failed
 
-The apply job opened an issue labelled `idp-wet-push`, titled "Wet push failed". What the job was about to commit is saved as the artifact `idp-wet-root` of that run, for 7 days.
+The apply job opened an issue labelled `idp-wet-push`, titled "Wet push failed". What the job was about to commit is saved as the artifact `idp-wet-root` of that run, for 7 days, and the issue names its artifact ID on a line `idp-wet-root artifact id: <ID>`. An issue without that line (the wet commit was not saved as an artifact, or the run predates this engine version) cannot be recovered by the workflow: it refuses, and step 3 applies.
 
 1. Run the recovery with the id of the run the issue names (the number in its URL):
 
@@ -52,8 +53,8 @@ The apply job opened an issue labelled `idp-wet-push`, titled "Wet push failed".
    gh workflow run recover.yaml --repo <repo> --ref main -f run-id=<run id>
    ```
 
-2. It checks that the run is a failed or cancelled reconcile of `main` and that the open issue names it, downloads the artifact, and refuses if `wet` moved since that run's plan. Otherwise it commits the paths the run listed in `wet-paths`: the saved state, the `github` render if its apply had succeeded, and the render of each AWS stack that applied, or the removal of an orphan's render; then it closes the issue. A wet root saved before `wet-paths` existed commits the `github` stack only, as before.
-3. If it refuses because `wet` moved, or the 7 days have passed, do not force anything: the saved state is older than `wet`'s. The state has to be rebuilt with `import` blocks (spec §7.7); that runbook is not written yet, so open an issue in the engine repo.
+2. It checks that the run is a failed or cancelled reconcile of `main` and that the open issue names it, downloads the artifact by the ID the issue names (never by name), and refuses if `wet` moved since that run's plan. Otherwise it commits the paths the run listed in `wet-paths`: the saved state, the `github` render if its apply had succeeded, and the render of each AWS stack that applied, or the removal of an orphan's render; then it closes the issue. A wet root saved before `wet-paths` existed commits the `github` stack only, as before.
+3. If it refuses because `wet` moved, the issue names no artifact ID, or the 7 days have passed, do not force anything: the saved state is older than `wet`'s. The state has to be rebuilt with `import` blocks (spec §7.7); that runbook is not written yet, so open an issue in the engine repo.
 4. If the recovery committed to `wet` but failed to close the issue, a second recovery refuses (wet moved). Check that the newest `wet` commit is "idp: recover the wet commit of run <id>", then close the issue by hand; that unblocks the reconcile.
 5. After a successful recovery, dispatch a reconcile: claims merged while the reconcile was held are not in `wet` yet, and the drift check cannot see them.
 

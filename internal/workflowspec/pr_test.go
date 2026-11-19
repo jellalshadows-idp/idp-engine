@@ -2,7 +2,6 @@ package workflowspec
 
 import (
 	"maps"
-	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -46,8 +45,9 @@ func TestPRPlansOnlySameRepoBranches(t *testing.T) {
 	if got := slices.Sorted(slices.Values(c.Needs)); !slices.Equal(got, []string{"plan", "plan-aws"}) {
 		t.Errorf("comment needs = %v, want [plan plan-aws]", got)
 	}
-	// A PR without AWS stacks skips plan-aws; the comment still runs.
-	if want := "always() && needs.plan.result == 'success' && (needs.plan-aws.result == 'success' || needs.plan-aws.result == 'skipped')"; c.If != want {
+	// A PR without AWS stacks skips plan-aws; the comment still runs. It uses
+	// !cancelled(), not always(): a cancelled run starts no new job.
+	if want := "!cancelled() && needs.plan.result == 'success' && (needs.plan-aws.result == 'success' || needs.plan-aws.result == 'skipped')"; c.If != want {
 		t.Errorf("comment if = %q, want %q", c.If, want)
 	}
 }
@@ -118,56 +118,20 @@ func TestPRPlanSummaryCoversTheAffectedStacksAtTheHeadCommit(t *testing.T) {
 func TestPRCommentPostsTheSavedComment(t *testing.T) {
 	w := loadWorkflow(t, prPath)
 	c := mustJob(t, w, "comment")
-	iGH, gh := mustStep(t, "comment", c.Steps, "download-github")
-	iAWS, aws := mustStep(t, "comment", c.Steps, "download-aws")
-	wantWith(t, "comment download-github", gh, map[string]string{"artifact-ids": "${{ needs.plan.outputs.plan-github-id }}", "path": "${{ runner.temp }}/idp/plans"})
-	if want := "needs.plan.outputs.plan-github-id != ''"; gh.If != want {
-		t.Errorf("comment download-github if = %q, want %q: the github plan is uploaded only when the github stack is affected", gh.If, want)
-	}
-	wantWith(t, "comment download-aws", aws, map[string]string{"pattern": "idp-plan-aws.*", "path": "${{ runner.temp }}/idp/plans"})
-	if want := "needs.plan.outputs.aws != '[]'"; aws.If != want {
-		t.Errorf("comment download-aws if = %q, want %q: with no AWS stack, no plan was uploaded", aws.If, want)
-	}
 	iSum, _ := mustStep(t, "comment", c.Steps, "summary")
 	iPost, post := mustStep(t, "comment", c.Steps, "post")
-	if !(iGH < iSum && iAWS < iSum && iSum < iPost) {
-		t.Errorf("comment must download the plans, summarize them, then post (got indexes %d, %d, %d, %d)", iGH, iAWS, iSum, iPost)
+	if !(iSum < iPost) {
+		t.Errorf("comment must summarize the plans, then post (got indexes %d, %d)", iSum, iPost)
 	}
 	wantEnv(t, "comment post", post, map[string]string{"PR_NUMBER": "${{ github.event.pull_request.number }}"})
 	wantRun(t, "comment post", post, `idp comment --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --body-file "$RUNNER_TEMP/idp/out/comment.md"`)
 }
 
-// TestPRPlanDownloadsNeverMergeAndNeverShadow: no plan download merges
-// artifacts, so each lands in plans/idp-plan-<S>/ and idp plan-summary reads a
-// stack's plan only from its own artifact's directory; the AWS pattern, the only
-// download by pattern (floci jobs' artifacts), cannot match the github plan
-// (ADR-0031).
-func TestPRPlanDownloadsNeverMergeAndNeverShadow(t *testing.T) {
-	w := loadWorkflow(t, prPath)
-	c := mustJob(t, w, "comment")
-	pattern := ""
-	for _, s := range c.Steps {
-		if !strings.HasPrefix(s.Uses, "actions/download-artifact@") {
-			continue
-		}
-		if v, ok := s.With["merge-multiple"]; ok {
-			t.Errorf("comment %s sets merge-multiple=%s: a floci job's artifact could shadow idp-plan-github's file", s.ID, v)
-		}
-		if p, ok := s.With["pattern"]; ok {
-			pattern = p
-		}
-	}
-	if pattern == "" {
-		t.Fatal("comment downloads no AWS plans by pattern")
-	}
-	if ok, err := path.Match(pattern, "idp-plan-github"); err != nil || ok {
-		t.Errorf("pattern %q matches idp-plan-github (err %v): the github plan goes by ID only", pattern, err)
-	}
-	for _, name := range []string{"idp-plan-aws.dev._baseline", "idp-plan-aws.dev.components.api"} {
-		if ok, err := path.Match(pattern, name); err != nil || !ok {
-			t.Errorf("pattern %q does not match %s (err %v)", pattern, name, err)
-		}
-	}
+// TestPRPlanLayoutIsIndependentOfTheArtifactCount: where a plan lands must not
+// depend on how many artifacts a download resolves to, and no floci artifact may
+// land under the github plan's directory (ADR-0031).
+func TestPRPlanLayoutIsIndependentOfTheArtifactCount(t *testing.T) {
+	checkPlanLayout(t, loadWorkflow(t, prPath), "comment", "summary")
 }
 
 // TestPRTrustedArtifactsGoByID: an artifact that a job without floci uploads
@@ -234,6 +198,7 @@ func TestPRPlansEachAWSStackInItsOwnJob(t *testing.T) {
 		"retention-days":       "1",
 	})
 	checkAWSMatrix(t, w, "plan-aws")
+	checkRendersKept(t, w)
 	_, p := mustStep(t, "plan-aws", mustJob(t, w, "plan-aws").Steps, "plan")
 	wantEnv(t, "plan-aws plan", p, map[string]string{"STACK": "${{ matrix.stack }}", "ACCOUNT": "${{ matrix.account }}"})
 	wantRun(t, "plan-aws plan", p, `idp aws-stack plan --stack "$STACK" --account "$ACCOUNT"`, `--endpoint http://localhost:4566 --out-dir "$RUNNER_TEMP/idp/reduced"`)

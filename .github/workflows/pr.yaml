@@ -10,7 +10,7 @@ name: idp-pr
 # own, which holds no secret (ADR-0031). Only reduced plans, addresses and
 # actions, cross jobs; the comment job summarizes them. What a job without
 # floci uploads is downloaded by artifact ID; only the AWS plans, which floci
-# jobs upload, are downloaded by pattern, and no plan download merges.
+# jobs upload, are downloaded by pattern, into a directory apart from the github plan's.
 
 on:
   workflow_call:
@@ -249,7 +249,7 @@ jobs:
   comment:
     name: comment
     needs: [plan, plan-aws]
-    if: always() && needs.plan.result == 'success' && (needs.plan-aws.result == 'success' || needs.plan-aws.result == 'skipped')
+    if: "!cancelled() && needs.plan.result == 'success' && (needs.plan-aws.result == 'success' || needs.plan-aws.result == 'skipped')"
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -266,26 +266,46 @@ jobs:
         with:
           engine-dir: .idp/engine
           version: ${{ job.workflow_sha }}
-      # No plan download merges: each artifact lands in plans/idp-plan-<S>/, which
-      # is where idp plan-summary --plan-dir reads stack S's plan, so a floci
-      # job's artifact can never shadow the github plan (ADR-0031). The github
-      # plan goes by ID; the AWS plans, which floci jobs upload, by a pattern
-      # that cannot match idp-plan-github. An empty artifact-ids would download
-      # every artifact of the run, hence the guard.
+      # The layout must not depend on how many artifacts a download resolves to:
+      # download-artifact extracts into path itself when it resolves to one
+      # artifact (a download by ID, or a pattern that matches one) and into
+      # path/<name>/ otherwise. So the github plan, by ID, merges into
+      # plans/idp-plan-github; the AWS plans, which floci jobs upload, go by a
+      # pattern that cannot match idp-plan-github into aws-plans, a directory
+      # apart from plans; and the layout step copies each plan the trusted matrix
+      # names to plans/idp-plan-<A>/<A>.json, where idp plan-summary --plan-dir
+      # reads it, taking only a regular file. A missing one stays missing and
+      # plan-summary fails (ADR-0031). An empty artifact-ids would download every
+      # artifact of the run, hence the guard.
       - name: fetch the reduced github plan
         id: download-github
         if: needs.plan.outputs.plan-github-id != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.plan.outputs.plan-github-id }}
-          path: ${{ runner.temp }}/idp/plans
+          path: ${{ runner.temp }}/idp/plans/idp-plan-github
+          merge-multiple: true
       - name: fetch the reduced AWS plans
         id: download-aws
         if: needs.plan.outputs.aws != '[]'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: idp-plan-aws.*
-          path: ${{ runner.temp }}/idp/plans
+          path: ${{ runner.temp }}/idp/aws-plans
+          merge-multiple: true
+      - name: lay the AWS plans out where plan-summary reads them
+        id: layout
+        if: needs.plan.outputs.aws != '[]'
+        env:
+          AWS_STACKS: ${{ needs.plan.outputs.aws }}
+        run: |
+          while IFS= read -r artifact; do
+            f="$RUNNER_TEMP/idp/aws-plans/$artifact.json"
+            if [ -f "$f" ] && [ ! -L "$f" ]; then
+              mkdir -p "$RUNNER_TEMP/idp/plans/idp-plan-$artifact"
+              cp "$f" "$RUNNER_TEMP/idp/plans/idp-plan-$artifact/$artifact.json"
+            fi
+          done < <(jq -r '.[].artifact' <<<"$AWS_STACKS")
       - name: summarize the plans
         id: summary
         env:
