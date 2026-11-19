@@ -207,6 +207,8 @@ func TestSyncCommitsNoStateButGitHubs(t *testing.T) {
 		{"rendered/aws/dev/components/api", "rendered/aws/dev/components/api/terraform.tfstate.backup"},
 		{"rendered/github", "rendered/github/github.tfstate"},
 		{"tfstate/aws.tfstate", "tfstate/aws.tfstate"},
+		{"rendered/aws/pro/_baseline", "rendered/aws/pro/_baseline/terraform.TFSTATE"},
+		{"rendered/aws/pro/components/api", "rendered/aws/pro/components/api/x.TfState.backup"},
 	} {
 		fake, p := setup(t, nil)
 		root := writeLocal(t, map[string]string{c.file: "{}"})

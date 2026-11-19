@@ -56,7 +56,13 @@ func runStacks(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	github := false
 	var aws, other []string
+	listed := map[string]bool{}
 	for _, s := range affected {
+		if s == "" || listed[s] {
+			fmt.Fprintf(stderr, "idp stacks: --affected has an empty or duplicate stack name %q\n", s)
+			return exitUsage
+		}
+		listed[s] = true
 		switch {
 		case s == "github":
 			github = true
@@ -89,7 +95,8 @@ func runStacks(args []string, stdout, stderr io.Writer, env Env) int {
 			} else {
 				a, err := wetAccount(*wet, envName)
 				if err != nil {
-					return fail(stderr, err)
+					fmt.Fprintf(stderr, "idp stacks: %v\n", err)
+					return exitError
 				}
 				account = a
 			}
@@ -117,7 +124,8 @@ var oidcAccount = regexp.MustCompile(`^arn:aws:iam::([0-9]{12}):oidc-provider/`)
 
 // wetAccount is the account of an environment the claims no longer give one:
 // the account its wet Component stacks name, or placeholderAccount when it has
-// none.
+// no Component stack. A Component stack that names no account is an error: a
+// replay in the wrong account would plan a create instead of the real change.
 func wetAccount(wet, envName string) (string, error) {
 	stacks, err := filepath.Glob(filepath.Join(wet, "aws", envName, "components", "*", wetdiff.StackFile))
 	if err != nil {
@@ -139,9 +147,12 @@ func wetAccount(wet, envName string) (string, error) {
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			return "", fmt.Errorf("%s: %w", p, err)
 		}
-		if m := oidcAccount.FindStringSubmatch(doc.Module.Component.OIDCProviderARN); m != nil {
-			return m[1], nil
+		arn := doc.Module.Component.OIDCProviderARN
+		m := oidcAccount.FindStringSubmatch(arn)
+		if m == nil {
+			return "", fmt.Errorf("%s: module.component.oidc_provider_arn %q names no account (spec §5.5)", p, arn)
 		}
+		return m[1], nil
 	}
 	return placeholderAccount, nil
 }

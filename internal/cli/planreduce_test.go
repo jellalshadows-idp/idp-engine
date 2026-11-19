@@ -105,3 +105,17 @@ func TestPlanSummaryTakesPlanOrPlanDir(t *testing.T) {
 		t.Errorf("missing: exit %d, stderr %q; want 1 naming github.json", code, stderr.String())
 	}
 }
+
+// TestPlanSummaryPlanDirReadsOnlyReconcilableStacks: two names escape to one
+// file only when one of them is not reconcilable (a.b and a/b), so --plan-dir
+// refuses any such name.
+func TestPlanSummaryPlanDirReadsOnlyReconcilableStacks(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"plan-summary", "--stacks", `["github","a.b"]`, "--head-sha", headSHA, "--plan-dir", dir,
+		"--comment-out", filepath.Join(dir, "c.md"), "--fingerprint-out", filepath.Join(dir, "fp.json")}, &stdout, &stderr, noEnv)
+	want := "idp plan-summary: --plan-dir reads only github, aws/<env>/_baseline and aws/<env>/components/<name>; got \"a.b\"\n"
+	if code != 2 || stderr.String() != want {
+		t.Errorf("exit %d, stderr %q; want 2 and %q", code, stderr.String(), want)
+	}
+}

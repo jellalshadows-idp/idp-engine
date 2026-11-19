@@ -11,6 +11,7 @@ import (
 
 	"github.com/jellalshadows-idp/idp-engine/internal/actions"
 	"github.com/jellalshadows-idp/idp-engine/internal/plan"
+	"github.com/jellalshadows-idp/idp-engine/internal/wetdiff"
 )
 
 // planFlags collects repeated --plan STACK=FILE values.
@@ -68,6 +69,12 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 			return exitUsage
 		}
 		for _, s := range affected {
+			// Escape is one-to-one only over reconcilable names (a.b and a/b
+			// would read one file).
+			if !wetdiff.Reconcilable(s) {
+				fmt.Fprintf(stderr, "idp plan-summary: --plan-dir reads only github, aws/<env>/_baseline and aws/<env>/components/<name>; got %q\n", s)
+				return exitUsage
+			}
 			plans = append(plans, s+"="+planFileIn(*planDir, s))
 		}
 	}

@@ -194,9 +194,9 @@ func validatePaths(paths []string) error {
 const githubState = "tfstate/github.tfstate"
 
 // isState reports whether a file holds OpenTofu state: a name ending in
-// .tfstate, or a copy of one such as terraform.tfstate.backup.
+// .tfstate, or a copy of one such as terraform.tfstate.backup, in any case.
 func isState(rel string) bool {
-	name := path.Base(rel)
+	name := strings.ToLower(path.Base(rel))
 	return strings.HasSuffix(name, ".tfstate") || strings.Contains(name, ".tfstate.")
 }
 

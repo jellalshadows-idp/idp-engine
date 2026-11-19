@@ -90,19 +90,82 @@ func TestStacksRefusesWhatThisVersionDoesNotReconcile(t *testing.T) {
 }
 
 // TestStacksRefusesMoreThanAMatrixRuns: GitHub runs at most 256 jobs from one
-// matrix (spec §11 risk 3).
+// matrix (spec §11 risk 3); 256 still run.
 func TestStacksRefusesMoreThanAMatrixRuns(t *testing.T) {
-	var stacks []string
-	for i := range 257 {
-		stacks = append(stacks, fmt.Sprintf("aws/dev/components/c%03d", i))
+	affectedOf := func(n int) string {
+		var stacks []string
+		for i := range n {
+			stacks = append(stacks, fmt.Sprintf("aws/dev/components/c%03d", i))
+		}
+		affected, err := json.Marshal(stacks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(affected)
 	}
-	affected, err := json.Marshal(stacks)
+	code, stdout, stderr, _ := runStacksCmd(t, "--affected", affectedOf(256), "--dir", awsFixture, "--wet", t.TempDir())
+	if code != 0 || !strings.HasSuffix(stdout, "stacks: github false, 256 AWS stack(s)\n") {
+		t.Errorf("256: exit %d, stderr %q; want 0 and 256 AWS stacks", code, stderr)
+	}
+	code, _, stderr, _ = runStacksCmd(t, "--affected", affectedOf(257), "--dir", awsFixture, "--wet", t.TempDir())
+	if want := "idp stacks: 257 AWS stacks are affected; a matrix runs at most 256 jobs (spec §11 risk 3): split the change\n"; code != 1 || stderr != want {
+		t.Errorf("257: exit %d, stderr %q; want 1 and %q", code, stderr, want)
+	}
+}
+
+// TestStacksRefusesEmptyOrDuplicateNames: each stack is one matrix job and one
+// artifact name, so a name given twice would make two jobs upload one artifact.
+func TestStacksRefusesEmptyOrDuplicateNames(t *testing.T) {
+	for affected, name := range map[string]string{
+		`["github","github"]`:                       "github",
+		`["aws/dev/_baseline","aws/dev/_baseline"]`: "aws/dev/_baseline",
+		`[""]`: "",
+	} {
+		code, _, stderr, output := runStacksCmd(t, "--affected", affected, "--dir", awsFixture, "--wet", t.TempDir())
+		want := fmt.Sprintf("idp stacks: --affected has an empty or duplicate stack name %q\n", name)
+		if code != 2 || stderr != want || output != "" {
+			t.Errorf("%s: exit %d, stderr %q, GITHUB_OUTPUT %q; want 2, %q and no output", affected, code, stderr, output, want)
+		}
+	}
+}
+
+// TestStacksAccountOfAnEnvironmentWithoutAnAWSBlock: an environment the claims
+// keep without its aws block is replayed as the account its wet Component
+// stacks name, as a removed environment is.
+func TestStacksAccountOfAnEnvironmentWithoutAnAWSBlock(t *testing.T) {
+	claims := t.TempDir()
+	if err := os.CopyFS(claims, os.DirFS(awsFixture)); err != nil {
+		t.Fatal(err)
+	}
+	platform := filepath.Join(claims, "config", "platform.yaml")
+	raw, err := os.ReadFile(platform)
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr, _ := runStacksCmd(t, "--affected", string(affected), "--dir", awsFixture, "--wet", t.TempDir())
-	if want := "idp stacks: 257 AWS stacks are affected; a matrix runs at most 256 jobs (spec §11 risk 3): split the change\n"; code != 1 || stderr != want {
-		t.Errorf("exit %d, stderr %q; want 1 and %q", code, stderr, want)
+	if err := os.WriteFile(platform, append(raw, []byte("  qa: {}\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wet := t.TempDir()
+	writeFileAll(t, filepath.Join(wet, "aws", "qa", "components", "api", "main.tf.json"),
+		`{"module":{"component":{"oidc_provider_arn":"arn:aws:iam::000000000009:oidc-provider/token.actions.githubusercontent.com"}}}`)
+	code, stdout, stderr, _ := runStacksCmd(t, "--affected", `["aws/qa/_baseline","aws/qa/components/api"]`, "--dir", claims, "--wet", wet)
+	want := "aws/qa/_baseline: account 000000000009\naws/qa/components/api: account 000000000009\nstacks: github false, 2 AWS stack(s)\n"
+	if code != 0 || stdout != want {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and %q", code, stdout, stderr, want)
+	}
+}
+
+// TestStacksRefusesAWetStackThatNamesNoAccount: a wet Component stack whose
+// oidc_provider_arn names no account fails the run instead of replaying it in
+// the wrong account, where it would plan a create instead of the real change.
+func TestStacksRefusesAWetStackThatNamesNoAccount(t *testing.T) {
+	wet := t.TempDir()
+	file := filepath.Join(wet, "aws", "qa", "components", "api", "main.tf.json")
+	writeFileAll(t, file, `{"module":{"component":{"oidc_provider_arn":"arn:aws:iam::1:oidc-provider/x"}}}`)
+	code, _, stderr, output := runStacksCmd(t, "--affected", `["aws/qa/components/api"]`, "--dir", awsFixture, "--wet", wet)
+	want := fmt.Sprintf("idp stacks: %s: module.component.oidc_provider_arn %q names no account (spec §5.5)\n", file, "arn:aws:iam::1:oidc-provider/x")
+	if code != 1 || stderr != want || output != "" {
+		t.Errorf("exit %d, stderr %q, GITHUB_OUTPUT %q; want 1, %q and no output", code, stderr, output, want)
 	}
 }
 
