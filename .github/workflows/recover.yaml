@@ -141,9 +141,22 @@ jobs:
           RENDER: ${{ steps.base.outputs.render }}
           RUN_ID: ${{ inputs.run-id }}
         run: |
-          paths=(--path tfstate/github.tfstate)
-          if [ "$RENDER" = true ]; then paths+=(--path rendered/github); fi
-          idp wet-push --repo "$GITHUB_REPOSITORY" --root "$RUNNER_TEMP/idp/wet-root" \
+          root="$RUNNER_TEMP/idp/wet-root"
+          paths=()
+          if [ -f "$root/wet-paths" ]; then
+            # What the reconcile was about to commit: the github stack and the AWS
+            # stacks that applied (spec §6.2 step 4).
+            while IFS= read -r name; do paths+=(--path "$name"); done < "$root/wet-paths"
+          else
+            # A wet root saved before wet-paths existed holds only the github stack.
+            paths=(--path tfstate/github.tfstate)
+            if [ "$RENDER" = true ]; then paths+=(--path rendered/github); fi
+          fi
+          if [ "${#paths[@]}" = 0 ]; then
+            echo "::error::the wet root of run $RUN_ID lists nothing to commit"
+            exit 1
+          fi
+          idp wet-push --repo "$GITHUB_REPOSITORY" --root "$root" \
             --message "idp: recover the wet commit of run $RUN_ID" "${paths[@]}"
       - name: close the wet-push issue
         id: close

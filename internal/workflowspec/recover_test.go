@@ -68,7 +68,16 @@ func TestRecoverChecksTheRunAndTheWetBase(t *testing.T) {
 		"GH_TOKEN": "${{ steps.push-token.outputs.token }}",
 		"RENDER":   "${{ steps.base.outputs.render }}",
 	})
-	wantRun(t, "recover push", push, `paths=(--path tfstate/github.tfstate)`, `idp wet-push --repo "$GITHUB_REPOSITORY" --root "$RUNNER_TEMP/idp/wet-root"`)
+	// A reconcile names the paths it commits in wet-paths, AWS renders
+	// included (spec §6.2 step 4); a wet root saved before wet-paths existed
+	// holds only the github stack.
+	wantRun(t, "recover push", push,
+		`if [ -f "$root/wet-paths" ]; then`,
+		`while IFS= read -r name; do paths+=(--path "$name"); done < "$root/wet-paths"`,
+		`paths=(--path tfstate/github.tfstate)`,
+		`if [ "${#paths[@]}" = 0 ]; then`,
+		`idp wet-push --repo "$GITHUB_REPOSITORY" --root "$root"`,
+	)
 	if !(iReq < iRun && iRun < iIssue && iIssue < iDL && iDL < iBase && iBase < iPush) {
 		t.Errorf("recover must check the request, the run and the issue, then download, compare the base, and only then push (got %d %d %d %d %d %d)", iReq, iRun, iIssue, iDL, iBase, iPush)
 	}
