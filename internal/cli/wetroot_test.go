@@ -270,3 +270,20 @@ func TestWetRootLeavesOutStateFiles(t *testing.T) {
 	wantNoFile(t, filepath.Join(root, "rendered", "aws", "dev", "components", "api", "terraform.tfstate"))
 	wantNoFile(t, filepath.Join(root, "rendered", "aws", "dev", "components", "api", "sub", "x.TfState.backup"))
 }
+
+// TestWetRootLeavesOutAMissingGitHubRender: --github-render with no github
+// stack in the new render never deletes rendered/github from wet: the render is
+// left out and named on stderr, and the github state still commits.
+func TestWetRootLeavesOutAMissingGitHubRender(t *testing.T) {
+	dir, flags := wetRootInputs(t)
+	if err := os.RemoveAll(filepath.Join(dir, "new", "github")); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr, _ := wetRoot(t, append(flags, "--github-state", filepath.Join(dir, "work", "github.tfstate"), "--github-render")...)
+	wantStderr := "idp wet-root: left out rendered/github: the new render has no github stack, so wet keeps its render\n"
+	wantStdout := "tfstate/github.tfstate: the github stack's state\nwet-root: 1 path(s) to commit\n"
+	if code != 0 || stderr != wantStderr || stdout != wantStdout {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0, %q and %q", code, stdout, stderr, wantStdout, wantStderr)
+	}
+	wantFile(t, filepath.Join(dir, "wet-root", "wet-paths"), "tfstate/github.tfstate\n")
+}

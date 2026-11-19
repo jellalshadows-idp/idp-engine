@@ -73,10 +73,10 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 		b, err := os.ReadFile(*state)
 		switch {
 		case err == nil:
-			if err := writeFileIn(*out, githubStatePath, b); err != nil {
+			if err := writeFileIn(*out, wetpush.GitHubState, b); err != nil {
 				return fail(stderr, err)
 			}
-			notes[githubStatePath] = "the github stack's state"
+			notes[wetpush.GitHubState] = "the github stack's state"
 		case !errors.Is(err, fs.ErrNotExist):
 			return fail(stderr, err)
 		}
@@ -100,6 +100,12 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 		has, err := hasRender(*fresh, stack)
 		if err != nil {
 			return fail(stderr, err)
+		}
+		if !has && stack == "github" {
+			// The github stack is never an orphan: deleting its render would
+			// make the next reconcile plan its whole org from nothing.
+			fmt.Fprintf(stderr, "idp wet-root: left out %s: the new render has no github stack, so wet keeps its render\n", rel)
+			continue
 		}
 		if !has {
 			notes[rel] = "deleted, the orphan's destroy applied"
@@ -193,7 +199,7 @@ func copyRender(dst, src, rel string, stderr io.Writer) error {
 		case !d.Type().IsRegular():
 			return fmt.Errorf("%s: not a regular file", path.Join(rel, p))
 		case wetpush.IsState(p):
-			fmt.Fprintf(stderr, "idp wet-root: left out %s: wet holds no state but %s (ADR-0030)\n", path.Join(rel, p), githubStatePath)
+			fmt.Fprintf(stderr, "idp wet-root: left out %s: wet holds no state but %s (ADR-0030)\n", path.Join(rel, p), wetpush.GitHubState)
 			return nil
 		}
 		b, err := fs.ReadFile(srcFS, p)
@@ -203,9 +209,6 @@ func copyRender(dst, src, rel string, stderr io.Writer) error {
 		return os.WriteFile(target, b, 0o644)
 	})
 }
-
-// githubStatePath is the one state file wet holds (spec §5.4).
-const githubStatePath = "tfstate/github.tfstate"
 
 // readMarkers reads apply-aws's applied-stack markers: each a file named after
 // an AWS stack, each / as ., holding the stack and a newline. A missing
