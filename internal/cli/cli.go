@@ -16,6 +16,7 @@ Commands:
   render          Render a claims repo into OpenTofu stacks
   diff            List the stacks whose render differs from the wet branch
   stacks          Split the affected stacks into the github stack and the AWS matrix
+  aws-stack       Plan, or re-plan and apply, one AWS stack against floci
   plan-reduce     Keep of a stack's plan only the addresses and actions, for an artifact
   plan-summary    Summarize OpenTofu plans as a PR comment and a fingerprint
   gate            Decide whether a reconcile applies automatically or waits for approval
@@ -52,6 +53,8 @@ func Run(args []string, stdout, stderr io.Writer, env Env) int {
 		return runDiff(args[1:], stdout, stderr, env)
 	case "stacks":
 		return runStacks(args[1:], stdout, stderr, env)
+	case "aws-stack":
+		return runAWSStack(args[1:], stdout, stderr, env)
 	case "plan-reduce":
 		return runPlanReduce(args[1:], stdout, stderr, env)
 	case "plan-summary":
