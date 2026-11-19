@@ -1,11 +1,16 @@
 name: idp-pr
 
 # Reusable PR pipeline (spec §6.1): validate and render, diff against wet, plan
-# the affected stacks with the reader App, keep one sticky plan comment, and end
-# in a verdict that the caller's idp-gate job mirrors (ADR-0022).
-# The PR plan does not refresh: it compares the claims with the state the last
-# apply wrote, because the read-only reader token cannot see admin-only
-# repository fields (ADR-0025).
+# the affected stacks, keep one sticky plan comment, and end in a verdict that
+# the caller's idp-gate job mirrors (ADR-0022).
+# The plan job plans the github stack with the reader App; it does not refresh:
+# it compares the claims with the state the last apply wrote, because the
+# read-only reader token cannot see admin-only repository fields (ADR-0025).
+# Each affected AWS stack is planned in a plan-aws job against a floci of its
+# own, which holds no secret (ADR-0031). Only reduced plans, addresses and
+# actions, cross jobs; the comment job summarizes them. What a job without
+# floci uploads is downloaded by artifact ID; only the AWS plans, which floci
+# jobs upload, are downloaded by pattern, and no plan download merges.
 
 on:
   workflow_call:
@@ -57,6 +62,11 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    outputs:
+      affected: ${{ steps.diff.outputs.affected }}
+      aws: ${{ steps.stacks.outputs.aws }}
+      renders-id: ${{ steps.upload-renders.outputs.artifact-id }}
+      plan-github-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,16 +107,29 @@ jobs:
       - name: diff against wet
         id: diff
         run: idp diff --new "$RUNNER_TEMP/idp/work/rendered" --wet .idp/wet/rendered
-      - name: check the affected stacks
+      - name: split the affected stacks
         id: stacks
         env:
           AFFECTED: ${{ steps.diff.outputs.affected }}
+        run: idp stacks --affected "$AFFECTED" --wet .idp/wet/rendered
+      - name: keep the AWS renders for plan-aws
+        id: renders
+        if: steps.stacks.outputs.aws != '[]'
         run: |
-          if ! jq -e 'all(.[]; . == "github")' <<<"$AFFECTED" >/dev/null; then
-            echo "::error::this engine version reconciles only the github stack; affected: $AFFECTED"
-            exit 1
-          fi
-          echo "github=$(jq -r 'any(.[]; . == "github")' <<<"$AFFECTED")" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/idp/renders/new" "$RUNNER_TEMP/idp/renders/wet"
+          if [ -d "$RUNNER_TEMP/idp/work/rendered/aws" ]; then cp -R "$RUNNER_TEMP/idp/work/rendered/aws" "$RUNNER_TEMP/idp/renders/new/aws"; fi
+          if [ -d .idp/wet/rendered/aws ]; then cp -R .idp/wet/rendered/aws "$RUNNER_TEMP/idp/renders/wet/aws"; fi
+      - name: upload the AWS renders
+        id: upload-renders
+        if: steps.stacks.outputs.aws != '[]'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: idp-renders
+          path: ${{ runner.temp }}/idp/renders
+          include-hidden-files: true
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
       - name: mint the reader token
         id: reader
         if: steps.stacks.outputs.github == 'true'
@@ -135,33 +158,98 @@ jobs:
           tofu init -input=false -lockfile=readonly
           tofu plan -input=false -lock=false -refresh=false -out="$RUNNER_TEMP/idp/plans/github.tfplan"
           tofu show -json "$RUNNER_TEMP/idp/plans/github.tfplan" > "$RUNNER_TEMP/idp/plans/github.json"
-      - name: summarize the plan
-        id: summary
-        env:
-          AFFECTED: ${{ steps.diff.outputs.affected }}
-          GITHUB_STACK: ${{ steps.stacks.outputs.github }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: reduce the github plan
+        id: reduce
+        if: steps.stacks.outputs.github == 'true'
+        run: idp plan-reduce --stack github --plan "$RUNNER_TEMP/idp/plans/github.json" --out-dir "$RUNNER_TEMP/idp/reduced"
+      - name: upload the reduced github plan
+        id: upload
+        if: steps.stacks.outputs.github == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: idp-plan-github
+          path: ${{ runner.temp }}/idp/reduced/github.json
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
+
+  plan-aws:
+    name: plan-aws ${{ matrix.stack }}
+    needs: plan
+    if: needs.plan.outputs.aws != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.aws) }}
+    # floci reaches the Docker socket because its ECR runs a registry container
+    # (ADR-0004), so this job holds no secret and saves no cache (ADR-0031).
+    services:
+      floci:
+        image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
+        ports:
+          - "4566:4566"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: wait until floci is ready
+        id: floci-ready
         run: |
-          plans=()
-          if [ "$GITHUB_STACK" = true ]; then plans+=(--plan "github=$RUNNER_TEMP/idp/plans/github.json"); fi
-          mkdir -p "$RUNNER_TEMP/idp/out"
-          idp plan-summary --stacks "$AFFECTED" --head-sha "$HEAD_SHA" --run-url "$RUN_URL" \
-            --comment-out "$RUNNER_TEMP/idp/out/comment.md" \
-            --fingerprint-out "$RUNNER_TEMP/idp/out/fingerprint.json" "${plans[@]}"
-      - name: keep the comment for the comment job
+          until (( SECONDS >= 60 )); do
+            if [[ "$(curl -fsS --max-time 2 http://localhost:4566/_floci/init 2>/dev/null)" == *'"ready":true'* ]]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::floci did not report ready on localhost:4566 within 60 seconds"
+          exit 1
+      # By the ID the plan job outputs, never by name (ADR-0031). An empty
+      # artifact-ids would download every artifact of the run, hence the guard.
+      - name: fetch the AWS renders
+        id: download
+        if: needs.plan.outputs.renders-id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.renders-id }}
+          path: ${{ runner.temp }}/idp/renders
+          merge-multiple: true
+      - name: plan the stack against floci
+        id: plan
+        env:
+          STACK: ${{ matrix.stack }}
+          ACCOUNT: ${{ matrix.account }}
+        run: |
+          idp aws-stack plan --stack "$STACK" --account "$ACCOUNT" \
+            --new "$RUNNER_TEMP/idp/renders/new" --wet "$RUNNER_TEMP/idp/renders/wet" \
+            --work "$RUNNER_TEMP/idp/aws" --endpoint http://localhost:4566 --out-dir "$RUNNER_TEMP/idp/reduced"
+      - name: upload the reduced plan
         id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: idp-pr-comment
-          path: ${{ runner.temp }}/idp/out/comment.md
+          name: idp-plan-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/idp/reduced/${{ matrix.artifact }}.json
           retention-days: 1
           overwrite: true
           if-no-files-found: error
 
   comment:
     name: comment
-    needs: plan
+    needs: [plan, plan-aws]
+    if: always() && needs.plan.result == 'success' && (needs.plan-aws.result == 'success' || needs.plan-aws.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -178,12 +266,38 @@ jobs:
         with:
           engine-dir: .idp/engine
           version: ${{ job.workflow_sha }}
-      - name: fetch the comment
-        id: download
+      # No plan download merges: each artifact lands in plans/idp-plan-<S>/, which
+      # is where idp plan-summary --plan-dir reads stack S's plan, so a floci
+      # job's artifact can never shadow the github plan (ADR-0031). The github
+      # plan goes by ID; the AWS plans, which floci jobs upload, by a pattern
+      # that cannot match idp-plan-github. An empty artifact-ids would download
+      # every artifact of the run, hence the guard.
+      - name: fetch the reduced github plan
+        id: download-github
+        if: needs.plan.outputs.plan-github-id != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: idp-pr-comment
-          path: ${{ runner.temp }}/idp/out
+          artifact-ids: ${{ needs.plan.outputs.plan-github-id }}
+          path: ${{ runner.temp }}/idp/plans
+      - name: fetch the reduced AWS plans
+        id: download-aws
+        if: needs.plan.outputs.aws != '[]'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: idp-plan-aws.*
+          path: ${{ runner.temp }}/idp/plans
+      - name: summarize the plans
+        id: summary
+        env:
+          AFFECTED: ${{ needs.plan.outputs.affected }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/idp/out"
+          idp plan-summary --stacks "$AFFECTED" --head-sha "$HEAD_SHA" --run-url "$RUN_URL" \
+            --plan-dir "$RUNNER_TEMP/idp/plans" \
+            --comment-out "$RUNNER_TEMP/idp/out/comment.md" \
+            --fingerprint-out "$RUNNER_TEMP/idp/out/fingerprint.json"
       - name: post the sticky plan comment
         id: post
         env:
@@ -193,7 +307,7 @@ jobs:
 
   verdict:
     name: verdict
-    needs: [validate, plan, comment]
+    needs: [validate, plan, plan-aws, comment]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -205,6 +319,7 @@ jobs:
           SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
           VALIDATE: ${{ needs.validate.result }}
           PLAN: ${{ needs.plan.result }}
+          PLAN_AWS: ${{ needs.plan-aws.result }}
           COMMENT: ${{ needs.comment.result }}
         run: |
           if [ "$SAME_REPO" != true ]; then
@@ -212,7 +327,11 @@ jobs:
             exit 1
           fi
           if [ "$VALIDATE" != success ] || [ "$PLAN" != success ] || [ "$COMMENT" != success ]; then
-            echo "::error::the idp pipeline did not succeed (validate: $VALIDATE, plan: $PLAN, comment: $COMMENT)"
+            echo "::error::the idp pipeline did not succeed (validate: $VALIDATE, plan: $PLAN, plan-aws: $PLAN_AWS, comment: $COMMENT)"
+            exit 1
+          fi
+          if [ "$PLAN_AWS" != success ] && [ "$PLAN_AWS" != skipped ]; then
+            echo "::error::an AWS stack's plan did not succeed (plan-aws: $PLAN_AWS)"
             exit 1
           fi
           echo "idp: validated, planned and commented"
