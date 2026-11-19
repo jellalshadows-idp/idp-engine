@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/actions"
 	"github.com/jellalshadows-idp/idp-engine/internal/plan"
+	"github.com/jellalshadows-idp/idp-engine/internal/wetdiff"
 )
 
 // planFlags collects repeated --plan STACK=FILE values.
@@ -37,6 +39,7 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 	runURL := fs.String("run-url", "", "link to the workflow run, shown in the comment")
 	commentOut := fs.String("comment-out", "", "write the PR comment Markdown here")
 	fpOut := fs.String("fingerprint-out", "", "write the fingerprint JSON here")
+	planDir := fs.String("plan-dir", "", "read each affected stack's plan from this directory, at idp-plan-<s>/<s>.json with <s> the stack with each / as ., as download-artifact lays out the idp-plan-<s> artifacts without merge-multiple (instead of --plan)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -60,6 +63,21 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 			return exitUsage
 		}
 		listed[s] = true
+	}
+	if *planDir != "" {
+		if len(plans) > 0 {
+			fmt.Fprintln(stderr, "idp plan-summary: give --plan or --plan-dir, not both")
+			return exitUsage
+		}
+		for _, s := range affected {
+			// Escape is one-to-one only over reconcilable names (a.b and a/b
+			// would read one file).
+			if !wetdiff.Reconcilable(s) {
+				fmt.Fprintf(stderr, "idp plan-summary: --plan-dir reads only github, aws/<env>/_baseline and aws/<env>/components/<name>; got %q\n", s)
+				return exitUsage
+			}
+			plans = append(plans, s+"="+downloadedPlanIn(*planDir, s))
+		}
 	}
 	if !plan.ValidSHA(*headSHA) {
 		fmt.Fprintf(stderr, "idp plan-summary: --head-sha %q is not a full commit SHA\n", *headSHA)
@@ -110,9 +128,8 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	total := 0
 	for _, p := range parsed {
-		c := p.Counts()
-		total += c.Total()
-		fmt.Fprintf(stdout, "%s: +%d ~%d -%d ±%d\n", p.Stack, c.Create, c.Update, c.Delete, c.Replace)
+		total += p.Counts().Total()
+		fmt.Fprintln(stdout, countsLine(p))
 	}
 	destructive := len(fp.Destructive()) > 0
 	fmt.Fprintf(stdout, "plan-summary: %d change(s), destructive: %t\n", total, destructive)
@@ -123,6 +140,16 @@ func runPlanSummary(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(stderr, err)
 	}
 	return exitOK
+}
+
+// downloadedPlanIn is where idp plan-summary --plan-dir reads a stack's reduced
+// plan: in the directory of its own idp-plan-<stack> artifact, as download-artifact
+// lays out several artifacts without merge-multiple. A file that another artifact
+// holds is never read, so a job that runs floci cannot shadow the github stack's
+// plan (ADR-0031).
+func downloadedPlanIn(dir, stack string) string {
+	name := wetdiff.Escape(stack)
+	return filepath.Join(dir, "idp-plan-"+name, name+".json")
 }
 
 func parsePlanFile(stack, file string) (*plan.Plan, error) {

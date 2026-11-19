@@ -48,7 +48,8 @@ type treeEntry struct {
 // branch without force. A path is a file or a directory; .terraform
 // directories are never synced. Nothing changed means no commit. A path that
 // is a single file on the branch is never deleted: a missing local copy is an
-// error, because deleting the state is never part of a reconcile.
+// error, because deleting the state is never part of a reconcile. No state
+// file but tfstate/github.tfstate is ever committed (ADR-0030).
 func (p Pusher) Sync(ctx context.Context, root string, paths []string, message string) (Result, error) {
 	if err := validateBranch(p.Branch); err != nil {
 		return Result{}, err
@@ -102,6 +103,11 @@ func (p Pusher) Sync(ctx context.Context, root string, paths []string, message s
 	local, err := readLocal(root, paths)
 	if err != nil {
 		return Result{}, err
+	}
+	for _, rel := range sortedKeys(local) {
+		if isState(rel) && rel != githubState {
+			return Result{}, fmt.Errorf("refusing to commit %s: wet holds no state but %s (ADR-0030)", rel, githubState)
+		}
 	}
 	for _, p := range paths {
 		if _, onBranch := remote[p]; onBranch {
@@ -181,6 +187,17 @@ func validatePaths(paths []string) error {
 		}
 	}
 	return nil
+}
+
+// githubState is the one state file wet holds: the github stack's, encrypted
+// (spec §5.4, §7.2). An AWS stack's state stays in its job (ADR-0030).
+const githubState = "tfstate/github.tfstate"
+
+// isState reports whether a file holds OpenTofu state: a name ending in
+// .tfstate, or a copy of one such as terraform.tfstate.backup, in any case.
+func isState(rel string) bool {
+	name := strings.ToLower(path.Base(rel))
+	return strings.HasSuffix(name, ".tfstate") || strings.Contains(name, ".tfstate.")
 }
 
 func underAny(rel string, paths []string) bool {
