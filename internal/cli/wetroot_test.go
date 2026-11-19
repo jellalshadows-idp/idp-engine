@@ -24,8 +24,11 @@ func wetRootInputs(t *testing.T, applied ...string) (dir string, flags []string)
 	for _, stack := range applied {
 		writeFileAll(t, filepath.Join(dir, "applied", strings.ReplaceAll(stack, "/", ".")), stack+"\n")
 	}
+	if err := os.MkdirAll(filepath.Join(dir, "wet"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	return dir, []string{"--out", filepath.Join(dir, "wet-root"), "--wet-base", "0123456789abcdef0123456789abcdef01234567",
-		"--new", filepath.Join(dir, "new"), "--applied-dir", filepath.Join(dir, "applied")}
+		"--new", filepath.Join(dir, "new"), "--applied-dir", filepath.Join(dir, "applied"), "--wet", filepath.Join(dir, "wet")}
 }
 
 func wetRoot(t *testing.T, args ...string) (code int, stdout, stderr, output string) {
@@ -117,7 +120,10 @@ func TestWetRootWithoutGitHubStateYet(t *testing.T) {
 	}
 }
 
-func TestWetRootRefusesAForeignMarker(t *testing.T) {
+// TestWetRootLeavesOutAForeignMarker: a marker idp aws-stack apply does not
+// write is left out and named on stderr; it never drops the github state's
+// commit, and the valid markers still count.
+func TestWetRootLeavesOutAForeignMarker(t *testing.T) {
 	for name, marker := range map[string][2]string{
 		"github":        {"github", "github\n"},
 		"misnamed":      {"aws.dev._baseline", "aws/dev/components/api\n"},
@@ -125,16 +131,100 @@ func TestWetRootRefusesAForeignMarker(t *testing.T) {
 		"no final line": {"aws.dev._baseline", "aws/dev/_baseline"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir, flags := wetRootInputs(t)
-			writeFileAll(t, filepath.Join(dir, "applied", marker[0]), marker[1])
-			code, stdout, stderr, _ := wetRoot(t, flags...)
-			want := "idp wet-root: " + filepath.Join(dir, "applied", marker[0]) + ": not an applied-stack marker: want a file named after an AWS stack, each / as ., that holds the stack and a newline\n"
-			if code != 1 || stderr != want || stdout != "" {
-				t.Errorf("exit %d, stdout %q, stderr %q; want 1 and %q", code, stdout, stderr, want)
+			dir, flags := wetRootInputs(t, "aws/dev/components/api")
+			file := filepath.Join(dir, "applied", marker[0])
+			writeFileAll(t, file, marker[1])
+			code, stdout, stderr, output := wetRoot(t, append(flags, "--github-state", filepath.Join(dir, "work", "github.tfstate"))...)
+			want := "idp wet-root: left out " + file + ": not an applied-stack marker: want a file named after an AWS stack, each / as ., that holds the stack and a newline\n"
+			if code != 0 || stderr != want {
+				t.Errorf("exit %d, stderr %q; want 0 and %q", code, stderr, want)
 			}
-			wantNoFile(t, filepath.Join(dir, "wet-root"))
+			if stdout != "rendered/aws/dev/components/api: the applied render\ntfstate/github.tfstate: the github stack's state\nwet-root: 2 path(s) to commit\n" || output != "paths=2\n" {
+				t.Errorf("stdout %q, output %q", stdout, output)
+			}
+			root := filepath.Join(dir, "wet-root")
+			wantFile(t, filepath.Join(root, "tfstate", "github.tfstate"), "encrypted state")
+			wantFile(t, filepath.Join(root, "wet-paths"), "rendered/aws/dev/components/api\ntfstate/github.tfstate\n")
+			wantNoFile(t, filepath.Join(root, "rendered", "aws", "dev", "_baseline"))
 		})
 	}
+}
+
+// TestWetRootLeavesOutADirectoryMarker: an entry that is a directory is not a
+// marker either.
+func TestWetRootLeavesOutADirectoryMarker(t *testing.T) {
+	dir, flags := wetRootInputs(t)
+	entry := filepath.Join(dir, "applied", "aws.dev._baseline")
+	if err := os.MkdirAll(entry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr, _ := wetRoot(t, append(flags, "--github-state", filepath.Join(dir, "work", "github.tfstate"))...)
+	want := "idp wet-root: left out " + entry + ": not an applied-stack marker: want a file named after an AWS stack, each / as ., that holds the stack and a newline\n"
+	if code != 0 || stderr != want || stdout != "tfstate/github.tfstate: the github stack's state\nwet-root: 1 path(s) to commit\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and %q", code, stdout, stderr, want)
+	}
+	wantFile(t, filepath.Join(dir, "wet-root", "tfstate", "github.tfstate"), "encrypted state")
+}
+
+const keptAPI = "idp wet-root: kept rendered/aws/staging/_baseline in wet: rendered/aws/staging/components/api stays there, and a Component stack needs its baseline (spec §6.2 step 4)\n"
+
+func wetRender(t *testing.T, dir, stack string) {
+	t.Helper()
+	writeFileAll(t, filepath.Join(dir, "wet", filepath.FromSlash(stack), "main.tf.json"), `{"stack":"`+stack+`"}`)
+}
+
+// TestWetRootKeepsAnOrphanBaselineWhileAComponentStays: a baseline's render
+// stays in wet while a Component of its environment does (spec §6.2 step 4).
+func TestWetRootKeepsAnOrphanBaselineWhileAComponentStays(t *testing.T) {
+	dir, flags := wetRootInputs(t, "aws/staging/_baseline")
+	wetRender(t, dir, "aws/staging/components/api")
+	code, stdout, stderr, output := wetRoot(t, flags...)
+	if code != 0 || stderr != keptAPI || stdout != "wet-root: 0 path(s) to commit\n" || output != "paths=0\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q, output %q", code, stdout, stderr, output)
+	}
+	wantFile(t, filepath.Join(dir, "wet-root", "wet-paths"), "")
+	wantNoFile(t, filepath.Join(dir, "wet-root", "rendered"))
+}
+
+// TestWetRootKeepsTheBaselineForTheComponentsThatStay: a Component whose
+// destroy applied leaves wet; those that did not apply stay, sorted.
+func TestWetRootKeepsTheBaselineForTheComponentsThatStay(t *testing.T) {
+	dir, flags := wetRootInputs(t, "aws/staging/_baseline", "aws/staging/components/api")
+	for _, c := range []string{"api", "web", "db"} {
+		wetRender(t, dir, "aws/staging/components/"+c)
+	}
+	code, stdout, stderr, _ := wetRoot(t, flags...)
+	want := "idp wet-root: kept rendered/aws/staging/_baseline in wet: rendered/aws/staging/components/db, rendered/aws/staging/components/web stays there, and a Component stack needs its baseline (spec §6.2 step 4)\n"
+	if code != 0 || stderr != want || stdout != "rendered/aws/staging/components/api: deleted, the orphan's destroy applied\nwet-root: 1 path(s) to commit\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and %q", code, stdout, stderr, want)
+	}
+	wantFile(t, filepath.Join(dir, "wet-root", "wet-paths"), "rendered/aws/staging/components/api\n")
+}
+
+// TestWetRootDeletesAnOrphanBaselineWhenItsComponentsLeave: the baseline goes
+// with the last Component of its environment, in the same commit.
+func TestWetRootDeletesAnOrphanBaselineWhenItsComponentsLeave(t *testing.T) {
+	dir, flags := wetRootInputs(t, "aws/staging/_baseline", "aws/staging/components/api")
+	wetRender(t, dir, "aws/staging/components/api")
+	code, stdout, stderr, _ := wetRoot(t, flags...)
+	want := "rendered/aws/staging/_baseline: deleted, the orphan's destroy applied\nrendered/aws/staging/components/api: deleted, the orphan's destroy applied\nwet-root: 2 path(s) to commit\n"
+	if code != 0 || stderr != "" || stdout != want {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	wantFile(t, filepath.Join(dir, "wet-root", "wet-paths"), "rendered/aws/staging/_baseline\nrendered/aws/staging/components/api\n")
+}
+
+// TestWetRootDeletesAnOrphanBaselineWithNoComponentLeftInWet: only a Component
+// of the same environment keeps the baseline; wet holds another environment's.
+func TestWetRootDeletesAnOrphanBaselineWithNoComponentLeftInWet(t *testing.T) {
+	dir, flags := wetRootInputs(t, "aws/staging/_baseline")
+	wetRender(t, dir, "aws/dev/components/api")
+	wetRender(t, dir, "aws/staging/_baseline")
+	code, stdout, stderr, _ := wetRoot(t, flags...)
+	if code != 0 || stderr != "" || stdout != "rendered/aws/staging/_baseline: deleted, the orphan's destroy applied\nwet-root: 1 path(s) to commit\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	wantFile(t, filepath.Join(dir, "wet-root", "wet-paths"), "rendered/aws/staging/_baseline\n")
 }
 
 func TestWetRootUsageErrors(t *testing.T) {
@@ -149,6 +239,7 @@ func TestWetRootUsageErrors(t *testing.T) {
 		"no flags":                {nil, exitUsage},
 		"render without state":    {append(flags[2:], "--out", filepath.Join(dir, "x"), "--github-render"), exitUsage},
 		"extra argument":          {append(flags, "extra"), exitUsage},
+		"no --wet":                {flags[:len(flags)-2], exitUsage},
 		"an existing output root": {flags, exitError},
 	} {
 		code, _, stderr, _ := wetRoot(t, c.args...)

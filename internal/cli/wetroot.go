@@ -31,6 +31,7 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 	out := flags.String("out", "", "the wet root to write; it must not exist yet (required)")
 	base := flags.String("wet-base", "", "the wet commit the reconcile planned against, written to wet-base (required)")
 	fresh := flags.String("new", "", "the new render's root (required)")
+	wet := flags.String("wet", "", "the wet branch's rendered/ tree (required); it may not exist: then it holds nothing")
 	appliedDir := flags.String("applied-dir", "", "apply-aws's markers, one per AWS stack that applied; it may be missing")
 	state := flags.String("github-state", "", "the github stack's state; committed when the file exists")
 	githubRender := flags.Bool("github-render", false, "commit the github stack's render: its apply succeeded or had nothing to apply (needs --github-state)")
@@ -41,15 +42,15 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintf(stderr, "idp wet-root: unexpected argument %q\n", flags.Arg(0))
 		return exitUsage
 	}
-	if *out == "" || *base == "" || *fresh == "" {
-		fmt.Fprintln(stderr, "idp wet-root: --out, --wet-base and --new are required")
+	if *out == "" || *base == "" || *fresh == "" || *wet == "" {
+		fmt.Fprintln(stderr, "idp wet-root: --out, --wet-base, --new and --wet are required")
 		return exitUsage
 	}
 	if *githubRender && *state == "" {
 		fmt.Fprintln(stderr, "idp wet-root: --github-render needs --github-state: the github stack's render is never committed without its state")
 		return exitUsage
 	}
-	applied, err := readMarkers(*appliedDir)
+	applied, leftOut, err := readMarkers(*appliedDir)
 	if err != nil {
 		fmt.Fprintln(stderr, "idp wet-root:", err)
 		return exitError
@@ -57,6 +58,9 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 	if _, err := os.Stat(*out); !errors.Is(err, fs.ErrNotExist) {
 		fmt.Fprintf(stderr, "idp wet-root: --out %s already exists: give a fresh directory\n", *out)
 		return exitError
+	}
+	for _, l := range leftOut {
+		fmt.Fprintln(stderr, l)
 	}
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		return fail(stderr, err)
@@ -80,14 +84,26 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 	if *githubRender {
 		applied = append(applied, "github")
 	}
+	kept, err := keptBaselines(*wet, *fresh, applied)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	for _, baseline := range slices.Sorted(maps.Keys(kept)) {
+		fmt.Fprintf(stderr, "idp wet-root: kept rendered/%s in wet: %s stays there, and a Component stack needs its baseline (spec §6.2 step 4)\n", baseline, strings.Join(kept[baseline], ", "))
+	}
 	for _, stack := range applied {
+		if _, ok := kept[stack]; ok {
+			continue
+		}
 		rel := path.Join("rendered", stack)
 		src := filepath.Join(*fresh, filepath.FromSlash(stack))
-		if _, err := os.Stat(filepath.Join(src, wetdiff.StackFile)); errors.Is(err, fs.ErrNotExist) {
+		has, err := hasRender(*fresh, stack)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		if !has {
 			notes[rel] = "deleted, the orphan's destroy applied"
 			continue
-		} else if err != nil {
-			return fail(stderr, err)
 		}
 		if err := copyRender(filepath.Join(*out, filepath.FromSlash(rel)), src, rel, stderr); err != nil {
 			return fail(stderr, err)
@@ -108,6 +124,57 @@ func runWetRoot(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(stderr, err)
 	}
 	return exitOK
+}
+
+// hasRender reports whether root holds a render of stack.
+func hasRender(root, stack string) (bool, error) {
+	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(stack), wetdiff.StackFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// keptBaselines finds the applied orphan baselines whose render must stay in
+// wet: a Component of the baseline's environment keeps a render in wet after
+// this commit, and a Component stack cannot plan without its baseline (spec
+// §6.2 step 4). A Component render leaves wet only when it is applied and has
+// no render in fresh. The result maps each kept baseline stack to the rendered/
+// paths of the Component renders that stay, sorted. wet may not exist.
+func keptBaselines(wet, fresh string, applied []string) (map[string][]string, error) {
+	kept := map[string][]string{}
+	for _, stack := range applied {
+		env, ok := strings.CutSuffix(stack, "/_baseline")
+		if !ok {
+			continue
+		}
+		if has, err := hasRender(fresh, stack); err != nil || has {
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(wet, filepath.FromSlash(env), "components"))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		for _, e := range entries {
+			component := path.Join(env, "components", e.Name())
+			inWet, err := hasRender(wet, component)
+			if err != nil {
+				return nil, err
+			}
+			inNew, err := hasRender(fresh, component)
+			if err != nil {
+				return nil, err
+			}
+			if inWet && !(slices.Contains(applied, component) && !inNew) {
+				kept[stack] = append(kept[stack], "rendered/"+component)
+			}
+		}
+		slices.Sort(kept[stack])
+	}
+	return kept, nil
 }
 
 // copyRender copies a stack's render from src to dst and leaves out any state
@@ -142,33 +209,40 @@ const githubStatePath = "tfstate/github.tfstate"
 
 // readMarkers reads apply-aws's applied-stack markers: each a file named after
 // an AWS stack, each / as ., holding the stack and a newline. A missing
-// directory holds none.
-func readMarkers(dir string) ([]string, error) {
+// directory holds none. An entry that is no such marker (wrong content,
+// misnamed, not a regular file) is not read as one: leftOut names it, one
+// stderr line each, so one foreign entry never drops the github state's commit.
+func readMarkers(dir string) (stacks, leftOut []string, err error) {
 	if dir == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var stacks []string
 	for _, e := range entries {
 		file := filepath.Join(dir, e.Name())
+		foreign := "idp wet-root: left out " + file + ": not an applied-stack marker: want a file named after an AWS stack, each / as ., that holds the stack and a newline"
+		if !e.Type().IsRegular() {
+			leftOut = append(leftOut, foreign)
+			continue
+		}
 		b, err := os.ReadFile(file)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		stack, ok := strings.CutSuffix(string(b), "\n")
 		if !ok || !strings.HasPrefix(stack, "aws/") || !wetdiff.Reconcilable(stack) || wetdiff.Escape(stack) != e.Name() {
-			return nil, fmt.Errorf("%s: not an applied-stack marker: want a file named after an AWS stack, each / as ., that holds the stack and a newline", file)
+			leftOut = append(leftOut, foreign)
+			continue
 		}
 		stacks = append(stacks, stack)
 	}
 	slices.Sort(stacks)
-	return stacks, nil
+	return stacks, leftOut, nil
 }
 
 // writeFileIn writes data at the slash path rel under root.
