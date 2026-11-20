@@ -302,7 +302,7 @@ func TestApprovalIsOneSecretlessJob(t *testing.T) {
 	if a.Environment != "idp-approval" {
 		t.Errorf("approve environment = %q, want idp-approval", a.Environment)
 	}
-	if want := "needs.gate.outputs.decision == 'approval'"; a.If != want {
+	if want := "!cancelled() && needs.gate.result == 'success' && needs.gate.outputs.decision == 'approval'"; a.If != want {
 		t.Errorf("approve if = %q, want %q", a.If, want)
 	}
 	if !slices.Equal(a.Needs, strlist{"gate"}) {

@@ -369,7 +369,9 @@ jobs:
   approve:
     name: approve
     needs: gate
-    if: needs.gate.outputs.decision == 'approval'
+    # The gate runs past a skipped plan-aws, and a skipped job before this one
+    # makes its implicit success() false, so the status is checked here.
+    if: "!cancelled() && needs.gate.result == 'success' && needs.gate.outputs.decision == 'approval'"
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: idp-approval
