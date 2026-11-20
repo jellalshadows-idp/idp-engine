@@ -20,7 +20,7 @@ Phase 2e plans and applies the AWS stacks in the pipelines, each in a job with a
 
 ### Positive
 
-- A compromised or buggy floci image reads nothing but public renders and an emulator, and what it can forge is bounded. It cannot change the `github` stack's reduced plan, renders, saved plan or gated fingerprint, which go by ID. A forged AWS reduced plan can only make the gate decide on changes that are not the real ones, and `apply-aws` then refuses, because it re-plans and applies only a plan equal to the gated one. So ADR-0018's premise, that the gate's input is the plan that will apply, holds for the `github` stack through the IDs and for the AWS stacks through that equality.
+- A compromised or buggy floci image reads nothing but public renders and an emulator, and what it can forge is bounded. It cannot change the `github` stack's reduced plan, renders, saved plan or gated fingerprint, which go by ID. A forged AWS reduced plan can only make the gate decide on changes that are not the real ones, and `apply-aws` then refuses, because it re-plans and applies only a plan equal to the gated one. The AWS plans merge into one directory, so one AWS job can forge another AWS stack's plan too; the same equality bounds it, and that stack applies nothing until the next reconcile. So ADR-0018's premise, that the gate's input is the plan that will apply, holds for the `github` stack through the IDs and for the AWS stacks through that equality.
 - The PR comment and the gate read one format for every stack, and an artifact of a public repo exposes no plan value.
 
 ### Negative / costs

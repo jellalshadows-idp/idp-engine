@@ -54,9 +54,10 @@ The apply job opened an issue labelled `idp-wet-push`, titled "Wet push failed".
    ```
 
 2. It checks that the run is a failed or cancelled reconcile of `main` and that the open issue names it, downloads the artifact by the ID the issue names (never by name), and refuses if `wet` moved since that run's plan. Otherwise it commits the paths the run listed in `wet-paths`: the saved state, the `github` render if its apply had succeeded, and the render of each AWS stack that applied, or the removal of an orphan's render; then it closes the issue. A wet root saved before `wet-paths` existed commits the `github` stack only, as before.
-3. If it refuses because `wet` moved, the issue names no artifact ID, or the 7 days have passed, do not force anything: the saved state is older than `wet`'s. The state has to be rebuilt with `import` blocks (spec §7.7); that runbook is not written yet, so open an issue in the engine repo.
+3. If it refuses because `wet` moved, the issue names no artifact ID, or the 7 days have passed, do not force anything: the saved state is older than `wet`'s, or there is no saved state the workflow can trust. The state has to be rebuilt with `import` blocks (spec §7.7); that runbook is not written yet, so open an issue in the engine repo.
 4. If the recovery committed to `wet` but failed to close the issue, a second recovery refuses (wet moved). Check that the newest `wet` commit is "idp: recover the wet commit of run <id>", then close the issue by hand; that unblocks the reconcile.
 5. After a successful recovery, dispatch a reconcile: claims merged while the reconcile was held are not in `wet` yet, and the drift check cannot see them.
+6. Recover before you move the claims repo to a new engine version: a recovery runs the engine version the claims repo pins, and an issue opened before `0.2.0` names no artifact ID, so the `0.2.0` recovery refuses it.
 
 ## A drift issue is open
 
