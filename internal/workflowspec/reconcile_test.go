@@ -536,6 +536,9 @@ func TestWetRootIsSavedBeforeThePush(t *testing.T) {
 		"include-hidden-files": "true",
 		"retention-days":       "7",
 		"if-no-files-found":    "error",
+		// A floci job of the run may have uploaded the name first; keep replaces
+		// it, after every floci job ended, and the issue names the new ID.
+		"overwrite": "true",
 	})
 	_, tok := mustStep(t, "apply-github", a.Steps, "push-token")
 	if want := "always() && steps.prepare.outcome == 'success' && steps.prepare.outputs.paths != '0'"; tok.If != want {

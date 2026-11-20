@@ -624,6 +624,9 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: error
+          # A floci job of this run may have uploaded the name first: replace it.
+          # Every floci job has ended by now, so the issue names this upload's ID.
+          overwrite: true
       - name: mint the wet-commit token
         id: push-token
         if: always() && steps.prepare.outcome == 'success' && steps.prepare.outputs.paths != '0'
