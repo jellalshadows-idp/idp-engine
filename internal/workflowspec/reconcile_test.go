@@ -25,17 +25,20 @@ func TestReconcileInterface(t *testing.T) {
 		"IDP_STATE_PASSPHRASE":   false,
 		"IDP_WRITER_PRIVATE_KEY": true,
 	})
-	if got := slices.Sorted(maps.Keys(w.Jobs)); !slices.Equal(got, []string{"apply-github", "approve", "plan"}) {
+	if got := slices.Sorted(maps.Keys(w.Jobs)); !slices.Equal(got, []string{"apply-aws", "apply-github", "approve", "gate", "plan", "plan-aws"}) {
 		t.Errorf("jobs = %v", got)
 	}
-	wantPerms(t, "plan", mustJob(t, w, "plan").Permissions, map[string]string{"contents": "read", "issues": "read", "pull-requests": "read"})
+	wantPerms(t, "plan", mustJob(t, w, "plan").Permissions, map[string]string{"contents": "read", "issues": "read"})
+	wantPerms(t, "plan-aws", mustJob(t, w, "plan-aws").Permissions, map[string]string{"contents": "read"})
+	wantPerms(t, "gate", mustJob(t, w, "gate").Permissions, map[string]string{"contents": "read", "issues": "read", "pull-requests": "read"})
 	wantPerms(t, "approve", mustJob(t, w, "approve").Permissions, map[string]string{})
+	wantPerms(t, "apply-aws", mustJob(t, w, "apply-aws").Permissions, map[string]string{"contents": "read"})
 	wantPerms(t, "apply-github", mustJob(t, w, "apply-github").Permissions, map[string]string{"contents": "read", "issues": "write"})
 }
 
 func TestReconcileIsNeverReRun(t *testing.T) {
 	w := loadWorkflow(t, reconcilePath)
-	for _, id := range []string{"plan", "apply-github"} {
+	for _, id := range []string{"plan", "apply-aws", "apply-github"} {
 		j := mustJob(t, w, id)
 		if len(j.Steps) == 0 || j.Steps[0].ID != "guard" {
 			t.Errorf("%s: the first step must be the guard", id)
@@ -72,24 +75,225 @@ func TestReconcileDiffsAgainstTheCurrentWet(t *testing.T) {
 		`if [ "$EVENT" = workflow_dispatch ]; then all=(--all); fi`,
 		`idp diff --new "$RUNNER_TEMP/idp/out/rendered" --wet .idp/wet/rendered "${all[@]}"`,
 	)
+	_, st := mustStep(t, "plan", plan.Steps, "stacks")
+	wantRun(t, "plan stacks", st, `idp stacks --affected "$AFFECTED" --wet .idp/wet/rendered`)
+	// The three IDs are what the later jobs download by (ADR-0031).
 	want := map[string]string{
-		"wet-sha":  "${{ steps.wet.outputs.sha }}",
-		"github":   "${{ steps.stacks.outputs.github }}",
-		"changes":  "${{ steps.summary.outputs.changes }}",
-		"decision": "${{ steps.gate.outputs.decision }}",
+		"wet-sha":        "${{ steps.wet.outputs.sha }}",
+		"affected":       "${{ steps.diff.outputs.affected }}",
+		"github":         "${{ steps.stacks.outputs.github }}",
+		"aws":            "${{ steps.stacks.outputs.aws }}",
+		"changes":        "${{ steps.reduce.outputs.changes }}",
+		"renders-id":     "${{ steps.upload-renders.outputs.artifact-id }}",
+		"reconcile-id":   "${{ steps.upload.outputs.artifact-id }}",
+		"plan-github-id": "${{ steps.upload-plan.outputs.artifact-id }}",
 	}
 	if !maps.Equal(map[string]string(plan.Outputs), want) {
 		t.Errorf("plan outputs = %v, want %v", plan.Outputs, want)
 	}
 }
 
+// TestReconcileGatesWithTheWorkflowToken: the gate decides on every affected
+// stack's reduced plan, in a job that holds no secret (spec §6.2 step 2).
 func TestReconcileGatesWithTheWorkflowToken(t *testing.T) {
 	w := loadWorkflow(t, reconcilePath)
-	_, g := mustStep(t, "plan", mustJob(t, w, "plan").Steps, "gate")
-	wantEnv(t, "plan gate", g, map[string]string{"GITHUB_TOKEN": "${{ github.token }}"})
-	wantRun(t, "plan gate", g, `idp gate --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --fingerprint "$RUNNER_TEMP/idp/out/fingerprint.json"`)
-	_, s := mustStep(t, "plan", mustJob(t, w, "plan").Steps, "summary")
-	wantRun(t, "plan summary", s, `--stacks "$AFFECTED"`, `--head-sha "$GITHUB_SHA"`)
+	gate := mustJob(t, w, "gate")
+	if got := slices.Sorted(slices.Values(gate.Needs)); !slices.Equal(got, []string{"plan", "plan-aws"}) {
+		t.Errorf("gate needs = %v, want [plan plan-aws]", got)
+	}
+	if want := "!cancelled() && needs.plan.result == 'success' && (needs.plan-aws.result == 'success' || needs.plan-aws.result == 'skipped')"; gate.If != want {
+		t.Errorf("gate if = %q, want %q", gate.If, want)
+	}
+	if gate.Environment != "" {
+		t.Errorf("gate environment = %q, want none: the gate holds no secret", gate.Environment)
+	}
+	wantOut := strmap{
+		"decision": "${{ steps.gate.outputs.decision }}",
+		"gated-id": "${{ steps.upload.outputs.artifact-id }}",
+	}
+	if !maps.Equal(gate.Outputs, wantOut) {
+		t.Errorf("gate outputs = %v, want %v", gate.Outputs, wantOut)
+	}
+	checkPlanLayout(t, w, "gate", "summary")
+	iGH, _ := mustStep(t, "gate", gate.Steps, "download-github")
+	iAWS, _ := mustStep(t, "gate", gate.Steps, "download-aws")
+	iSum, s := mustStep(t, "gate", gate.Steps, "summary")
+	iGate, g := mustStep(t, "gate", gate.Steps, "gate")
+	iUp, up := mustStep(t, "gate", gate.Steps, "upload")
+	if !(iGH < iSum && iAWS < iSum && iSum < iGate && iGate < iUp) {
+		t.Errorf("gate must download the plans, summarize them, gate, then upload the fingerprint (got indexes %d, %d, %d, %d, %d)", iGH, iAWS, iSum, iGate, iUp)
+	}
+	wantEnv(t, "gate summary", s, map[string]string{"AFFECTED": "${{ needs.plan.outputs.affected }}"})
+	wantRun(t, "gate summary", s, `--stacks "$AFFECTED"`, `--head-sha "$GITHUB_SHA"`, `--plan-dir "$RUNNER_TEMP/idp/plans"`)
+	wantEnv(t, "gate gate", g, map[string]string{"GITHUB_TOKEN": "${{ github.token }}"})
+	wantRun(t, "gate gate", g, `idp gate --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --fingerprint "$RUNNER_TEMP/idp/out/fingerprint.json"`)
+	if up.If != "" {
+		t.Errorf("gate upload if = %q: the fingerprint always uploads, so apply-aws always finds its ID", up.If)
+	}
+	wantWith(t, "gate upload", up, map[string]string{
+		"name":              "idp-gated",
+		"path":              "${{ runner.temp }}/idp/out/fingerprint.json",
+		"retention-days":    "1",
+		"if-no-files-found": "error",
+	})
+}
+
+// TestReconcilePlansEachAWSStackInItsOwnJob: plan-aws plans each stack as the
+// PR did; only reduced plans leave a job (ADR-0031).
+func TestReconcilePlansEachAWSStackInItsOwnJob(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	plan := mustJob(t, w, "plan")
+	_, red := mustStep(t, "plan", plan.Steps, "reduce")
+	wantRun(t, "plan reduce", red, `idp plan-reduce --stack github --plan "$RUNNER_TEMP/idp/plans/github.json" --out-dir "$RUNNER_TEMP/idp/reduced"`)
+	_, up := mustStep(t, "plan", plan.Steps, "upload-plan")
+	if want := "steps.stacks.outputs.github == 'true'"; up.If != want {
+		t.Errorf("plan upload-plan if = %q, want %q", up.If, want)
+	}
+	wantWith(t, "plan upload-plan", up, map[string]string{"name": "idp-plan-github", "path": "${{ runner.temp }}/idp/reduced/github.json", "retention-days": "1"})
+	_, r := mustStep(t, "plan", plan.Steps, "upload-renders")
+	if want := "steps.stacks.outputs.aws != '[]'"; r.If != want {
+		t.Errorf("plan upload-renders if = %q, want %q", r.If, want)
+	}
+	wantWith(t, "plan upload-renders", r, map[string]string{"name": "idp-renders", "path": "${{ runner.temp }}/idp/renders", "include-hidden-files": "true", "retention-days": "1"})
+	checkAWSMatrix(t, w, "plan-aws")
+	checkRendersKept(t, w)
+	pa := mustJob(t, w, "plan-aws")
+	if !slices.Equal(pa.Needs, strlist{"plan"}) {
+		t.Errorf("plan-aws needs = %v, want [plan]", pa.Needs)
+	}
+	_, p := mustStep(t, "plan-aws", pa.Steps, "plan")
+	wantEnv(t, "plan-aws plan", p, map[string]string{"STACK": "${{ matrix.stack }}", "ACCOUNT": "${{ matrix.account }}"})
+	wantRun(t, "plan-aws plan", p, `idp aws-stack plan --stack "$STACK" --account "$ACCOUNT"`, `--endpoint http://localhost:4566 --out-dir "$RUNNER_TEMP/idp/reduced"`)
+	_, pu := mustStep(t, "plan-aws", pa.Steps, "upload")
+	wantWith(t, "plan-aws upload", pu, map[string]string{"name": "idp-plan-${{ matrix.artifact }}", "path": "${{ runner.temp }}/idp/reduced/${{ matrix.artifact }}.json"})
+}
+
+// TestReconcileGatePlanLayoutIsIndependentOfTheArtifactCount: where a plan
+// lands must not depend on how many artifacts a download resolves to, and no
+// floci artifact may land under the github plan's directory (ADR-0031).
+func TestReconcileGatePlanLayoutIsIndependentOfTheArtifactCount(t *testing.T) {
+	checkPlanLayout(t, loadWorkflow(t, reconcilePath), "gate", "summary")
+}
+
+// byIDDownloads is every download of an artifact a job without floci uploads
+// and a later job trusts: by the artifact ID its producer outputs (ADR-0031).
+var byIDDownloads = map[string]string{
+	"plan-aws download":     "needs.plan.outputs.renders-id",
+	"apply-aws download":    "needs.plan.outputs.renders-id",
+	"apply-aws gated":       "needs.gate.outputs.gated-id",
+	"gate download-github":  "needs.plan.outputs.plan-github-id",
+	"apply-github download": "needs.plan.outputs.reconcile-id",
+	"apply-github renders":  "needs.plan.outputs.renders-id",
+}
+
+// byPatternDownloads is every download by pattern: only what the floci jobs
+// upload, which no later job trusts by name.
+var byPatternDownloads = map[string]string{
+	"gate download-aws":    "idp-plan-aws.*",
+	"apply-github applied": "idp-applied-*",
+}
+
+// TestReconcileTrustedArtifactsGoByID: an artifact that a job without floci
+// uploads and a later job trusts is downloaded by the artifact ID its producer
+// outputs, never by name or pattern. An empty artifact-ids downloads every
+// artifact of the run, so each such step runs only when its ID is not empty.
+func TestReconcileTrustedArtifactsGoByID(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	seen := map[string]bool{}
+	for _, id := range slices.Sorted(maps.Keys(w.Jobs)) {
+		for _, s := range w.Jobs[id].Steps {
+			if !strings.HasPrefix(s.Uses, "actions/download-artifact@") {
+				continue
+			}
+			where := id + " " + s.ID
+			seen[where] = true
+			if _, name := s.With["name"]; name {
+				t.Errorf("%s downloads by name", where)
+			}
+			ids, ok := s.With["artifact-ids"]
+			if !ok {
+				if want, known := byPatternDownloads[where]; !known || s.With["pattern"] != want {
+					t.Errorf("%s downloads by pattern %q: only the floci jobs' artifacts may, %v", where, s.With["pattern"], byPatternDownloads)
+				}
+				continue
+			}
+			want, known := byIDDownloads[where]
+			if !known || ids != "${{ "+want+" }}" {
+				t.Errorf("%s artifact-ids = %q, want %q", where, ids, "${{ "+want+" }}")
+			}
+			if !strings.Contains(s.If, want+" != ''") {
+				t.Errorf("%s if = %q: it must require %s != '' (an empty artifact-ids downloads every artifact of the run)", where, s.If, want)
+			}
+			if _, pat := s.With["pattern"]; pat {
+				t.Errorf("%s sets pattern beside artifact-ids", where)
+			}
+		}
+	}
+	for _, m := range []map[string]string{byIDDownloads, byPatternDownloads} {
+		for _, where := range slices.Sorted(maps.Keys(m)) {
+			if !seen[where] {
+				t.Errorf("%s does not download an artifact", where)
+			}
+		}
+	}
+}
+
+// TestReconcileArtifactIDsComeFromTheirUploads: each ID a job outputs is the
+// artifact-id of the upload step of that very artifact.
+func TestReconcileArtifactIDsComeFromTheirUploads(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	for _, c := range []struct{ job, output, step, artifact string }{
+		{"plan", "renders-id", "upload-renders", "idp-renders"},
+		{"plan", "reconcile-id", "upload", "idp-reconcile"},
+		{"plan", "plan-github-id", "upload-plan", "idp-plan-github"},
+		{"gate", "gated-id", "upload", "idp-gated"},
+	} {
+		j := mustJob(t, w, c.job)
+		if want := "${{ steps." + c.step + ".outputs.artifact-id }}"; j.Outputs[c.output] != want {
+			t.Errorf("%s output %s = %q, want %q", c.job, c.output, j.Outputs[c.output], want)
+		}
+		_, up := mustStep(t, c.job, j.Steps, c.step)
+		if !strings.HasPrefix(up.Uses, "actions/upload-artifact@") || up.With["name"] != c.artifact {
+			t.Errorf("%s %s uploads %q with %q, want %s", c.job, c.step, up.With["name"], up.Uses, c.artifact)
+		}
+	}
+}
+
+// TestApplyAWSAppliesWhatTheGateDecided: each AWS stack re-plans in its own
+// job, refuses a plan that differs from the gated one, applies, and marks the
+// stack applied for the wet commit (spec §6.2 step 3).
+func TestApplyAWSAppliesWhatTheGateDecided(t *testing.T) {
+	w := loadWorkflow(t, reconcilePath)
+	checkAWSMatrix(t, w, "apply-aws")
+	a := mustJob(t, w, "apply-aws")
+	want := "!cancelled() && needs.gate.result == 'success' && needs.plan.outputs.aws != '[]' && (needs.gate.outputs.decision == 'auto' || needs.approve.result == 'success')"
+	if a.If != want {
+		t.Errorf("apply-aws if = %q, want %q", a.If, want)
+	}
+	if got := slices.Sorted(slices.Values(a.Needs)); !slices.Equal(got, []string{"approve", "gate", "plan"}) {
+		t.Errorf("apply-aws needs = %v", got)
+	}
+	_, g := mustStep(t, "apply-aws", a.Steps, "gated")
+	wantWith(t, "apply-aws gated", g, map[string]string{
+		"artifact-ids":   "${{ needs.gate.outputs.gated-id }}",
+		"path":           "${{ runner.temp }}/idp/gated",
+		"merge-multiple": "true",
+	})
+	_, ap := mustStep(t, "apply-aws", a.Steps, "apply")
+	wantEnv(t, "apply-aws apply", ap, map[string]string{"STACK": "${{ matrix.stack }}", "ACCOUNT": "${{ matrix.account }}"})
+	wantRun(t, "apply-aws apply", ap,
+		`idp aws-stack apply --stack "$STACK" --account "$ACCOUNT"`,
+		`--fingerprint "$RUNNER_TEMP/idp/gated/fingerprint.json" --applied-dir "$RUNNER_TEMP/idp/applied"`)
+	_, up := mustStep(t, "apply-aws", a.Steps, "upload")
+	if up.If != "" {
+		t.Errorf("apply-aws upload if = %q: it must keep the implicit success(), so a refused or failed apply marks nothing", up.If)
+	}
+	wantWith(t, "apply-aws upload", up, map[string]string{
+		"name":              "idp-applied-${{ matrix.artifact }}",
+		"path":              "${{ runner.temp }}/idp/applied/${{ matrix.artifact }}",
+		"retention-days":    "1",
+		"if-no-files-found": "error",
+	})
 }
 
 func TestApprovalIsOneSecretlessJob(t *testing.T) {
@@ -98,25 +302,27 @@ func TestApprovalIsOneSecretlessJob(t *testing.T) {
 	if a.Environment != "idp-approval" {
 		t.Errorf("approve environment = %q, want idp-approval", a.Environment)
 	}
-	if want := "needs.plan.outputs.decision == 'approval'"; a.If != want {
+	if want := "needs.gate.outputs.decision == 'approval'"; a.If != want {
 		t.Errorf("approve if = %q, want %q", a.If, want)
 	}
-	if !slices.Equal(a.Needs, strlist{"plan"}) {
-		t.Errorf("approve needs = %v, want [plan]", a.Needs)
+	if !slices.Equal(a.Needs, strlist{"gate"}) {
+		t.Errorf("approve needs = %v, want [gate]", a.Needs)
 	}
 }
 
 func TestApplyRunsOnlyAfterTheGate(t *testing.T) {
 	w := loadWorkflow(t, reconcilePath)
 	a := mustJob(t, w, "apply-github")
-	want := "always() && needs.plan.result == 'success' && needs.plan.outputs.github == 'true' && (needs.plan.outputs.decision == 'auto' || needs.approve.result == 'success')"
+	// apply-github runs after apply-aws, whatever its legs concluded, so it
+	// commits the github stack and every AWS stack that applied.
+	want := "!cancelled() && needs.gate.result == 'success' && needs.plan.outputs.affected != '[]' && (needs.gate.outputs.decision == 'auto' || needs.approve.result == 'success')"
 	if a.If != want {
 		t.Errorf("apply-github if = %q, want %q", a.If, want)
 	}
 	if a.Environment != "idp-write" {
 		t.Errorf("apply-github environment = %q, want idp-write", a.Environment)
 	}
-	if got := slices.Sorted(slices.Values(a.Needs)); !slices.Equal(got, []string{"approve", "plan"}) {
+	if got := slices.Sorted(slices.Values(a.Needs)); !slices.Equal(got, []string{"apply-aws", "approve", "gate", "plan"}) {
 		t.Errorf("apply-github needs = %v", got)
 	}
 }
@@ -179,7 +385,7 @@ func checkManifestToken(t *testing.T, where string, s step) {
 func TestApplyTokenHasTheWriterManifestPermissions(t *testing.T) {
 	w := loadWorkflow(t, reconcilePath)
 	_, s := mustStep(t, "apply-github", mustJob(t, w, "apply-github").Steps, "apply-token")
-	if want := "needs.plan.outputs.changes != '0'"; s.If != want {
+	if want := "needs.plan.outputs.github == 'true' && needs.plan.outputs.changes != '0'"; s.If != want {
 		t.Errorf("apply-token if = %q, want %q", s.If, want)
 	}
 	checkManifestToken(t, "apply-github apply-token", s)
@@ -260,28 +466,54 @@ func TestApplyCommitsTheRenderOnlyAfterASuccessfulApply(t *testing.T) {
 		t.Errorf("prepare if = %q, want %q", prep.If, want)
 	}
 	wantEnv(t, "apply-github prepare", prep, map[string]string{
+		"GITHUB_STACK":  "${{ needs.plan.outputs.github }}",
 		"CHANGES":       "${{ needs.plan.outputs.changes }}",
 		"APPLY_OUTCOME": "${{ steps.apply.outcome }}",
 		"WET_SHA":       "${{ needs.plan.outputs.wet-sha }}",
 	})
+	// --wet is the wet tree the reconcile planned against, from the renders the
+	// plan job uploaded: the download gives wet-root the wet AWS renders when an
+	// AWS stack is affected, and wet-root treats a missing tree as empty (a
+	// github-only reconcile skips the download).
 	wantRun(t, "apply-github prepare", prep,
-		`echo "$WET_SHA" > "$root/wet-base"`,
 		`if [ "$CHANGES" = 0 ] || [ "$APPLY_OUTCOME" = success ]; then`,
-		`cp -R "$RUNNER_TEMP/idp/in/rendered/github" "$root/rendered/github"`,
+		`args+=(--github-render)`,
+		`idp wet-root --out "$RUNNER_TEMP/idp/wet-root" --wet-base "$WET_SHA"`,
+		`--new "$RUNNER_TEMP/idp/in/rendered" --wet "$RUNNER_TEMP/idp/renders/wet" --applied-dir "$RUNNER_TEMP/idp/applied" "${args[@]}"`,
 	)
-	stateCopy := strings.Index(prep.Run, `cp "$RUNNER_TEMP/idp/work/tfstate/github.tfstate" "$root/tfstate/github.tfstate"`)
+	stateArg := strings.Index(prep.Run, `args+=(--github-state "$RUNNER_TEMP/idp/work/tfstate/github.tfstate")`)
 	renderBranch := strings.Index(prep.Run, `if [ "$CHANGES" = 0 ] || [ "$APPLY_OUTCOME" = success ]; then`)
-	if stateCopy < 0 || renderBranch < 0 || stateCopy > renderBranch {
-		t.Errorf("prepare must copy the state before, and outside, the render branch: the state is committed even when the apply failed")
+	if stateArg < 0 || renderBranch < 0 || stateArg > renderBranch {
+		t.Errorf("prepare must name the state before, and outside, the render branch: the state is committed even when the apply failed")
 	}
-	_, push := mustStep(t, "apply-github", a.Steps, "push")
-	wantEnv(t, "apply-github push", push, map[string]string{
-		"GH_TOKEN": "${{ steps.push-token.outputs.token }}",
-		"RENDER":   "${{ steps.prepare.outputs.render }}",
+	iApplied, applied := mustStep(t, "apply-github", a.Steps, "applied")
+	iRenders, renders := mustStep(t, "apply-github", a.Steps, "renders")
+	iPrep, _ := mustStep(t, "apply-github", a.Steps, "prepare")
+	if want := "always() && needs.plan.outputs.aws != '[]'"; applied.If != want || iApplied > iPrep {
+		t.Errorf("applied if = %q, want %q, before prepare", applied.If, want)
+	}
+	wantWith(t, "apply-github applied", applied, map[string]string{"pattern": "idp-applied-*", "path": "${{ runner.temp }}/idp/applied", "merge-multiple": "true"})
+	// A floci job could upload a huge marker artifact to stall this download
+	// before the github state commit, so it is bounded, and prepare does not
+	// depend on its outcome: a failed or timed-out download still commits.
+	if tm := mapValue(stepNode(jobNode(w, "apply-github"), iApplied), "timeout-minutes"); tm == nil || tm.Value != "5" {
+		t.Errorf("apply-github applied timeout-minutes = %v, want 5", tm)
+	}
+	if strings.Contains(prep.If, "steps.applied") {
+		t.Errorf("prepare if = %q: it must not depend on the applied download's outcome", prep.If)
+	}
+	if iRenders > iPrep {
+		t.Errorf("apply-github must fetch the renders before prepare, so wet-root finds the wet AWS renders under --wet")
+	}
+	wantWith(t, "apply-github renders", renders, map[string]string{
+		"artifact-ids":   "${{ needs.plan.outputs.renders-id }}",
+		"path":           "${{ runner.temp }}/idp/renders",
+		"merge-multiple": "true",
 	})
+	_, push := mustStep(t, "apply-github", a.Steps, "push")
+	wantEnv(t, "apply-github push", push, map[string]string{"GH_TOKEN": "${{ steps.push-token.outputs.token }}"})
 	wantRun(t, "apply-github push", push,
-		`paths=(--path tfstate/github.tfstate)`,
-		`if [ "$RENDER" = true ]; then paths+=(--path rendered/github); fi`,
+		`while IFS= read -r name || [ -n "$name" ]; do paths+=(--path "$name"); done < "$RUNNER_TEMP/idp/wet-root/wet-paths"`,
 		`idp wet-push --repo "$GITHUB_REPOSITORY" --root "$RUNNER_TEMP/idp/wet-root"`,
 	)
 }
@@ -304,14 +536,29 @@ func TestWetRootIsSavedBeforeThePush(t *testing.T) {
 		"include-hidden-files": "true",
 		"retention-days":       "7",
 		"if-no-files-found":    "error",
+		// A floci job of the run may have uploaded the name first; keep replaces
+		// it, after every floci job ended, and the issue names the new ID.
+		"overwrite": "true",
 	})
+	_, tok := mustStep(t, "apply-github", a.Steps, "push-token")
+	if want := "always() && steps.prepare.outcome == 'success' && steps.prepare.outputs.paths != '0'"; tok.If != want {
+		t.Errorf("push-token if = %q, want %q: with nothing to commit, nothing is pushed", tok.If, want)
+	}
 	if want := "always() && steps.push-token.outcome == 'success'"; push.If != want {
 		t.Errorf("push if = %q, want %q", push.If, want)
 	}
-	if want := "always() && steps.prepare.outcome == 'success' && steps.push.outcome != 'success'"; issue.If != want {
+	if want := "always() && steps.prepare.outcome == 'success' && steps.prepare.outputs.paths != '0' && steps.push.outcome != 'success'"; issue.If != want {
 		t.Errorf("issue if = %q, want %q", issue.If, want)
 	}
 	wantRun(t, "apply-github issue", issue, `idp issue open --repo "$GITHUB_REPOSITORY" --label idp-wet-push --title "Wet push failed"`)
+	// The issue names the saved artifact by ID on its own line: idp-recover
+	// downloads that ID, never the name a floci job could have uploaded first.
+	wantEnv(t, "apply-github issue", issue, map[string]string{"KEEP_ID": "${{ steps.keep.outputs.artifact-id }}"})
+	wantRun(t, "apply-github issue", issue,
+		`if [ -n "$KEEP_ID" ]; then`,
+		`echo "idp-wet-root artifact id: $KEEP_ID"`,
+		`echo "The wet commit was not saved as an artifact, so the idp-recover workflow cannot recover it. Follow $RUNBOOK_URL"`,
+	)
 }
 
 func TestRenderArtifactsKeepHiddenFiles(t *testing.T) {
@@ -319,7 +566,7 @@ func TestRenderArtifactsKeepHiddenFiles(t *testing.T) {
 	// drops by default; without the lock file the apply's tofu init fails.
 	w := loadWorkflow(t, reconcilePath)
 	_, up := mustStep(t, "plan", mustJob(t, w, "plan").Steps, "upload")
-	if want := "steps.stacks.outputs.github == 'true'"; up.If != want {
+	if want := "steps.diff.outputs.affected != '[]'"; up.If != want {
 		t.Errorf("upload if = %q, want %q", up.If, want)
 	}
 	wantWith(t, "plan upload", up, map[string]string{
@@ -331,7 +578,11 @@ func TestRenderArtifactsKeepHiddenFiles(t *testing.T) {
 	})
 	a := mustJob(t, w, "apply-github")
 	_, dl := mustStep(t, "apply-github", a.Steps, "download")
-	wantWith(t, "apply-github download", dl, map[string]string{"name": "idp-reconcile", "path": "${{ runner.temp }}/idp/in"})
+	wantWith(t, "apply-github download", dl, map[string]string{
+		"artifact-ids":   "${{ needs.plan.outputs.reconcile-id }}",
+		"path":           "${{ runner.temp }}/idp/in",
+		"merge-multiple": "true",
+	})
 	_, stage := mustStep(t, "apply-github", a.Steps, "stage")
 	wantRun(t, "apply-github stage", stage, `cp -R "$RUNNER_TEMP/idp/in/rendered" "$RUNNER_TEMP/idp/work/rendered"`)
 }

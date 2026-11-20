@@ -261,7 +261,7 @@ func readMarkers(dir string) (stacks, leftOut []string, err error) {
 			leftOut = append(leftOut, foreign)
 			continue
 		}
-		b, err := os.ReadFile(file)
+		b, err := readMarker(file)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -274,6 +274,22 @@ func readMarkers(dir string) (stacks, leftOut []string, err error) {
 	}
 	slices.Sort(stacks)
 	return stacks, leftOut, nil
+}
+
+// maxMarkerSize bounds a marker: the longest AWS stack path, aws/<env>/components/<name>,
+// has 66 bytes, and its marker one more for the newline.
+const maxMarkerSize = 128
+
+// readMarker reads at most maxMarkerSize+1 bytes of a marker: a job that runs
+// floci can upload any size, and a longer file is not a marker anyway, so a
+// huge one neither stalls wet-root nor exhausts its memory (ADR-0031).
+func readMarker(file string) ([]byte, error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, maxMarkerSize+1))
 }
 
 // writeFileIn writes data at the slash path rel under root.

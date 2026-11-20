@@ -342,3 +342,24 @@ func TestWetRootIgnoresAFileAmongComponents(t *testing.T) {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
+
+// TestReadMarkerReadsABoundedPrefix: a marker comes from a job that runs floci,
+// which can upload any size; wet-root reads no more than one byte past the
+// longest marker, so a huge file can neither stall the job nor exhaust its
+// memory before the github state commits (ADR-0031).
+func TestReadMarkerReadsABoundedPrefix(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "aws.dev._baseline")
+	writeFileAll(t, file, "aws/dev/_baseline\n"+strings.Repeat(" ", 1<<20))
+	b, err := readMarker(file)
+	if err != nil || len(b) != maxMarkerSize+1 {
+		t.Errorf("readMarker = %d bytes, %v; want %d and no error", len(b), err, maxMarkerSize+1)
+	}
+	writeFileAll(t, file, "aws/dev/_baseline\n")
+	if b, err := readMarker(file); err != nil || string(b) != "aws/dev/_baseline\n" {
+		t.Errorf("readMarker = %q, %v; want the marker", b, err)
+	}
+	longest := "aws/" + strings.Repeat("e", 10) + "/components/" + strings.Repeat("c", 40) + "\n"
+	if len(longest) > maxMarkerSize {
+		t.Errorf("the longest marker has %d bytes, more than maxMarkerSize %d", len(longest), maxMarkerSize)
+	}
+}

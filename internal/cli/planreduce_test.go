@@ -61,9 +61,9 @@ func TestPlanReduceUsageErrors(t *testing.T) {
 func TestPlanSummaryReadsAPlanDir(t *testing.T) {
 	dir := t.TempDir()
 	plans := filepath.Join(dir, "plans")
-	// Each artifact lands in its own directory, as download-artifact lays them
-	// out without merge-multiple. A github.json that an AWS stack's artifact, or
-	// the directory itself, holds is never read (ADR-0031).
+	// Each plan lies in a directory of its own, where the pipelines lay it out. A
+	// github.json that an AWS stack's directory, or the directory itself, holds is
+	// never read (ADR-0031).
 	for _, c := range []struct{ stack, fixture, artifact string }{
 		{"github", "mixed.json", "idp-plan-github"},
 		{"aws/dev/components/api", "creates.json", "idp-plan-aws.dev.components.api"},

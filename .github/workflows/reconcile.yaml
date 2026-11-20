@@ -2,9 +2,17 @@ name: idp-reconcile
 
 # Reusable reconcile pipeline (spec §6.2): re-render and diff against the current
 # wet, plan, gate, wait for approval when the gate asks for it, apply the saved
-# plan, and commit the state and the render to wet in one commit (ADR-0019).
-# The plan runs in idp-write and refreshes with a writer token, which can see
-# admin-only repository fields (ADR-0025).
+# plans, and commit the state and the renders that applied to wet in one commit
+# (ADR-0019).
+# The plan job plans the github stack in idp-write and refreshes with a writer
+# token, which can see admin-only repository fields (ADR-0025). Each affected AWS
+# stack is planned in a plan-aws job and applied in an apply-aws job, each
+# against a floci of its own and holding no secret (ADR-0031); the gate job
+# decides on the reduced plans of every stack.
+# What a job without floci uploads (the renders, the saved plan, the github
+# plan, the gated fingerprint) is downloaded by the artifact ID its job outputs,
+# never by name; only what the floci jobs upload (the AWS plans and the applied
+# markers) is downloaded by pattern, the AWS plans into a directory apart from the github plan's (ADR-0031).
 # A run is never re-run; a failed run is retried with a new dispatch (ADR-0024).
 
 on:
@@ -32,12 +40,15 @@ jobs:
     permissions:
       contents: read
       issues: read
-      pull-requests: read
     outputs:
       wet-sha: ${{ steps.wet.outputs.sha }}
+      affected: ${{ steps.diff.outputs.affected }}
       github: ${{ steps.stacks.outputs.github }}
-      changes: ${{ steps.summary.outputs.changes }}
-      decision: ${{ steps.gate.outputs.decision }}
+      aws: ${{ steps.stacks.outputs.aws }}
+      changes: ${{ steps.reduce.outputs.changes }}
+      renders-id: ${{ steps.upload-renders.outputs.artifact-id }}
+      reconcile-id: ${{ steps.upload.outputs.artifact-id }}
+      plan-github-id: ${{ steps.upload-plan.outputs.artifact-id }}
     steps:
       - name: reconcile main, once
         id: guard
@@ -114,16 +125,28 @@ jobs:
           all=()
           if [ "$EVENT" = workflow_dispatch ]; then all=(--all); fi
           idp diff --new "$RUNNER_TEMP/idp/out/rendered" --wet .idp/wet/rendered "${all[@]}"
-      - name: check the affected stacks
+      - name: split the affected stacks
         id: stacks
         env:
           AFFECTED: ${{ steps.diff.outputs.affected }}
+        run: idp stacks --affected "$AFFECTED" --wet .idp/wet/rendered
+      - name: keep the AWS renders for plan-aws and apply-aws
+        id: renders
+        if: steps.stacks.outputs.aws != '[]'
         run: |
-          if ! jq -e 'all(.[]; . == "github")' <<<"$AFFECTED" >/dev/null; then
-            echo "::error::this engine version reconciles only the github stack; affected: $AFFECTED"
-            exit 1
-          fi
-          echo "github=$(jq -r 'any(.[]; . == "github")' <<<"$AFFECTED")" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/idp/renders/new" "$RUNNER_TEMP/idp/renders/wet"
+          if [ -d "$RUNNER_TEMP/idp/out/rendered/aws" ]; then cp -R "$RUNNER_TEMP/idp/out/rendered/aws" "$RUNNER_TEMP/idp/renders/new/aws"; fi
+          if [ -d .idp/wet/rendered/aws ]; then cp -R .idp/wet/rendered/aws "$RUNNER_TEMP/idp/renders/wet/aws"; fi
+      - name: upload the AWS renders
+        id: upload-renders
+        if: steps.stacks.outputs.aws != '[]'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: idp-renders
+          path: ${{ runner.temp }}/idp/renders
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
       - name: mint the writer token for the plan
         id: plan-token
         if: steps.stacks.outputs.github == 'true'
@@ -157,27 +180,22 @@ jobs:
           tofu init -input=false -lockfile=readonly
           tofu plan -input=false -lock=false -out="$RUNNER_TEMP/idp/out/github.tfplan"
           tofu show -json "$RUNNER_TEMP/idp/out/github.tfplan" > "$RUNNER_TEMP/idp/plans/github.json"
-      - name: summarize the plan
-        id: summary
-        env:
-          AFFECTED: ${{ steps.diff.outputs.affected }}
-          GITHUB_STACK: ${{ steps.stacks.outputs.github }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          plans=()
-          if [ "$GITHUB_STACK" = true ]; then plans+=(--plan "github=$RUNNER_TEMP/idp/plans/github.json"); fi
-          idp plan-summary --stacks "$AFFECTED" --head-sha "$GITHUB_SHA" --run-url "$RUN_URL" \
-            --comment-out "$RUNNER_TEMP/idp/out/comment.md" \
-            --fingerprint-out "$RUNNER_TEMP/idp/out/fingerprint.json" "${plans[@]}"
-          cat "$RUNNER_TEMP/idp/out/comment.md" >> "$GITHUB_STEP_SUMMARY"
-      - name: gate
-        id: gate
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: idp gate --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --fingerprint "$RUNNER_TEMP/idp/out/fingerprint.json"
+      - name: reduce the github plan
+        id: reduce
+        if: steps.stacks.outputs.github == 'true'
+        run: idp plan-reduce --stack github --plan "$RUNNER_TEMP/idp/plans/github.json" --out-dir "$RUNNER_TEMP/idp/reduced"
+      - name: upload the reduced github plan
+        id: upload-plan
+        if: steps.stacks.outputs.github == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: idp-plan-github
+          path: ${{ runner.temp }}/idp/reduced/github.json
+          retention-days: 1
+          if-no-files-found: error
       - name: keep the plan and the render for the apply
         id: upload
-        if: steps.stacks.outputs.github == 'true'
+        if: steps.diff.outputs.affected != '[]'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: idp-reconcile
@@ -186,10 +204,172 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  plan-aws:
+    name: plan-aws ${{ matrix.stack }}
+    needs: plan
+    if: needs.plan.outputs.aws != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.aws) }}
+    # floci reaches the Docker socket because its ECR runs a registry container
+    # (ADR-0004), so this job holds no secret and saves no cache (ADR-0031).
+    services:
+      floci:
+        image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
+        ports:
+          - "4566:4566"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: wait until floci is ready
+        id: floci-ready
+        run: |
+          until (( SECONDS >= 60 )); do
+            if [[ "$(curl -fsS --max-time 2 http://localhost:4566/_floci/init 2>/dev/null)" == *'"ready":true'* ]]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::floci did not report ready on localhost:4566 within 60 seconds"
+          exit 1
+      # By the ID the plan job outputs, never by name (ADR-0031). An empty
+      # artifact-ids would download every artifact of the run, hence the guard.
+      - name: fetch the AWS renders
+        id: download
+        if: needs.plan.outputs.renders-id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.renders-id }}
+          path: ${{ runner.temp }}/idp/renders
+          merge-multiple: true
+      - name: plan the stack against floci
+        id: plan
+        env:
+          STACK: ${{ matrix.stack }}
+          ACCOUNT: ${{ matrix.account }}
+        run: |
+          idp aws-stack plan --stack "$STACK" --account "$ACCOUNT" \
+            --new "$RUNNER_TEMP/idp/renders/new" --wet "$RUNNER_TEMP/idp/renders/wet" \
+            --work "$RUNNER_TEMP/idp/aws" --endpoint http://localhost:4566 --out-dir "$RUNNER_TEMP/idp/reduced"
+      - name: upload the reduced plan
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: idp-plan-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/idp/reduced/${{ matrix.artifact }}.json
+          retention-days: 1
+          if-no-files-found: error
+
+  gate:
+    name: gate
+    needs: [plan, plan-aws]
+    if: "!cancelled() && needs.plan.result == 'success' && (needs.plan-aws.result == 'success' || needs.plan-aws.result == 'skipped')"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      decision: ${{ steps.gate.outputs.decision }}
+      gated-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      # The layout must not depend on how many artifacts a download resolves to:
+      # download-artifact extracts into path itself when it resolves to one
+      # artifact (a download by ID, or a pattern that matches one) and into
+      # path/<name>/ otherwise. So the github plan, by ID, merges into
+      # plans/idp-plan-github; the AWS plans, which floci jobs upload, go by a
+      # pattern that cannot match idp-plan-github into aws-plans, a directory
+      # apart from plans; and the layout step copies each plan the trusted matrix
+      # names to plans/idp-plan-<A>/<A>.json, where idp plan-summary --plan-dir
+      # reads it, taking only a regular file. A missing one stays missing and
+      # plan-summary fails (ADR-0031). An empty artifact-ids would download every
+      # artifact of the run, hence the guard.
+      - name: fetch the reduced github plan
+        id: download-github
+        if: needs.plan.outputs.plan-github-id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.plan-github-id }}
+          path: ${{ runner.temp }}/idp/plans/idp-plan-github
+          merge-multiple: true
+      - name: fetch the reduced AWS plans
+        id: download-aws
+        if: needs.plan.outputs.aws != '[]'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: idp-plan-aws.*
+          path: ${{ runner.temp }}/idp/aws-plans
+          merge-multiple: true
+      - name: lay the AWS plans out where plan-summary reads them
+        id: layout
+        if: needs.plan.outputs.aws != '[]'
+        env:
+          AWS_STACKS: ${{ needs.plan.outputs.aws }}
+        run: |
+          while IFS= read -r artifact; do
+            f="$RUNNER_TEMP/idp/aws-plans/$artifact.json"
+            if [ -f "$f" ] && [ ! -L "$f" ]; then
+              mkdir -p "$RUNNER_TEMP/idp/plans/idp-plan-$artifact"
+              cp "$f" "$RUNNER_TEMP/idp/plans/idp-plan-$artifact/$artifact.json"
+            fi
+          done < <(jq -r '.[].artifact' <<<"$AWS_STACKS")
+      - name: summarize the plans
+        id: summary
+        env:
+          AFFECTED: ${{ needs.plan.outputs.affected }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/idp/out"
+          idp plan-summary --stacks "$AFFECTED" --head-sha "$GITHUB_SHA" --run-url "$RUN_URL" \
+            --plan-dir "$RUNNER_TEMP/idp/plans" \
+            --comment-out "$RUNNER_TEMP/idp/out/comment.md" \
+            --fingerprint-out "$RUNNER_TEMP/idp/out/fingerprint.json"
+          cat "$RUNNER_TEMP/idp/out/comment.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: gate
+        id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: idp gate --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --fingerprint "$RUNNER_TEMP/idp/out/fingerprint.json"
+      - name: keep the gated fingerprint for apply-aws
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: idp-gated
+          path: ${{ runner.temp }}/idp/out/fingerprint.json
+          retention-days: 1
+          if-no-files-found: error
+
   approve:
     name: approve
-    needs: plan
-    if: needs.plan.outputs.decision == 'approval'
+    needs: gate
+    if: needs.gate.outputs.decision == 'approval'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: idp-approval
@@ -199,10 +379,99 @@ jobs:
         id: approved
         run: echo "approved in the idp-approval environment; the apply continues"
 
+  apply-aws:
+    name: apply-aws ${{ matrix.stack }}
+    needs: [plan, gate, approve]
+    if: "!cancelled() && needs.gate.result == 'success' && needs.plan.outputs.aws != '[]' && (needs.gate.outputs.decision == 'auto' || needs.approve.result == 'success')"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.aws) }}
+    # floci reaches the Docker socket because its ECR runs a registry container
+    # (ADR-0004), so this job holds no secret and saves no cache (ADR-0031).
+    services:
+      floci:
+        image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
+        ports:
+          - "4566:4566"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - name: apply once
+        id: guard
+        run: |
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::a reconcile run is never re-run, because its plan may be stale: dispatch the reconcile workflow instead (docs/runbooks/pipelines.md)"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .idp/engine
+          persist-credentials: false
+      - uses: ./.idp/engine/.github/actions/setup-idp # zizmor: ignore[self-repository] the engine is checked out at job.workflow_sha in the step above (ADR-0021)
+        with:
+          engine-dir: .idp/engine
+          version: ${{ job.workflow_sha }}
+      - name: wait until floci is ready
+        id: floci-ready
+        run: |
+          until (( SECONDS >= 60 )); do
+            if [[ "$(curl -fsS --max-time 2 http://localhost:4566/_floci/init 2>/dev/null)" == *'"ready":true'* ]]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::floci did not report ready on localhost:4566 within 60 seconds"
+          exit 1
+      # By the IDs the plan and gate jobs output, never by name (ADR-0031). An
+      # empty artifact-ids would download every artifact of the run, hence the
+      # guards.
+      - name: fetch the AWS renders
+        id: download
+        if: needs.plan.outputs.renders-id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.renders-id }}
+          path: ${{ runner.temp }}/idp/renders
+          merge-multiple: true
+      - name: fetch the gated fingerprint
+        id: gated
+        if: needs.gate.outputs.gated-id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.gate.outputs.gated-id }}
+          path: ${{ runner.temp }}/idp/gated
+          merge-multiple: true
+      - name: re-plan, compare with the gate and apply against floci
+        id: apply
+        env:
+          STACK: ${{ matrix.stack }}
+          ACCOUNT: ${{ matrix.account }}
+        run: |
+          idp aws-stack apply --stack "$STACK" --account "$ACCOUNT" \
+            --new "$RUNNER_TEMP/idp/renders/new" --wet "$RUNNER_TEMP/idp/renders/wet" \
+            --work "$RUNNER_TEMP/idp/aws" --endpoint http://localhost:4566 \
+            --fingerprint "$RUNNER_TEMP/idp/gated/fingerprint.json" --applied-dir "$RUNNER_TEMP/idp/applied"
+      - name: mark the stack applied for the wet commit
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: idp-applied-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/idp/applied/${{ matrix.artifact }}
+          retention-days: 1
+          if-no-files-found: error
+
   apply-github:
     name: apply-github
-    needs: [plan, approve]
-    if: always() && needs.plan.result == 'success' && needs.plan.outputs.github == 'true' && (needs.plan.outputs.decision == 'auto' || needs.approve.result == 'success')
+    needs: [plan, gate, approve, apply-aws]
+    if: "!cancelled() && needs.gate.result == 'success' && needs.plan.outputs.affected != '[]' && (needs.gate.outputs.decision == 'auto' || needs.approve.result == 'success')"
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     environment: idp-write
@@ -255,14 +524,27 @@ jobs:
             echo "::error::wet moved since this run's plan, so the saved plan may be stale: dispatch the reconcile workflow instead"
             exit 1
           fi
+      # By the IDs the plan job outputs, never by name (ADR-0031); an empty
+      # artifact-ids would download every artifact of the run, hence the guards.
       - name: fetch the saved plan and render
         id: download
+        if: needs.plan.outputs.reconcile-id != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: idp-reconcile
+          artifact-ids: ${{ needs.plan.outputs.reconcile-id }}
           path: ${{ runner.temp }}/idp/in
+          merge-multiple: true
+      - name: fetch the wet AWS renders for wet-root
+        id: renders
+        if: needs.plan.outputs.renders-id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.renders-id }}
+          path: ${{ runner.temp }}/idp/renders
+          merge-multiple: true
       - name: export TF_ENCRYPTION
         id: encryption
+        if: needs.plan.outputs.github == 'true'
         env:
           IDP_STATE_PASSPHRASE: ${{ secrets.IDP_STATE_PASSPHRASE }}
         run: idp encryption-env
@@ -276,7 +558,7 @@ jobs:
           fi
       - name: mint the writer token for the apply
         id: apply-token
-        if: needs.plan.outputs.changes != '0'
+        if: needs.plan.outputs.github == 'true' && needs.plan.outputs.changes != '0'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.IDP_WRITER_CLIENT_ID }}
@@ -296,31 +578,42 @@ jobs:
         run: |
           tofu init -input=false -lockfile=readonly
           tofu apply -input=false "$RUNNER_TEMP/idp/in/github.tfplan"
+      - name: fetch the AWS stacks that applied
+        id: applied
+        if: always() && needs.plan.outputs.aws != '[]'
+        timeout-minutes: 5
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: idp-applied-*
+          path: ${{ runner.temp }}/idp/applied
+          merge-multiple: true
       - name: prepare the wet commit
         id: prepare
         if: always() && steps.stage.outcome == 'success'
         env:
+          GITHUB_STACK: ${{ needs.plan.outputs.github }}
           CHANGES: ${{ needs.plan.outputs.changes }}
           APPLY_OUTCOME: ${{ steps.apply.outcome }}
           WET_SHA: ${{ needs.plan.outputs.wet-sha }}
         run: |
-          root="$RUNNER_TEMP/idp/wet-root"
-          mkdir -p "$root/tfstate"
-          echo "$WET_SHA" > "$root/wet-base"
-          if [ -f "$RUNNER_TEMP/idp/work/tfstate/github.tfstate" ]; then
-            cp "$RUNNER_TEMP/idp/work/tfstate/github.tfstate" "$root/tfstate/github.tfstate"
+          args=()
+          if [ "$GITHUB_STACK" = true ]; then
+            args+=(--github-state "$RUNNER_TEMP/idp/work/tfstate/github.tfstate")
+            # The state is committed always: real resources may have changed. The render
+            # only when the apply succeeded or had nothing to apply; a failed stack keeps
+            # its old render in wet, so the next reconcile retries it (spec §6.2).
+            if [ "$CHANGES" = 0 ] || [ "$APPLY_OUTCOME" = success ]; then
+              args+=(--github-render)
+            else
+              echo "::warning::the github apply did not succeed: only its state is committed, and its old render stays in wet so the next reconcile retries"
+            fi
           fi
-          # The state is committed always: real resources may have changed. The render
-          # only when the apply succeeded or had nothing to apply; a failed stack keeps
-          # its old render in wet, so the next reconcile retries it (spec §6.2).
-          if [ "$CHANGES" = 0 ] || [ "$APPLY_OUTCOME" = success ]; then
-            mkdir -p "$root/rendered"
-            cp -R "$RUNNER_TEMP/idp/in/rendered/github" "$root/rendered/github"
-            echo "render=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::the apply did not succeed: only the state is committed, and the old render stays in wet so the next reconcile retries"
-            echo "render=false" >> "$GITHUB_OUTPUT"
-          fi
+          # An AWS stack's render is committed only when its apply-aws job marked it
+          # applied (spec §6.2 step 4); its state stays in that job (ADR-0030). --wet
+          # is the wet tree the plan job planned against, which holds no render yet
+          # on a first reconcile.
+          idp wet-root --out "$RUNNER_TEMP/idp/wet-root" --wet-base "$WET_SHA" \
+            --new "$RUNNER_TEMP/idp/in/rendered" --wet "$RUNNER_TEMP/idp/renders/wet" --applied-dir "$RUNNER_TEMP/idp/applied" "${args[@]}"
       - name: keep the wet commit as an artifact
         id: keep
         if: always() && steps.prepare.outcome == 'success'
@@ -331,9 +624,12 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: error
+          # A floci job of this run may have uploaded the name first: replace it.
+          # Every floci job has ended by now, so the issue names this upload's ID.
+          overwrite: true
       - name: mint the wet-commit token
         id: push-token
-        if: always() && steps.prepare.outcome == 'success'
+        if: always() && steps.prepare.outcome == 'success' && steps.prepare.outputs.paths != '0'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.IDP_WRITER_CLIENT_ID }}
@@ -346,25 +642,30 @@ jobs:
         if: always() && steps.push-token.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.push-token.outputs.token }}
-          RENDER: ${{ steps.prepare.outputs.render }}
         run: |
-          paths=(--path tfstate/github.tfstate)
-          if [ "$RENDER" = true ]; then paths+=(--path rendered/github); fi
+          paths=()
+          while IFS= read -r name || [ -n "$name" ]; do paths+=(--path "$name"); done < "$RUNNER_TEMP/idp/wet-root/wet-paths"
           idp wet-push --repo "$GITHUB_REPOSITORY" --root "$RUNNER_TEMP/idp/wet-root" \
             --message "idp: reconcile $GITHUB_SHA (run $GITHUB_RUN_ID)" "${paths[@]}"
       - name: open the wet-push issue
         id: issue
-        if: always() && steps.prepare.outcome == 'success' && steps.push.outcome != 'success'
+        if: always() && steps.prepare.outcome == 'success' && steps.prepare.outputs.paths != '0' && steps.push.outcome != 'success'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUNBOOK_URL: ${{ github.server_url }}/${{ job.workflow_repository }}/blob/${{ job.workflow_sha }}/docs/runbooks/pipelines.md#a-wet-push-failed
+          KEEP_ID: ${{ steps.keep.outputs.artifact-id }}
         run: |
           body="$RUNNER_TEMP/idp/wet-push-issue.md"
           {
             echo "The reconcile run $RUN_URL could not commit to the wet branch."
             echo
-            echo "What it was about to commit is saved as the artifact idp-wet-root of that run, kept for 7 days."
-            echo "Run the idp-recover workflow with run-id $GITHUB_RUN_ID, following $RUNBOOK_URL"
+            if [ -n "$KEEP_ID" ]; then
+              echo "What it was about to commit is saved as the artifact idp-wet-root of that run, kept for 7 days."
+              echo "idp-wet-root artifact id: $KEEP_ID"
+              echo "Run the idp-recover workflow with run-id $GITHUB_RUN_ID, following $RUNBOOK_URL"
+            else
+              echo "The wet commit was not saved as an artifact, so the idp-recover workflow cannot recover it. Follow $RUNBOOK_URL"
+            fi
           } > "$body"
           idp issue open --repo "$GITHUB_REPOSITORY" --label idp-wet-push --title "Wet push failed" --body-file "$body"
