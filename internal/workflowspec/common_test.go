@@ -300,3 +300,27 @@ func TestTofuFollowsTheWetHygieneRules(t *testing.T) {
 		}
 	}
 }
+
+// TestAJobAfterOneThatRunsPastASkipChecksItsOwnStatus: a job's implicit
+// success() is false when any job before it was skipped, not only one it
+// needs. So a job that needs one which runs past a skipped or failed job (its
+// if starts with !cancelled() or always()) is skipped whatever its own
+// condition says, unless that condition starts with a status check too.
+// reconcile's approve was: the gate runs after a skipped plan-aws, so a
+// destructive change to the github stack alone was never approved or applied.
+func TestAJobAfterOneThatRunsPastASkipChecksItsOwnStatus(t *testing.T) {
+	statusChecked := func(cond string) bool {
+		return strings.HasPrefix(cond, "!cancelled()") || strings.HasPrefix(cond, "always()")
+	}
+	for _, f := range workflowFiles(t) {
+		w := loadWorkflow(t, f)
+		for _, id := range slices.Sorted(maps.Keys(w.Jobs)) {
+			j := w.Jobs[id]
+			for _, n := range j.Needs {
+				if dep, ok := w.Jobs[n]; ok && statusChecked(dep.If) && !statusChecked(j.If) {
+					t.Errorf("%s job %s: it needs %s, which runs past a skipped job, so its if must start with !cancelled()", f, id, n)
+				}
+			}
+		}
+	}
+}
