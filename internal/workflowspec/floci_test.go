@@ -212,11 +212,15 @@ func checkPlanLayout(t *testing.T, w *workflow, id, summaryID string) {
 	}
 	wantEnv(t, id+" layout", lay, map[string]string{"AWS_STACKS": "${{ needs.plan.outputs.aws }}"})
 	wantRun(t, id+" layout", lay,
-		`jq -r '.[].artifact' <<<"$AWS_STACKS"`,
+		`artifacts="$(jq -r '.[].artifact' <<<"$AWS_STACKS")"`,
+		`[ -n "$artifact" ] || continue`,
 		`f="$RUNNER_TEMP/idp/aws-plans/$artifact.json"`,
 		`if [ -f "$f" ] && [ ! -L "$f" ]; then`,
 		`mkdir -p "$RUNNER_TEMP/idp/plans/idp-plan-$artifact"`,
 		`cp "$f" "$RUNNER_TEMP/idp/plans/idp-plan-$artifact/$artifact.json"`,
+		// A skipped plan is named: plan-summary then fails on that stack.
+		`echo "::warning::no regular file $artifact.json among the downloaded AWS plans; plan-summary fails on the missing plan of that stack"`,
+		`done <<<"$artifacts"`,
 	)
 	if strings.Contains(lay.Run, "${{") {
 		t.Errorf("%s layout interpolates an expression in run: read the matrix through env", id)

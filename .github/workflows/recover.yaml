@@ -60,7 +60,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
         run: |
-          read -r event branch conclusion < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '[.event, .head_branch, (.conclusion // "")] | @tsv')
+          info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '[.event, .head_branch, (.conclusion // "")] | @tsv')"
+          read -r event branch conclusion <<<"$info"
           if [ "$branch" != main ] || { [ "$event" != push ] && [ "$event" != workflow_dispatch ]; }; then
             echo "::error::run $RUN_ID is not a reconcile of main (event: $event, branch: $branch)"
             exit 1

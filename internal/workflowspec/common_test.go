@@ -87,6 +87,18 @@ func TestRunScriptsTakeValuesFromEnv(t *testing.T) {
 	}
 }
 
+// TestRunScriptsReadNoProcessSubstitution: bash ignores the exit status of a
+// process substitution, so `done < <(cmd)` or `read … < <(cmd)` carries on
+// with empty input when cmd fails. A script assigns the output first, which
+// fails the step under bash -e, and reads it from a here-string.
+func TestRunScriptsReadNoProcessSubstitution(t *testing.T) {
+	for _, l := range everyStep(t) {
+		if strings.Contains(l.step.Run, "<(") {
+			t.Errorf("%s: step %q reads a process substitution, which hides its command's failure; assign the output to a variable first", l.where, l.step.label())
+		}
+	}
+}
+
 func TestTokensAreStepScoped(t *testing.T) {
 	for _, f := range workflowFiles(t) {
 		w := loadWorkflow(t, f)

@@ -39,6 +39,8 @@ func TestRecoverChecksTheRunAndTheWetBase(t *testing.T) {
 	iRun, run := mustStep(t, "recover", r.Steps, "run-check")
 	wantEnv(t, "recover run-check", run, map[string]string{"GH_TOKEN": "${{ github.token }}", "RUN_ID": "${{ inputs.run-id }}"})
 	wantRun(t, "recover run-check", run,
+		`info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '[.event, .head_branch, (.conclusion // "")] | @tsv')"`,
+		`read -r event branch conclusion <<<"$info"`,
 		`[ "$branch" != main ]`,
 		`[ "$event" != push ] && [ "$event" != workflow_dispatch ]`,
 		// A cancelled reconcile still commits through its always() steps, and its
