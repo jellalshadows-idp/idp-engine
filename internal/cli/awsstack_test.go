@@ -93,6 +93,31 @@ func TestAWSStackPlan(t *testing.T) {
 	}
 }
 
+// TestAWSStackKeepsTheJobEnvironmentFromTofu: idp aws-stack hands tofu only
+// the allowlisted variables of its environment, so a token of the job never
+// reaches OpenTofu (R1-001). TF_ENCRYPTION and IDP_STATE_PASSPHRASE are not
+// set here: the command refuses to run with them (ADR-0031).
+func TestAWSStackKeepsTheJobEnvironmentFromTofu(t *testing.T) {
+	for _, k := range []string{"GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "AWS_SESSION_TOKEN"} {
+		t.Setenv(k, "must-not-reach-tofu")
+	}
+	s := useStubTofu(t, updateRole)
+	dir, flags := awsStackDirs(t)
+	var stdout, stderr bytes.Buffer
+	args := append(append([]string{"aws-stack", "plan"}, flags...), "--out-dir", filepath.Join(dir, "plans"))
+	if code := Run(args, &stdout, &stderr, envOf(map[string]string{"GITHUB_OUTPUT": filepath.Join(dir, "out")})); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	for _, kv := range s.env {
+		if strings.Contains(kv, "must-not-reach-tofu") {
+			t.Errorf("tofu env holds %s", kv)
+		}
+	}
+	if !slices.Contains(s.env, "AWS_ACCESS_KEY_ID=000000000001") {
+		t.Error("tofu env lacks the account's access key ID")
+	}
+}
+
 // TestAWSStackApply: apply re-plans, applies the gated plan, marks the stack
 // applied for the wet commit and writes the evidence to the job summary.
 func TestAWSStackApply(t *testing.T) {

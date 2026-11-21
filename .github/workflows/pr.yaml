@@ -299,13 +299,18 @@ jobs:
         env:
           AWS_STACKS: ${{ needs.plan.outputs.aws }}
         run: |
+          # A failed jq fails the step here; a process substitution would hide it.
+          artifacts="$(jq -r '.[].artifact' <<<"$AWS_STACKS")"
           while IFS= read -r artifact; do
+            [ -n "$artifact" ] || continue
             f="$RUNNER_TEMP/idp/aws-plans/$artifact.json"
             if [ -f "$f" ] && [ ! -L "$f" ]; then
               mkdir -p "$RUNNER_TEMP/idp/plans/idp-plan-$artifact"
               cp "$f" "$RUNNER_TEMP/idp/plans/idp-plan-$artifact/$artifact.json"
+            else
+              echo "::warning::no regular file $artifact.json among the downloaded AWS plans; plan-summary fails on the missing plan of that stack"
             fi
-          done < <(jq -r '.[].artifact' <<<"$AWS_STACKS")
+          done <<<"$artifacts"
       - name: summarize the plans
         id: summary
         env:

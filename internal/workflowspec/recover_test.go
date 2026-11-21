@@ -39,6 +39,8 @@ func TestRecoverChecksTheRunAndTheWetBase(t *testing.T) {
 	iRun, run := mustStep(t, "recover", r.Steps, "run-check")
 	wantEnv(t, "recover run-check", run, map[string]string{"GH_TOKEN": "${{ github.token }}", "RUN_ID": "${{ inputs.run-id }}"})
 	wantRun(t, "recover run-check", run,
+		`info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '[.event, .head_branch, (.conclusion // "")] | @tsv')"`,
+		`read -r event branch conclusion <<<"$info"`,
 		`[ "$branch" != main ]`,
 		`[ "$event" != push ] && [ "$event" != workflow_dispatch ]`,
 		// A cancelled reconcile still commits through its always() steps, and its
@@ -51,15 +53,39 @@ func TestRecoverChecksTheRunAndTheWetBase(t *testing.T) {
 		`.title == "Wet push failed" and .user.login == "github-actions[bot]"`,
 		`test("/actions/runs/" + $id + "([^0-9]|$)")`,
 		`if [ "$(jq length <<<"$named")" != 1 ]; then`,
-		// The ID the issue body names is the only artifact the recovery trusts.
+		// The issue body names the only artifact the recovery considers; artifact-check trusts it only once the API confirms it.
 		`idp-wet-root artifact id: ([0-9]+)`,
 		`if [ -z "$artifact_id" ]; then`,
 		`names no idp-wet-root artifact: that run saved no wet root artifact, or it predates this engine version, so the workflow cannot recover it. Follow the runbook instead (docs/runbooks/pipelines.md#a-wet-push-failed).`,
 		`echo "artifact-id=$artifact_id" >> "$GITHUB_OUTPUT"`,
 	)
+	// The issue body can be edited by anyone with issue write access, so the
+	// API must name the artifact as that run's unexpired idp-wet-root (D-7).
+	iArt, art := mustStep(t, "recover", r.Steps, "artifact-check")
+	wantEnv(t, "recover artifact-check", art, map[string]string{
+		"GH_TOKEN":    "${{ github.token }}",
+		"RUN_ID":      "${{ inputs.run-id }}",
+		"ARTIFACT_ID": "${{ steps.issue-check.outputs.artifact-id }}",
+	})
+	wantRun(t, "recover artifact-check", art,
+		`if ! info="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" --jq '[.name, (.workflow_run.id | tostring), (.expired | tostring)] | @tsv')"; then`,
+		`cannot be read in this repository: it was deleted, or someone edited the issue.`,
+		// Tab only: the default IFS would trim spaces, so "idp-wet-root " would pass.
+		`IFS=$'\t' read -r name run expired <<<"$info"`,
+		`if [ "$name" != idp-wet-root ] || [ "$run" != "$RUN_ID" ]; then`,
+		`if [ "$expired" != false ]; then`,
+		`echo "artifact-id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"`,
+	)
+	// Both checks gate the download: neither may be skipped or let fail, or
+	// an empty artifact ID would make the download fetch every artifact of the run.
+	for _, s := range []step{issue, art} {
+		if s.If != "" || s.ContinueOnError != "" {
+			t.Errorf("recover %s: if %q, continue-on-error %q; it must always run and stop the job when it fails", s.ID, s.If, s.ContinueOnError)
+		}
+	}
 	iDL, dl := mustStep(t, "recover", r.Steps, "download")
 	wantWith(t, "recover download", dl, map[string]string{
-		"artifact-ids":   "${{ steps.issue-check.outputs.artifact-id }}",
+		"artifact-ids":   "${{ steps.artifact-check.outputs.artifact-id }}",
 		"run-id":         "${{ inputs.run-id }}",
 		"github-token":   "${{ github.token }}",
 		"merge-multiple": "true",
@@ -91,8 +117,8 @@ func TestRecoverChecksTheRunAndTheWetBase(t *testing.T) {
 		`if [ "${#paths[@]}" = 0 ]; then`,
 		`idp wet-push --repo "$GITHUB_REPOSITORY" --root "$root"`,
 	)
-	if !(iReq < iRun && iRun < iIssue && iIssue < iDL && iDL < iBase && iBase < iPush) {
-		t.Errorf("recover must check the request, the run and the issue, then download, compare the base, and only then push (got %d %d %d %d %d %d)", iReq, iRun, iIssue, iDL, iBase, iPush)
+	if !(iReq < iRun && iRun < iIssue && iIssue < iArt && iArt < iDL && iDL < iBase && iBase < iPush) {
+		t.Errorf("recover must check the request, the run, the issue and the artifact, then download, compare the base, and only then push (got %d %d %d %d %d %d %d)", iReq, iRun, iIssue, iArt, iDL, iBase, iPush)
 	}
 	if iTok < iBase {
 		t.Errorf("recover must mint the wet-commit token only after comparing the base (got push-token %d, base %d)", iTok, iBase)
