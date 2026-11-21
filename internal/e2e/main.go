@@ -19,15 +19,21 @@ var botPermissions = map[string]string{
 	"members": "read", "pull_requests": "write", "workflows": "write",
 }
 
+// readerPermissions scope every reader token to reading environment variables
+// (ADR-0027); each token is also limited to the run's Component repository.
+var readerPermissions = map[string]string{"environments": "read"}
+
 // Main runs the harness:
 //
 //	idp-e2e --repo OWNER/NAME --engine-sha SHA --run ID [--templates DIR] [--owner LOGIN] [--member LOGIN]
 //
 // with the bot App's client ID and PEM private key in E2E_BOT_CLIENT_ID and
-// E2E_BOT_PRIVATE_KEY, and the approver token in E2E_APPROVER_TOKEN. It mints
-// the bot's installation tokens itself, each scoped to the claims repo and
-// botPermissions, and renews them before they expire: a token lives one hour,
-// and a run can last longer.
+// E2E_BOT_PRIVATE_KEY, the reader App's in E2E_READER_CLIENT_ID and
+// E2E_READER_PRIVATE_KEY, and the approver token in E2E_APPROVER_TOKEN. It
+// mints the bot's installation tokens itself, each scoped to the claims repo
+// and botPermissions, and renews them before they expire: a token lives one
+// hour, and a run can last longer. It mints the reader's tokens the same way,
+// for the repository the run creates only, with readerPermissions.
 // It exits 0 when every step passed, 1 when one failed, 2 on a usage error.
 func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	fs := flag.NewFlagSet("idp-e2e", flag.ContinueOnError)
@@ -51,8 +57,9 @@ func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) i
 		return 2
 	}
 	clientID, keyPEM, approver := getenv("E2E_BOT_CLIENT_ID"), getenv("E2E_BOT_PRIVATE_KEY"), getenv("E2E_APPROVER_TOKEN")
-	if clientID == "" || keyPEM == "" || approver == "" {
-		fmt.Fprintln(stderr, "idp-e2e: E2E_BOT_CLIENT_ID, E2E_BOT_PRIVATE_KEY and E2E_APPROVER_TOKEN must be set")
+	readerID, readerPEM := getenv("E2E_READER_CLIENT_ID"), getenv("E2E_READER_PRIVATE_KEY")
+	if clientID == "" || keyPEM == "" || readerID == "" || readerPEM == "" || approver == "" {
+		fmt.Fprintln(stderr, "idp-e2e: E2E_BOT_CLIENT_ID, E2E_BOT_PRIVATE_KEY, E2E_READER_CLIENT_ID, E2E_READER_PRIVATE_KEY and E2E_APPROVER_TOKEN must be set")
 		return 2
 	}
 	key, err := ghapp.ParseKey([]byte(keyPEM))
@@ -60,7 +67,17 @@ func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) i
 		fmt.Fprintln(stderr, "idp-e2e: E2E_BOT_PRIVATE_KEY:", err) // the error never repeats the key
 		return 2
 	}
+	readerKey, err := ghapp.ParseKey([]byte(readerPEM))
+	if err != nil {
+		fmt.Fprintln(stderr, "idp-e2e: E2E_READER_PRIVATE_KEY:", err) // the error never repeats the key
+		return 2
+	}
 	tpl, err := readTemplates(*templates)
+	if err != nil {
+		fmt.Fprintln(stderr, "idp-e2e:", err)
+		return 1
+	}
+	names, err := NewNames(*run)
 	if err != nil {
 		fmt.Fprintln(stderr, "idp-e2e:", err)
 		return 1
@@ -70,8 +87,12 @@ func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) i
 		base = ghapi.DefaultBaseURL
 	}
 	src := &ghapp.Source{BaseURL: base, ClientID: clientID, Key: key, Owner: org, Repo: name, Permissions: botPermissions}
+	reader := &ghapp.Source{BaseURL: base, ClientID: readerID, Key: readerKey, Owner: org, Repo: names.Component, Permissions: readerPermissions}
 	s := &Scenario{
-		F:     GitHub{Bot: ghapi.NewWithTokens(base, src.Token), Approver: ghapi.New(base, approver), Owner: org, Repo: name},
+		F: GitHub{
+			Bot: ghapi.NewWithTokens(base, src.Token), Approver: ghapi.New(base, approver),
+			Reader: ghapi.NewWithTokens(base, reader.Token), Owner: org, Repo: name,
+		},
 		Clock: realClock{}, Log: stdout, Org: org, Run: *run, EngineSHA: *engineSHA,
 		Templates: tpl, Owner: *owner, Member: *member, Timeouts: DefaultTimeouts,
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/plan"
@@ -28,12 +29,13 @@ type fakeForge struct {
 	approved map[int64]bool
 	notes    map[int64]string // reconcile run → the comment its approval carried
 	rejected map[int64]bool
-	raw      map[string]string           // slug → whole plan comment, verbatim
-	fps      map[string]plan.Fingerprint // slug → fingerprint its plan comment carries
-	failRun  map[string]bool             // slug → its reconcile concludes failure
-	parent   map[string]string           // slug → first parent its merge commit reports (default: main's head before the merge)
-	checkErr error                       // what CheckApprover answers
-	unbranch error                       // what DeleteBranch answers
+	raw      map[string]string            // slug → whole plan comment, verbatim
+	fps      map[string]plan.Fingerprint  // slug → fingerprint its plan comment carries
+	failRun  map[string]bool              // slug → its reconcile concludes failure
+	parent   map[string]string            // slug → first parent its merge commit reports (default: main's head before the merge)
+	checkErr error                        // what CheckApprover answers
+	unbranch error                        // what DeleteBranch answers
+	vars     map[string]map[string]string // "repo/env" → its variables
 	active   []Run
 	written  []string
 	drifts   int
@@ -48,8 +50,16 @@ func newFakeForge() *fakeForge {
 		gate: map[string]string{}, comments: map[string]string{}, effects: map[string]func(*fakeForge){},
 		approval: map[string]bool{}, approved: map[int64]bool{}, notes: map[int64]string{},
 		rejected: map[int64]bool{}, raw: map[string]string{}, fps: map[string]plan.Fingerprint{}, failRun: map[string]bool{},
-		parent: map[string]string{},
+		parent: map[string]string{}, vars: map[string]map[string]string{},
 	}
+}
+
+func (f *fakeForge) EnvVariables(_ context.Context, repo, env string) (map[string]string, error) {
+	v, ok := f.vars[repo+"/"+env]
+	if !ok {
+		return nil, fmt.Errorf("GET the variables of %s's environment %s: 404", repo, env)
+	}
+	return maps.Clone(v), nil
 }
 
 func slugOf(branch string) string   { return branch[strings.LastIndex(branch, "/")+1:] }

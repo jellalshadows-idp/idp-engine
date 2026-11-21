@@ -55,6 +55,9 @@ type Forge interface {
 	// ActiveRuns lists the claims repo's reconcile, drift and recover runs that
 	// have not completed.
 	ActiveRuns(ctx context.Context) ([]Run, error)
+	// EnvVariables returns the variables of environment env of the org's
+	// repository repo, by name. GitHub reads them with the reader App's token.
+	EnvVariables(ctx context.Context, repo, env string) (map[string]string, error)
 	// Reject rejects a pending idp-approval deployment, so nothing is applied.
 	Reject(ctx context.Context, runID, envID int64, comment string) error
 	// Parent returns a commit's first parent: for a merge commit, main's head

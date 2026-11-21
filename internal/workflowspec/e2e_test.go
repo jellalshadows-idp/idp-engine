@@ -70,7 +70,7 @@ func TestE2EBuildsTheHarnessWithoutSecrets(t *testing.T) {
 }
 
 // e2eSecrets are the idp-e2e environment's secrets: only the harness step reads them.
-var e2eSecrets = []string{"IDP_BOT_PRIVATE_KEY", "IDP_E2E_APPROVER_TOKEN"}
+var e2eSecrets = []string{"IDP_BOT_PRIVATE_KEY", "IDP_READER_PRIVATE_KEY", "IDP_E2E_APPROVER_TOKEN"}
 
 func TestE2EHarnessMintsTheBotToken(t *testing.T) {
 	j := mustJob(t, loadWorkflow(t, e2ePath), "e2e")
@@ -81,9 +81,11 @@ func TestE2EHarnessMintsTheBotToken(t *testing.T) {
 	}
 	_, h := mustStep(t, "e2e", j.Steps, "harness")
 	want := map[string]string{
-		"E2E_BOT_CLIENT_ID":   "${{ vars.IDP_BOT_CLIENT_ID }}",
-		"E2E_BOT_PRIVATE_KEY": "${{ secrets.IDP_BOT_PRIVATE_KEY }}",
-		"E2E_APPROVER_TOKEN":  "${{ secrets.IDP_E2E_APPROVER_TOKEN }}",
+		"E2E_BOT_CLIENT_ID":      "${{ vars.IDP_BOT_CLIENT_ID }}",
+		"E2E_BOT_PRIVATE_KEY":    "${{ secrets.IDP_BOT_PRIVATE_KEY }}",
+		"E2E_APPROVER_TOKEN":     "${{ secrets.IDP_E2E_APPROVER_TOKEN }}",
+		"E2E_READER_CLIENT_ID":   "${{ vars.IDP_READER_CLIENT_ID }}",
+		"E2E_READER_PRIVATE_KEY": "${{ secrets.IDP_READER_PRIVATE_KEY }}",
 	}
 	if !maps.Equal(map[string]string(h.Env), want) {
 		t.Errorf("harness env = %v, want exactly %v", h.Env, want)
@@ -94,7 +96,7 @@ func TestE2EHarnessMintsTheBotToken(t *testing.T) {
 	}
 }
 
-// TestE2ESecretsReachOnlyTheHarness: the bot key and the approver token reach
+// TestE2ESecretsReachOnlyTheHarness: the bot and reader keys and the approver token reach
 // the harness step and nothing else. The config step only checks they are set,
 // and sees a boolean, never the value (secretReaders does not count that).
 func TestE2ESecretsReachOnlyTheHarness(t *testing.T) {
@@ -106,13 +108,19 @@ func TestE2ESecretsReachOnlyTheHarness(t *testing.T) {
 	}
 	_, c := mustStep(t, "e2e", j.Steps, "config")
 	wantConfig := map[string]string{
-		"BOT_CLIENT_ID": "${{ vars.IDP_BOT_CLIENT_ID }}",
-		"BOT_KEY_SET":   "${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}",
-		"APPROVER_SET":  "${{ secrets.IDP_E2E_APPROVER_TOKEN != '' }}",
+		"BOT_CLIENT_ID":    "${{ vars.IDP_BOT_CLIENT_ID }}",
+		"BOT_KEY_SET":      "${{ secrets.IDP_BOT_PRIVATE_KEY != '' }}",
+		"APPROVER_SET":     "${{ secrets.IDP_E2E_APPROVER_TOKEN != '' }}",
+		"READER_CLIENT_ID": "${{ vars.IDP_READER_CLIENT_ID }}",
+		"READER_KEY_SET":   "${{ secrets.IDP_READER_PRIVATE_KEY != '' }}",
 	}
 	if !maps.Equal(map[string]string(c.Env), wantConfig) {
 		t.Errorf("config env = %v, want exactly %v", c.Env, wantConfig)
 	}
+	wantRun(t, "e2e config", c,
+		`[ -n "$READER_CLIENT_ID" ] || missing="$missing variable IDP_READER_CLIENT_ID,"`,
+		`[ "$READER_KEY_SET" = true ] || missing="$missing secret IDP_READER_PRIVATE_KEY,"`,
+	)
 }
 
 // TestE2EStatusTokenIsStepScoped: the job token carries statuses: write, so
