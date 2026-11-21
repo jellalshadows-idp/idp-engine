@@ -4,14 +4,14 @@ The harness drives `idp-claims-e2e` through the real pipelines at an engine comm
 
 ## What a run does
 
-Before step 1 it checks that the approver token can still read the runs of `idp-claims-e2e`, and refuses to start while claims, repositories or teams named `e2e-r<id>-app` or `e2e-r<id>-team` from an earlier run exist, while a reconcile, drift or recover run of `idp-claims-e2e` is unfinished (they share the `idp-wet` queue), or while a "Wet push failed" issue is open.
+Before step 1 it checks that the approver token can still read the runs of `idp-claims-e2e`, and refuses to start while claims, repositories or teams named `e2e-r<id>-app` or `e2e-r<id>-team` from an earlier run exist, while a reconcile, drift or recover run of `idp-claims-e2e` is unfinished (they share the `idp-wet` queue), while a "Wet push failed" issue is open, or while `config/platform.yaml` of `idp-claims-e2e` gives `dev` no `aws` block.
 
 1. Pins the four caller workflows of `idp-claims-e2e` to the commit under test, marked `# unreleased` because that commit is usually not a release (a PR, when they differ). That PR must plan `No infrastructure changes.`: anything else means claims the platform has not applied are on `main`.
-2. Creates `e2e-r<run>-team` and `e2e-r<run>-app` through a PR, merges it after `idp-gate`, waits for the automatic reconcile, and checks the repository, its active `idp-default-branch` ruleset, the team, its memberships, its `maintain` (not `admin`) grant on the repository, and the environment. The component's files are checked from Phase 4, when component templates exist.
-3. Updates the description and removes every topic. Its plan deletes the topics resource, because the GitHub provider clears topics only when that resource is destroyed. The harness requires that to be the only delete, and approves it under the same checks as step 6.
+2. Creates `e2e-r<run>-team` and `e2e-r<run>-app` through a PR, merges it after `idp-gate`, waits for the automatic reconcile, and checks the repository, its active `idp-default-branch` ruleset, the team, its memberships, its `maintain` (not `admin`) grant on the repository, and the environment. The Component has `aws.registry: true`, so the harness also requires the PR's plan to create the Component's AWS stack `aws/dev/components/e2e-r<run>-app` (creates only), the reconcile's `apply-aws` leg for it to succeed, its render `rendered/aws/dev/components/e2e-r<run>-app/main.tf.json` to be on `wet`, and `dev` to hold exactly `AWS_ROLE_ARN`, `ECR_REPOSITORY` and `AWS_REGION`, with spec §5.3's values for the account and region of `dev`'s `aws` block. It reads the variables with the reader App (see Credentials). The AWS resources live in the floci of each job and vanish with it (ADR-0030). The component's files are checked from Phase 4, when component templates exist.
+3. Updates the description and removes every topic. Its plan deletes the topics resource, because the GitHub provider clears topics only when that resource is destroyed. The harness requires that to be the only delete, and approves it under the same checks as step 6. The update leaves the AWS stack alone, and the harness checks the variables again.
 4. Changes only the case of a member login and expects `No infrastructure changes.`.
 5. Runs the drift check and expects no drift issue.
-6. Deletes the claims through a PR, approves that reconcile's `idp-approval` deployment, and checks the repository and team are gone.
+6. Deletes the claims through a PR, approves that reconcile's `idp-approval` deployment, and checks the repository and team are gone, the `apply-aws` leg destroyed the AWS stack, and its render left `wet`.
 7. Runs the drift check again.
 
 Only steps 3 and 6 and the cleanup approve anything, and only the reconcile of their own merge commit, so a run has two approvals: the topics delete and the final delete. A reconcile of steps 1, 2 and 4 that waits for `idp-approval` is rejected: nothing is applied, the queue frees, and the step fails.
@@ -19,7 +19,7 @@ Only steps 3 and 6 and the cleanup approve anything, and only the reconcile of t
 The harness trusts what it approves only as far as it checked it:
 
 - The plan comment must be the bot's own: a comment anyone else edited is refused, as the gate refuses it ([ADR-0018](adr/0018-plan-fingerprint-and-gate-trust.md)).
-- The comment's fingerprint must be for the PR's head, and a delete's fingerprint may destroy only `e2e-r<run>-*` resources. The update's fingerprint must destroy exactly the component's topics resource and nothing else.
+- The comment's fingerprint must be for the PR's head, and a delete's fingerprint may destroy only this run's `e2e-r<run>-*` modules in the `github` stack and the Component's own AWS stack, never the `dev` baseline. The update's fingerprint must destroy exactly the component's topics resource and nothing else.
 - Every merge is pinned to that head: GitHub refuses it if someone pushed to the branch.
 - Step 3 (the update) starts only from the `main` the create merge left, which reconciled with `apply-github` successful. Step 6 (the delete) starts only from the `main` its last merge left, which reconciled and then showed no drift. In both, the exact destroy-set check at the PR head bounds what gets approved.
 - After the update or a delete merges, its merge commit's first parent must be the `main` head the PR branched from. Otherwise someone else's commit reconciles with it: the harness rejects that reconcile if it waits for approval, and fails.
@@ -49,14 +49,15 @@ gh workflow run e2e.yaml --repo jellalshadows-idp/idp-engine --ref main -f relea
 
 ## Credentials
 
-Both live only in the `idp-engine` environment `idp-e2e` (deployment branch `main`):
+All three live only in the `idp-engine` environment `idp-e2e` (deployment branch `main`):
 
 | Name | What | Scope |
 |---|---|---|
 | `IDP_BOT_PRIVATE_KEY` (secret), `IDP_BOT_CLIENT_ID` (variable) | The bot App ([ADR-0026](adr/0026-automation-app.md)) | Installation tokens the harness mints itself and renews before the hour runs out, each for `idp-claims-e2e` only: actions write, checks read, contents write, issues read, members read, pull requests write, workflows write |
+| `IDP_READER_PRIVATE_KEY` (secret), `IDP_READER_CLIENT_ID` (variable) | A copy of the reader App's credentials ([ADR-0009](adr/0009-two-apps-and-split-environments.md)), the ones the claims repos hold | Installation tokens the harness mints itself, each for the repository the run created (`e2e-r<run>-app`) only: environments read. The first is minted at the first read, after the create step |
 | `IDP_E2E_APPROVER_TOKEN` (secret) | A fine-grained token of `jellalshadows`, the org owner and the only `idp-approval` reviewer of `idp-claims-e2e` | `idp-claims-e2e` only: Actions read, Deployments read and write |
 
-An installation token lives one hour and a run can last longer, so the harness mints the bot's tokens from the App key rather than receiving one. The key is passed only to the `run the harness` step, and the binary is built in an earlier step that sees no secret.
+An installation token lives one hour and a run can last longer, so the harness mints the bot's and the reader's tokens from their App keys rather than receiving them. The keys are passed only to the `run the harness` step, and the binary is built in an earlier step that sees no secret.
 
 The run's own `GITHUB_TOKEN` has `statuses: write`. The workflow sets it explicitly only on the two steps that post `idp-e2e` on a release PR head, and it never reaches the harness step's environment. Actions that default their `token` input to the job token (`actions/checkout`, `actions/setup-go`) receive it as usual.
 
@@ -70,9 +71,16 @@ gh api -X POST repos/jellalshadows-idp/idp-engine/environments/idp-e2e/deploymen
 # The bot App credentials, from the files `idp bootstrap app --role bot` wrote.
 gh secret set IDP_BOT_PRIVATE_KEY --env idp-e2e --repo jellalshadows-idp/idp-engine < ~/.idp/apps/jellalshadows-idp-bot.pem
 gh variable set IDP_BOT_CLIENT_ID --env idp-e2e --repo jellalshadows-idp/idp-engine --body "<client id from jellalshadows-idp-bot.json>"
+# The reader App credentials: the same App the claims repos use. The key comes
+# from the password manager (the bootstrap deletes the local .pem files); paste it.
+gh secret set IDP_READER_PRIVATE_KEY --env idp-e2e --repo jellalshadows-idp/idp-engine
+gh variable set IDP_READER_CLIENT_ID --env idp-e2e --repo jellalshadows-idp/idp-engine \
+  --body "$(gh variable get IDP_READER_CLIENT_ID --repo jellalshadows-idp/idp-claims-e2e)"
 # The approver token: the owner pastes it; it is never written to disk.
 gh secret set IDP_E2E_APPROVER_TOKEN --env idp-e2e --repo jellalshadows-idp/idp-engine
 ```
+
+`idp-claims-e2e`'s `config/platform.yaml` gives `dev` an `aws` block (`accountId: "000000000004"`, `region: eu-west-1`); the harness refuses to start without it.
 
 The approver must be listed as an approver of `idp-claims-e2e`, which `jellalshadows` already is: `idp bootstrap apply --org jellalshadows-idp --claims-repo idp-claims-e2e --approver jellalshadows …` ([bootstrap runbook](runbooks/bootstrap.md)).
 
@@ -91,7 +99,12 @@ Fine-grained tokens expire. Before the expiry date, sign in as `jellalshadows`, 
 - A failure in step 6, the delete itself, gets no automatic cleanup. Finish the delete through a PR as above; if the delete PR already merged, see the `main moved` entries below, or [A reconcile waits for approval](runbooks/pipelines.md#a-reconcile-waits-for-approval) when its reconcile is still waiting.
 - `re-running idp-e2e reuses its run id`: someone re-ran a run. Dispatch a new run.
 - `the approver token cannot read the claims repo's runs`: the token expired or lost its Actions read permission. Nothing was created. Rotate it ([Rotating the approver token](#rotating-the-approver-token)).
-- `mint a token for <owner>/<repo>: …`: the harness could not mint the bot's installation token. The cause is a wrong `IDP_BOT_CLIENT_ID` variable, a rotated or revoked key in `IDP_BOT_PRIVATE_KEY`, the bot App uninstalled from `idp-claims-e2e`, or a permission the App was not granted. The first token is minted in preflight, so the run fails before any claim is created and nothing is left behind. Fix the credential or the installation ([Setting up](#setting-up), [the bot App](runbooks/bootstrap.md#the-bot-app)) and dispatch a new run. If the message appears after preflight, a refresh failed mid-run once the cached token had a minute or less left; follow the cleanup advice above.
+- `mint a token for <owner>/idp-claims-e2e: …`: the harness could not mint the bot's installation token. The cause is a wrong `IDP_BOT_CLIENT_ID` variable, a rotated or revoked key in `IDP_BOT_PRIVATE_KEY`, the bot App uninstalled from `idp-claims-e2e`, or a permission the App was not granted. The first token is minted in preflight, so the run fails before any claim is created and nothing is left behind. Fix the credential or the installation ([Setting up](#setting-up), [the bot App](runbooks/bootstrap.md#the-bot-app)) and dispatch a new run. If the message appears after preflight, a refresh failed mid-run once the cached token had a minute or less left; follow the cleanup advice above.
+- `mint a token for <owner>/e2e-r<run>-app: …` or `read the variables of e2e-r<run>-app's environment dev: …`: the harness could not read the env variables with the reader App: a wrong `IDP_READER_CLIENT_ID`, a key in `IDP_READER_PRIVATE_KEY` that is not the reader's, the reader App not installed on all repositories, or a permission it lacks. The first reader token is minted after the create step, so the harness cleans up through the platform as above. Fix the credential ([Setting up](#setting-up)) and dispatch a new run.
+- `config/platform.yaml gives dev no aws block`: someone removed `dev`'s `aws` block from `idp-claims-e2e`. Nothing was created. Put it back through a PR.
+- `e2e-r<run>-app's environment dev variables = …`: the variables of the run's repository differ from spec §5.3. Compare the two maps in the message; the cause is in `modules/github/component` or `internal/naming`.
+- `the plan has no change for aws/dev/components/…`, `the plan would …` or `apply-aws aws/dev/components/…:`: the AWS stack was not planned, planned something besides creates, or its leg did not succeed. Read the PR's `plan-aws` and the reconcile's `apply-aws` logs. An empty conclusion after the colon means the leg was skipped.
+- `wet lacks rendered/aws/…` or `… is still on wet after the delete`: the reconcile did not commit or remove the AWS render; read its `prepare the wet commit` step. A render still on `wet` means the next drift run checks a stack whose claim is gone; delete it through the platform, never by hand.
 - `the plan comment on PR #<n> was edited by <login>`: someone edited the bot's plan comment on a harness PR, so the harness stopped before merging it. Find out who and why before the next run.
 - `main moved since the harness's last merge`: someone committed to `main` of `idp-claims-e2e` during the run. The harness opened no delete PR, so the `e2e-r<run>-*` claims and resources stay. Read the foreign commit, then delete the claims through a PR as above.
 - `main moved while PR #<n> was open: nothing was approved`: a commit landed on `main` while the delete PR was open, so the delete's reconcile also carried someone else's change. The harness rejected that reconcile if it waited for approval: the claim files are gone from `main`, but the resources may remain. Read the foreign commit, then dispatch a reconcile (`gh workflow run reconcile.yaml --repo jellalshadows-idp/idp-claims-e2e --ref main`) and approve its `idp-approval` deployment only if its plan destroys nothing but `e2e-r<run>-*` resources ([A reconcile waits for approval](runbooks/pipelines.md#a-reconcile-waits-for-approval)).
