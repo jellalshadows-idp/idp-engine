@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -47,13 +48,29 @@ func TestExec(t *testing.T) {
 	}
 }
 
-// TestEnv: a run against floci is the account's, by its access key ID
-// (ADR-0004), and never prompts.
+// TestEnv: OpenTofu gets only the passEnv variables of the job's environment,
+// then the account, the fixed secret access key and no prompt. A token, a
+// state key or a real AWS credential in the job never reaches it (R1-001).
 func TestEnv(t *testing.T) {
-	got := Env([]string{"PATH=/bin"}, "000000000001")
-	want := []string{"PATH=/bin", "AWS_ACCESS_KEY_ID=000000000001", "AWS_SECRET_ACCESS_KEY=floci-does-not-check-it", "TF_IN_AUTOMATION=1", "TF_INPUT=0"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Env = %v, want %v", got, want)
+	base := []string{
+		"PATH=/bin", "GITHUB_TOKEN=ghs_must_not_reach_tofu", "HOME=/home/runner", "TMPDIR=/tmp",
+		"ACTIONS_RUNTIME_TOKEN=runtime", "ACTIONS_ID_TOKEN_REQUEST_URL=https://token.example",
+		"HTTPS_PROXY=http://proxy:3128", "no_proxy=localhost", "SSL_CERT_FILE=/etc/ssl/cert.pem",
+		"TF_ENCRYPTION=key_provider", "TF_PLUGIN_CACHE_DIR=/cache", "TF_CLI_CONFIG_FILE=/x",
+		"AWS_ACCESS_KEY_ID=AKIAREAL", "AWS_SECRET_ACCESS_KEY=real", "AWS_SESSION_TOKEN=real", "AWS_PROFILE=prod",
+		"PATHEXT=.EXE", "HOMEDRIVE=C:", "malformed",
+	}
+	kept := slices.Clone(base)
+	tail := []string{"AWS_ACCESS_KEY_ID=000000000001", "AWS_SECRET_ACCESS_KEY=floci-does-not-check-it", "TF_IN_AUTOMATION=1", "TF_INPUT=0"}
+	want := append([]string{"PATH=/bin", "HOME=/home/runner", "TMPDIR=/tmp", "HTTPS_PROXY=http://proxy:3128", "no_proxy=localhost", "SSL_CERT_FILE=/etc/ssl/cert.pem"}, tail...)
+	if got := Env(base, "000000000001"); !reflect.DeepEqual(got, want) {
+		t.Errorf("Env =\n%v\nwant\n%v", got, want)
+	}
+	if !reflect.DeepEqual(base, kept) {
+		t.Errorf("Env changed its base: %v", base)
+	}
+	if got := Env(nil, "000000000001"); !reflect.DeepEqual(got, tail) {
+		t.Errorf("Env(nil) = %v, want %v", got, tail)
 	}
 }
 
