@@ -13,6 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"go.yaml.in/yaml/v3"
+
+	"github.com/jellalshadows-idp/idp-engine/internal/claims"
 	"github.com/jellalshadows-idp/idp-engine/internal/plan"
 )
 
@@ -67,6 +70,7 @@ type Scenario struct {
 	Member    string            // the harness team's member; its case changes in one step
 	Timeouts  Timeouts
 	names     Names
+	aws       claims.AWS     // dev's aws block in the claims repo's platform config
 	lastMerge string         // the merge commit of the harness's last merge
 	open      map[int]string // PRs this run opened and has not merged → their branches
 }
@@ -135,7 +139,7 @@ func (s *Scenario) validate() error {
 
 // preflight refuses a run that could not finish cleanly: an approver token
 // that no longer works, an unrecovered wet push, pipeline runs still going, or
-// anything an earlier run left behind.
+// anything an earlier run left behind. It also reads dev's aws block, which the AWS checks need.
 func (s *Scenario) preflight(ctx context.Context) error {
 	if err := s.F.CheckApprover(ctx); err != nil {
 		return err
@@ -176,7 +180,33 @@ func (s *Scenario) preflight(ctx context.Context) error {
 	if len(mine) > 0 {
 		return fmt.Errorf("%v exist: an earlier run left them behind (docs/e2e.md)", mine)
 	}
+	a, err := s.platformAWS(ctx)
+	if err != nil {
+		return err
+	}
+	s.aws = a
 	return nil
+}
+
+// platformAWS returns dev's aws block from config/platform.yaml on main: the
+// account and region the Component's env variables name (spec §5.3).
+func (s *Scenario) platformAWS(ctx context.Context) (claims.AWS, error) {
+	b, ok, err := s.F.File(ctx, "main", "config/platform.yaml")
+	if err != nil {
+		return claims.AWS{}, err
+	}
+	if !ok {
+		return claims.AWS{}, errors.New("config/platform.yaml is not on main")
+	}
+	var p claims.Platform
+	if err := yaml.Unmarshal(b, &p); err != nil {
+		return claims.AWS{}, fmt.Errorf("config/platform.yaml: %w", err)
+	}
+	dev := p.Environments["dev"]
+	if dev.AWS == nil || dev.AWS.AccountID == "" || dev.AWS.Region == "" {
+		return claims.AWS{}, errors.New("config/platform.yaml gives dev no aws block with an accountId and a region: the harness checks its Component's AWS part there (docs/e2e.md)")
+	}
+	return *dev.AWS, nil
 }
 
 func (s *Scenario) pin(ctx context.Context) error {
@@ -226,6 +256,9 @@ func (s *Scenario) create(ctx context.Context) error {
 		n.ComponentPath(): ComponentClaim(n.Component, "End-to-end harness repository", n.Group, []string{"e2e", "harness"}),
 	}
 	if err := s.change(ctx, "create", "feat: add the e2e harness claims "+n.Component, put); err != nil {
+		return err
+	}
+	if err := s.wantAWSRender(ctx, true); err != nil {
 		return err
 	}
 	return s.assertResources(ctx, "End-to-end harness repository", []string{"e2e", "harness"})
@@ -401,8 +434,16 @@ func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup boo
 	if cleanup {
 		mode = allowApproval
 	}
-	if _, err := s.waitReconcile(ctx, sha, mode, "delete "+s.names.Component+" and "+s.names.Group); err != nil {
+	jobs, err := s.waitReconcile(ctx, sha, mode, "delete "+s.names.Component+" and "+s.names.Group)
+	if err != nil {
 		return err
+	}
+	// A cleanup can run before the AWS stack was ever applied; the render
+	// check below holds on both paths.
+	if !cleanup {
+		if err := requireJobs(jobs, "reconcile / apply-aws "+s.names.AWSStack()); err != nil {
+			return err
+		}
 	}
 	for _, p := range []string{s.repoPath(), s.teamPath()} {
 		ok, err := s.F.Exists(ctx, p)
@@ -412,6 +453,9 @@ func (s *Scenario) deleteClaims(ctx context.Context, paths []string, cleanup boo
 		if ok {
 			return fmt.Errorf("%s still exists after the delete", p)
 		}
+	}
+	if err := s.wantAWSRender(ctx, false); err != nil {
+		return err
 	}
 	s.logf("e2e: %s and %s are gone", s.names.Component, s.names.Group)
 	return nil
@@ -469,7 +513,8 @@ func fingerprintOf(comment string, pr PR) (plan.Fingerprint, error) {
 
 // destroysOnlyOwnNames checks the plan comment's fingerprint was planned for
 // the PR's head, and that every delete or replace in it (complete even when
-// the rendered rows are truncated) belongs to one of this run's modules.
+// the rendered rows are truncated) belongs to one of this run's modules in the
+// github stack, or to its Component's AWS stack.
 func (s *Scenario) destroysOnlyOwnNames(comment string, pr PR) error {
 	fp, err := fingerprintOf(comment, pr)
 	if err != nil {
@@ -477,9 +522,12 @@ func (s *Scenario) destroysOnlyOwnNames(comment string, pr PR) error {
 	}
 	own := []string{"module.group_" + s.names.Group + ".", "module.component_" + s.names.Component + "."}
 	for _, entry := range fp.Destructive() {
-		_, address, _ := strings.Cut(entry, " ") // "stack: action address"
-		_, address, _ = strings.Cut(address, " ")
-		if !strings.HasPrefix(address, own[0]) && !strings.HasPrefix(address, own[1]) {
+		stack, rest, _ := strings.Cut(entry, ": ") // "stack: action address"
+		_, address, _ := strings.Cut(rest, " ")
+		switch {
+		case stack == s.names.AWSStack():
+		case stack == "github" && (strings.HasPrefix(address, own[0]) || strings.HasPrefix(address, own[1])):
+		default:
 			return fmt.Errorf("the delete would destroy something the harness does not own: %s", entry)
 		}
 	}
@@ -511,8 +559,9 @@ func (s *Scenario) withCleanup(ctx context.Context, cause error) error {
 }
 
 // change opens a pull request with put, waits for idp-gate, refuses a
-// destructive plan, merges, and requires the reconcile to apply without
-// approval.
+// destructive plan or one that does not create the Component's AWS stack,
+// merges, and requires the reconcile to apply both stacks without approval.
+// The create is its only caller.
 func (s *Scenario) change(ctx context.Context, slug, title string, put map[string][]byte) error {
 	pr, err := s.openPR(ctx, slug, title, put, nil)
 	if err != nil {
@@ -525,6 +574,9 @@ func (s *Scenario) change(ctx context.Context, slug, title string, put map[strin
 	if strings.Contains(comment, warning) {
 		return fmt.Errorf("the %s plan is destructive", slug)
 	}
+	if err := s.createsTheAWSStack(comment, pr); err != nil {
+		return err
+	}
 	sha, err := s.merge(ctx, pr, title)
 	if err != nil {
 		return err
@@ -533,8 +585,54 @@ func (s *Scenario) change(ctx context.Context, slug, title string, put map[strin
 	if err != nil {
 		return err
 	}
-	if jobs["reconcile / apply-github"] != "success" {
-		return fmt.Errorf("apply-github: %s", jobs["reconcile / apply-github"])
+	return requireJobs(jobs, "reconcile / apply-aws "+s.names.AWSStack(), "reconcile / apply-github")
+}
+
+// createsTheAWSStack checks the plan comment's fingerprint, planned for the
+// PR's head, has changes for the Component's AWS stack, and only creates: a
+// new Component has nothing to change or destroy in AWS.
+func (s *Scenario) createsTheAWSStack(comment string, pr PR) error {
+	fp, err := fingerprintOf(comment, pr)
+	if err != nil {
+		return err
+	}
+	stack := s.names.AWSStack()
+	if len(fp[stack]) == 0 {
+		return fmt.Errorf("the plan has no change for %s: the Component's registry is not planned", stack)
+	}
+	for _, c := range fp[stack] {
+		if c.Action != plan.Create {
+			return fmt.Errorf("the plan would %s %s in %s; a new Component only creates", c.Action, c.Address, stack)
+		}
+	}
+	return nil
+}
+
+// requireJobs checks each named job of a reconcile succeeded. A matrix leg is
+// named "reconcile / apply-aws <stack>"; a skipped one keeps its unexpanded
+// name, so it is missing here and fails.
+func requireJobs(jobs map[string]string, names ...string) error {
+	for _, n := range names {
+		if jobs[n] != "success" {
+			return fmt.Errorf("%s: %s", strings.TrimPrefix(n, "reconcile / "), jobs[n])
+		}
+	}
+	return nil
+}
+
+// wantAWSRender checks whether wet holds the Component's AWS render: the
+// reconcile commits it once its apply-aws leg succeeded, and removes it once
+// the destroy did (spec §6.2 step 4).
+func (s *Scenario) wantAWSRender(ctx context.Context, want bool) error {
+	_, ok, err := s.F.File(ctx, "wet", s.names.AWSRender())
+	if err != nil {
+		return err
+	}
+	switch {
+	case want && !ok:
+		return fmt.Errorf("wet lacks %s after the reconcile", s.names.AWSRender())
+	case !want && ok:
+		return fmt.Errorf("%s is still on wet after the delete", s.names.AWSRender())
 	}
 	return nil
 }
@@ -762,6 +860,20 @@ func (s *Scenario) assertResources(ctx context.Context, description string, topi
 	i := slices.IndexFunc(granted, func(g grant) bool { return g.Name == s.names.Component })
 	if i < 0 || !granted[i].Permissions.Maintain || granted[i].Permissions.Admin {
 		return fmt.Errorf("team %s must maintain %s without admin (repositories %+v)", s.names.Group, s.names.Component, granted)
+	}
+	got, err := s.F.EnvVariables(ctx, s.names.Component, "dev")
+	if err != nil {
+		return err
+	}
+	// Spec §5.3's formulas, written out here rather than computed by
+	// internal/naming, so a naming regression cannot pass its own check.
+	want := map[string]string{
+		"AWS_ROLE_ARN":   "arn:aws:iam::" + s.aws.AccountID + ":role/" + s.names.Component + "-dev-ci",
+		"ECR_REPOSITORY": s.aws.AccountID + ".dkr.ecr." + s.aws.Region + ".amazonaws.com/" + s.names.Component,
+		"AWS_REGION":     s.aws.Region,
+	}
+	if !maps.Equal(got, want) {
+		return fmt.Errorf("%s's environment dev variables = %v, want exactly %v (spec §5.3)", s.names.Component, got, want)
 	}
 	s.logf("e2e: %s and %s match the claims", s.names.Component, s.names.Group)
 	return nil

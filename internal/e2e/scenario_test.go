@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -37,6 +38,25 @@ func world(t *testing.T) (*fakeForge, *Scenario) {
 		f.main[".github/workflows/"+n] = b
 	}
 	repo, team := "/repos/acme/e2e-r42-app", "/orgs/acme/teams/e2e-r42-team"
+	f.main["config/platform.yaml"] = []byte("apiVersion: idp/v1\nkind: Platform\nenvironments:\n  dev:\n    aws:\n      accountId: \"000000000004\"\n      region: eu-west-1\n")
+	stack := "aws/dev/components/e2e-r42-app"
+	render := "rendered/" + stack + "/main.tf.json"
+	// Spec §5.3's values for e2e-r42-app in dev, written out.
+	awsVars := map[string]string{
+		"AWS_ROLE_ARN":   "arn:aws:iam::000000000004:role/e2e-r42-app-dev-ci",
+		"ECR_REPOSITORY": "000000000004.dkr.ecr.eu-west-1.amazonaws.com/e2e-r42-app",
+		"AWS_REGION":     "eu-west-1",
+	}
+	f.fps["create"] = plan.Fingerprint{
+		"github": {{Address: "module.component_e2e-r42-app.github_repository.this", Action: plan.Create}},
+		stack: {
+			{Address: "module.component.aws_ecr_repository.this", Action: plan.Create},
+			{Address: "module.component.aws_iam_role.ci", Action: plan.Create},
+			{Address: "module.component.aws_iam_role_policy.push", Action: plan.Create},
+		},
+	}
+	f.jobs["create"] = map[string]string{"reconcile / apply-aws " + stack: "success"}
+	f.jobs["delete"] = map[string]string{"reconcile / apply-aws " + stack: "success"}
 	f.effects["create"] = func(f *fakeForge) {
 		f.paths[repo] = map[string]any{"visibility": "public", "description": "End-to-end harness repository", "topics": []string{"e2e", "harness"}}
 		f.paths[team] = map[string]any{"privacy": "closed"}
@@ -45,6 +65,8 @@ func world(t *testing.T) (*fakeForge, *Scenario) {
 		f.paths[repo+"/environments"] = map[string]any{"environments": []any{map[string]any{"name": "dev"}}}
 		f.paths[repo+"/rulesets"] = []any{map[string]any{"name": "idp-default-branch", "enforcement": "active"}}
 		f.paths[team+"/repos"] = []any{map[string]any{"name": "e2e-r42-app", "permissions": map[string]any{"admin": false, "maintain": true, "push": true}}}
+		f.vars["e2e-r42-app/dev"] = maps.Clone(awsVars)
+		f.wet[render] = []byte("{}")
 	}
 	f.effects["update"] = func(f *fakeForge) {
 		f.paths[repo] = map[string]any{"visibility": "public", "description": "End-to-end harness repository, updated", "topics": []string{}}
@@ -58,10 +80,17 @@ func world(t *testing.T) (*fakeForge, *Scenario) {
 	f.comments["case"] = "No infrastructure changes."
 	f.comments["pin"] = "No infrastructure changes."
 	f.comments["delete"] = "<code>github</code>: +0 ~0 -8 ±0\n> [!WARNING]"
-	f.fps["delete"] = plan.Fingerprint{"github": {
-		{Address: "module.component_e2e-r42-app.github_repository.this", Action: plan.Delete},
-		{Address: "module.group_e2e-r42-team.github_team.this", Action: plan.Delete},
-	}}
+	f.fps["delete"] = plan.Fingerprint{
+		"github": {
+			{Address: "module.component_e2e-r42-app.github_repository.this", Action: plan.Delete},
+			{Address: "module.group_e2e-r42-team.github_team.this", Action: plan.Delete},
+		},
+		stack: {
+			{Address: "module.component.aws_ecr_repository.this", Action: plan.Delete},
+			{Address: "module.component.aws_iam_role.ci", Action: plan.Delete},
+			{Address: "module.component.aws_iam_role_policy.push", Action: plan.Delete},
+		},
+	}
 	f.approval["delete"] = true
 	f.effects["delete"] = func(f *fakeForge) {
 		for p := range f.paths {
@@ -69,6 +98,8 @@ func world(t *testing.T) (*fakeForge, *Scenario) {
 				delete(f.paths, p)
 			}
 		}
+		delete(f.wet, render)
+		delete(f.vars, "e2e-r42-app/dev")
 	}
 	s := &Scenario{
 		F: f, Clock: &fakeClock{}, Log: io.Discard, Org: "acme", Run: "42", EngineSHA: testSHA,
@@ -613,5 +644,134 @@ func TestUpdateRequiresTheReconcileToAskForApproval(t *testing.T) {
 	err := s.Execute(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "update: reconcile run 502 finished without asking for approval") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+const testStack = "aws/dev/components/e2e-r42-app"
+
+// TestScenarioChecksTheEnvVariables: after the create and the update, dev must
+// hold exactly spec §5.3's three AWS variables, for the platform's dev account
+// and region.
+func TestScenarioChecksTheEnvVariables(t *testing.T) {
+	for name, edit := range map[string]func(map[string]string){
+		"wrong role":     func(v map[string]string) { v["AWS_ROLE_ARN"] = "arn:aws:iam::000000000004:role/e2e-r42-app-ci" },
+		"no registry":    func(v map[string]string) { delete(v, "ECR_REPOSITORY") },
+		"other region":   func(v map[string]string) { v["AWS_REGION"] = "us-east-1" },
+		"extra variable": func(v map[string]string) { v["AWS_ACCOUNT_ID"] = "000000000004" },
+	} {
+		f, s := world(t)
+		create := f.effects["create"]
+		f.effects["create"] = func(f *fakeForge) { create(f); edit(f.vars["e2e-r42-app/dev"]) }
+		err := s.Execute(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "create: e2e-r42-app's environment dev variables = ") || slices.Contains(f.log, "pr update") {
+			t.Errorf("%s: err = %v: the create must fail before the update", name, err)
+		}
+	}
+	f, s := world(t)
+	update := f.effects["update"]
+	f.effects["update"] = func(f *fakeForge) { update(f); delete(f.vars["e2e-r42-app/dev"], "AWS_REGION") }
+	if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "update: e2e-r42-app's environment dev variables = ") {
+		t.Errorf("update: err = %v: the variables are checked after the update too", err)
+	}
+}
+
+func TestPreflightRequiresAnAWSBlockForDev(t *testing.T) {
+	for name, cfg := range map[string]string{
+		"no aws block": "environments:\n  dev: {}\n",
+		"no region":    "environments:\n  dev:\n    aws:\n      accountId: \"000000000004\"\n",
+		"no dev":       "environments:\n  staging:\n    aws:\n      accountId: \"000000000004\"\n      region: eu-west-1\n",
+	} {
+		f, s := world(t)
+		f.main["config/platform.yaml"] = []byte(cfg)
+		err := s.Execute(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "preflight: config/platform.yaml gives dev no aws block") || len(f.log) > 0 {
+			t.Errorf("%s: err = %v, steps %v: the run must stop before it creates anything", name, err, f.log)
+		}
+	}
+	f, s := world(t)
+	delete(f.main, "config/platform.yaml")
+	if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "preflight: config/platform.yaml is not on main") {
+		t.Errorf("no config: err = %v", err)
+	}
+}
+
+func TestCreateRequiresTheAWSStackPlannedAndApplied(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		mutate func(*fakeForge)
+		want   string
+		merged bool
+	}{
+		{"not planned", func(f *fakeForge) { delete(f.fps["create"], testStack) }, "create: the plan has no change for " + testStack, false},
+		{"an update", func(f *fakeForge) { f.fps["create"][testStack][0].Action = plan.Update }, "create: the plan would update module.component.aws_ecr_repository.this in " + testStack, false},
+		// GitHub skips a job after a skipped one (Phase 2e lesson a): the
+		// run succeeds, and the leg keeps its unexpanded name.
+		{"apply skipped", func(f *fakeForge) { delete(f.jobs["create"], "reconcile / apply-aws "+testStack) }, "create: apply-aws " + testStack + ": ", true},
+	} {
+		f, s := world(t)
+		tt.mutate(f)
+		err := s.Execute(context.Background())
+		if err == nil || !strings.Contains(err.Error(), tt.want) || slices.Contains(f.log, "merge create") != tt.merged {
+			t.Errorf("%s: err = %v, merged %v, want %q", tt.name, err, slices.Contains(f.log, "merge create"), tt.want)
+		}
+	}
+}
+
+func TestCreateRequiresTheAWSRenderOnWet(t *testing.T) {
+	f, s := world(t)
+	create := f.effects["create"]
+	f.effects["create"] = func(f *fakeForge) { create(f); delete(f.wet, "rendered/"+testStack+"/main.tf.json") }
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "create: wet lacks rendered/"+testStack+"/main.tf.json after the reconcile") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeleteDestroysTheAWSStack(t *testing.T) {
+	render := "rendered/" + testStack + "/main.tf.json"
+	t.Run("the destroy was skipped", func(t *testing.T) {
+		f, s := world(t)
+		delete(f.jobs["delete"], "reconcile / apply-aws "+testStack)
+		if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "delete: apply-aws "+testStack+": ") {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("the render stayed on wet", func(t *testing.T) {
+		f, s := world(t)
+		del := f.effects["delete"]
+		f.effects["delete"] = func(f *fakeForge) { del(f); f.wet[render] = []byte("{}") }
+		if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "delete: "+render+" is still on wet after the delete") {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("the cleanup checks the render too", func(t *testing.T) {
+		f, s := world(t)
+		f.gate["update"] = "failure"
+		del := f.effects["delete"]
+		f.effects["delete"] = func(f *fakeForge) { del(f); f.wet[render] = []byte("{}") }
+		if err := s.Execute(context.Background()); err == nil || !strings.Contains(err.Error(), "cleanup: "+render+" is still on wet after the delete") {
+			t.Errorf("err = %v", err)
+		}
+	})
+}
+
+// TestDeleteAllowsOnlyItsOwnAWSStack: the delete may destroy its Component's
+// AWS stack, never the dev baseline, another Component's stack or an own name
+// in another environment. A module address of this run counts only in the
+// github stack (a deliberate tightening, D-4).
+func TestDeleteAllowsOnlyItsOwnAWSStack(t *testing.T) {
+	for _, foreign := range []struct{ stack, address string }{
+		{"aws/dev/_baseline", "module.baseline.aws_iam_openid_connect_provider.this"},
+		{"aws/dev/components/e2e-r43-app", "module.component.aws_ecr_repository.this"},
+		{"aws/staging/components/e2e-r42-app", "module.component.aws_ecr_repository.this"},
+		{"aws/dev/components/api", "module.component_e2e-r42-app.github_repository.this"},
+	} {
+		f, s := world(t)
+		f.fps["delete"][foreign.stack] = []plan.Change{{Address: foreign.address, Action: plan.Delete}}
+		err := s.Execute(context.Background())
+		want := "does not own: " + foreign.stack + ": delete " + foreign.address
+		if err == nil || !strings.Contains(err.Error(), want) || slices.Contains(f.log, "merge delete") {
+			t.Errorf("%s: err = %v, want %q and no merge", foreign.stack, err, want)
+		}
 	}
 }

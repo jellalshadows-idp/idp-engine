@@ -36,6 +36,8 @@ type fakeForge struct {
 	checkErr error                        // what CheckApprover answers
 	unbranch error                        // what DeleteBranch answers
 	vars     map[string]map[string]string // "repo/env" → its variables
+	wet      map[string][]byte            // files on wet
+	jobs     map[string]map[string]string // slug → reconcile jobs added to or overriding the defaults
 	active   []Run
 	written  []string
 	drifts   int
@@ -51,6 +53,7 @@ func newFakeForge() *fakeForge {
 		approval: map[string]bool{}, approved: map[int64]bool{}, notes: map[int64]string{},
 		rejected: map[int64]bool{}, raw: map[string]string{}, fps: map[string]plan.Fingerprint{}, failRun: map[string]bool{},
 		parent: map[string]string{}, vars: map[string]map[string]string{},
+		wet: map[string][]byte{}, jobs: map[string]map[string]string{},
 	}
 }
 
@@ -84,10 +87,11 @@ func (f *fakeForge) CreateBranch(_ context.Context, branch, _ string) error {
 }
 
 func (f *fakeForge) File(_ context.Context, ref, path string) ([]byte, bool, error) {
-	if ref != "main" {
+	files, ok := map[string]map[string][]byte{"main": f.main, "wet": f.wet}[ref]
+	if !ok {
 		return nil, false, fmt.Errorf("unexpected ref %s", ref)
 	}
-	b, ok := f.main[path]
+	b, ok := files[path]
 	return b, ok, nil
 }
 
@@ -194,7 +198,9 @@ func (f *fakeForge) Jobs(_ context.Context, id int64) (map[string]string, error)
 	if f.approval[f.merged[fakeSHA(int(id-500))]] {
 		approve = "success"
 	}
-	return map[string]string{"reconcile / plan": "success", "reconcile / approve": approve, "reconcile / apply-github": "success"}, nil
+	jobs := map[string]string{"reconcile / plan": "success", "reconcile / approve": approve, "reconcile / apply-github": "success"}
+	maps.Copy(jobs, f.jobs[f.merged[fakeSHA(int(id-500))]])
+	return jobs, nil
 }
 
 func (f *fakeForge) Dispatch(_ context.Context, workflow, _ string) error {
