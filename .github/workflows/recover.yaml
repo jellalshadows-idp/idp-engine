@@ -100,8 +100,12 @@ jobs:
           # The issue body can be edited: its ID counts only once the API names
           # it as this run's unexpired idp-wet-root. The path is scoped to this
           # repository, so another repository's artifact answers 404.
-          info="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" --jq '[.name, (.workflow_run.id | tostring), (.expired | tostring)] | @tsv')"
-          read -r name run expired <<<"$info"
+          if ! info="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" --jq '[.name, (.workflow_run.id | tostring), (.expired | tostring)] | @tsv')"; then
+            echo "::error::artifact $ARTIFACT_ID, which the issue names, cannot be read in this repository: it was deleted, or someone edited the issue. Follow the runbook (docs/runbooks/pipelines.md#a-wet-push-failed)."
+            exit 1
+          fi
+          # Tab only: the default IFS trims spaces, so "idp-wet-root " would pass.
+          IFS=$'\t' read -r name run expired <<<"$info"
           if [ "$name" != idp-wet-root ] || [ "$run" != "$RUN_ID" ]; then
             echo "::error::artifact $ARTIFACT_ID, which the issue names, is not the idp-wet-root of run $RUN_ID (name: $name, run: $run): someone edited the issue. Follow the runbook (docs/runbooks/pipelines.md#a-wet-push-failed)."
             exit 1

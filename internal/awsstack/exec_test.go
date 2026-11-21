@@ -72,6 +72,16 @@ func TestEnv(t *testing.T) {
 	if got := Env(nil, "000000000001"); !reflect.DeepEqual(got, tail) {
 		t.Errorf("Env(nil) = %v, want %v", got, tail)
 	}
+	// Every name of the allowlist, and only those, is kept.
+	allow := []string{"PATH", "HOME", "TMPDIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR"}
+	for _, name := range allow {
+		if got := Env([]string{name + "=v"}, "000000000001"); len(got) != len(tail)+1 || got[0] != name+"=v" {
+			t.Errorf("Env drops %s: %v", name, got)
+		}
+	}
+	if len(passEnv) != len(allow) {
+		t.Errorf("passEnv has %d names, want the %d of the allowlist", len(passEnv), len(allow))
+	}
 }
 
 // TestWriteOverride pins what CI adds to a rendered AWS stack for floci (spec

@@ -68,12 +68,21 @@ func TestRecoverChecksTheRunAndTheWetBase(t *testing.T) {
 		"ARTIFACT_ID": "${{ steps.issue-check.outputs.artifact-id }}",
 	})
 	wantRun(t, "recover artifact-check", art,
-		`info="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" --jq '[.name, (.workflow_run.id | tostring), (.expired | tostring)] | @tsv')"`,
-		`read -r name run expired <<<"$info"`,
+		`if ! info="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" --jq '[.name, (.workflow_run.id | tostring), (.expired | tostring)] | @tsv')"; then`,
+		`cannot be read in this repository: it was deleted, or someone edited the issue.`,
+		// Tab only: the default IFS would trim spaces, so "idp-wet-root " would pass.
+		`IFS=$'\t' read -r name run expired <<<"$info"`,
 		`if [ "$name" != idp-wet-root ] || [ "$run" != "$RUN_ID" ]; then`,
 		`if [ "$expired" != false ]; then`,
 		`echo "artifact-id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"`,
 	)
+	// Both checks gate the download: neither may be skipped or let fail, or
+	// an empty artifact ID would make the download fetch every artifact of the run.
+	for _, s := range []step{issue, art} {
+		if s.If != "" || s.ContinueOnError != "" {
+			t.Errorf("recover %s: if %q, continue-on-error %q; it must always run and stop the job when it fails", s.ID, s.If, s.ContinueOnError)
+		}
+	}
 	iDL, dl := mustStep(t, "recover", r.Steps, "download")
 	wantWith(t, "recover download", dl, map[string]string{
 		"artifact-ids":   "${{ steps.artifact-check.outputs.artifact-id }}",
