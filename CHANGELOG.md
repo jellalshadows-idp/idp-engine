@@ -1,5 +1,98 @@
 # Changelog
 
+## [0.2.0](https://github.com/jellalshadows-idp/idp-engine/compare/v0.1.1...v0.2.0) (2026-11-21)
+
+
+### Features
+
+* **awsstack:** replay, plan and apply one aws stack against floci ([97a500a](https://github.com/jellalshadows-idp/idp-engine/commit/97a500a1ea1ada4b8c7836d48ab36afa179e1b0c))
+* **claims:** accept a component's aws registry ([85b655d](https://github.com/jellalshadows-idp/idp-engine/commit/85b655d98657b52471e00d2cf0f34677b8942bb2))
+* **claims:** accept only regions of the standard aws partition ([153328a](https://github.com/jellalshadows-idp/idp-engine/commit/153328ae18914ab6af4e7c49325e208726fb6f92))
+* **claims:** give each environment its own aws account ([f8db48f](https://github.com/jellalshadows-idp/idp-engine/commit/f8db48fc6c1981e09038d9784493c62cdfee31fa))
+* **claims:** model the environments' aws account and region ([8fc2e11](https://github.com/jellalshadows-idp/idp-engine/commit/8fc2e110f3a2eb284da5dbe1f20cbe5c37525021))
+* **claims:** require an aws block for every environment of an aws component ([c6f416d](https://github.com/jellalshadows-idp/idp-engine/commit/c6f416d81030684cf5c2fe13b85136849e18014e))
+* **cli:** add idp aws-stack to plan and apply one aws stack ([1febc6c](https://github.com/jellalshadows-idp/idp-engine/commit/1febc6cd85db4684e57e7dc6ca5d2463f8e889e3))
+* **cli:** add idp stacks, the allowlist and matrix of the aws stacks ([750996f](https://github.com/jellalshadows-idp/idp-engine/commit/750996f8f2f67f3ca04e93007f7aa49b1d3bb981))
+* **cli:** add idp wet-root to prepare the wet commit of a reconcile ([c573077](https://github.com/jellalshadows-idp/idp-engine/commit/c5730775ae06f011733a5700343e8d3a88dacf7d))
+* **lockfiles:** ship the aws provider lock file ([6c646c3](https://github.com/jellalshadows-idp/idp-engine/commit/6c646c3e11d7cf640ec95398aae87f5f6fa2a09d))
+* **modules:** add the aws baseline module ([bc4e9db](https://github.com/jellalshadows-idp/idp-engine/commit/bc4e9db9b528035677e3b4f189c16719f4cee261))
+* **modules:** add the aws component module ([d3377cc](https://github.com/jellalshadows-idp/idp-engine/commit/d3377cc764a915657ecd65437962bfd48e3d2c59))
+* **modules:** create the environments' github actions variables ([e33e834](https://github.com/jellalshadows-idp/idp-engine/commit/e33e834b66abafa23b1f359d56add018f1283d55))
+* **naming:** add the deterministic aws identities ([4a3616a](https://github.com/jellalshadows-idp/idp-engine/commit/4a3616a71f964f142b0ef810dd4c1eb60e80cf2f))
+* phase 2a aws model of the platform and the component ([fca5c0b](https://github.com/jellalshadows-idp/idp-engine/commit/fca5c0bc101311cb6629a2f621be0c3c607be52a))
+* phase 2b deterministic env variables ([c6aa267](https://github.com/jellalshadows-idp/idp-engine/commit/c6aa26742a0306b49800000919e21f872859f61c))
+* phase 2c aws modules and floci tests ([368e5a3](https://github.com/jellalshadows-idp/idp-engine/commit/368e5a387fc87b5c428b924adf316ff6dc67f640))
+* phase 2d render the aws stacks ([76e23ab](https://github.com/jellalshadows-idp/idp-engine/commit/76e23ab689e0956b3b3bb0fefb38f7e919dfc38c))
+* phase 2e aws plan and apply in the pipelines ([531d63b](https://github.com/jellalshadows-idp/idp-engine/commit/531d63b732db953d7d6e8fece27530735e6ee3f7))
+* phase 2e plan and apply one aws stack against floci ([fb24c40](https://github.com/jellalshadows-idp/idp-engine/commit/fb24c4041fbf8a300ee0330640b4c5fdeec3fdd5))
+* phase 2e stack names, reduced plans and the wet state guard ([434633d](https://github.com/jellalshadows-idp/idp-engine/commit/434633dd88ffa7927f799d17017e08b98e50351f))
+* **plan:** reduce plans to addresses and actions, and summarize a plan dir ([b10da82](https://github.com/jellalshadows-idp/idp-engine/commit/b10da825fbad558a1d2947cfa85f0f66ef5382f1))
+* **pr:** plan each AWS stack against floci and summarize the reduced plans ([61a4a6c](https://github.com/jellalshadows-idp/idp-engine/commit/61a4a6cdf91fe51483f6e6fec3acefb6a9add18c))
+* **reconcile:** plan, gate and apply each AWS stack against floci and commit what applied ([de6cb39](https://github.com/jellalshadows-idp/idp-engine/commit/de6cb3930f6fa6f74e4a9b6998c2346f27ba5f32))
+* **recover:** push the paths the reconcile listed ([8ce25f8](https://github.com/jellalshadows-idp/idp-engine/commit/8ce25f8181ee877652f494bf33f3c3695d210e64))
+* **render:** pass the aws env variables of registry components ([2c23e0b](https://github.com/jellalshadows-idp/idp-engine/commit/2c23e0b75f1de043c41f964b3b0db7e9f2d4c4b4))
+* **render:** render the aws stacks of every environment and registry component ([81684b0](https://github.com/jellalshadows-idp/idp-engine/commit/81684b01f7be18c91c83761d1b61b6bc28b23130))
+* **wetpush:** refuse to commit any state but the github stack's ([614c33e](https://github.com/jellalshadows-idp/idp-engine/commit/614c33e73954ee4fe076b45ddd12012547bdd875))
+
+
+### Bug Fixes
+
+* **awsstack:** pass tofu only an allowlist of the job environment ([f7db005](https://github.com/jellalshadows-idp/idp-engine/commit/f7db0053fa730b277d22bbe48185d6e642757cf2))
+* **awsstack:** report a partial apply, test runner failures, absolute work and regular files only ([b40d1ca](https://github.com/jellalshadows-idp/idp-engine/commit/b40d1ca99c88595934fe7f6347adbb1e0c4e1745))
+* **claims:** order environments on one line by name ([89628ef](https://github.com/jellalshadows-idp/idp-engine/commit/89628ef01b02b113a2755b9d0f3b7edda23df0ab))
+* **cli:** bound the applied-marker read and describe the plan-dir layout the pipelines build ([527beda](https://github.com/jellalshadows-idp/idp-engine/commit/527beda7cbde3e9eecfd7819e945431521cdd8f0))
+* **cli:** keep an orphan baseline that --wet does not hold, and skip files among wet's components ([ea586a8](https://github.com/jellalshadows-idp/idp-engine/commit/ea586a866f40b0873310d72f73752f2f5b2f85ca))
+* **cli:** keep an orphan baseline while its components stay in wet, and leave foreign markers out ([c4f8729](https://github.com/jellalshadows-idp/idp-engine/commit/c4f8729984d40a23b1aff785242c12b4616d9fd1))
+* **cli:** leave state files out of the wet root so the github state still commits ([fc11355](https://github.com/jellalshadows-idp/idp-engine/commit/fc11355f63205c9ba80a0ccd64c2e340ac72296c))
+* **cli:** never delete the github render from wet, and share wet's one state path ([0b51f26](https://github.com/jellalshadows-idp/idp-engine/commit/0b51f2683f270eb814ebc1f95bb452df8a33e828))
+* **cli:** read each reduced plan from its own artifact and require one account per wet env ([63b62df](https://github.com/jellalshadows-idp/idp-engine/commit/63b62dfdffa688641e1aea6cf907cda7b25f9b08))
+* **cli:** refuse duplicate stacks, unreadable wet accounts and any-case state files ([dfb17c9](https://github.com/jellalshadows-idp/idp-engine/commit/dfb17c97b4630e05ebf8ecd5067b25c62c1aaec8))
+* Phase 2f AWS hardening (tofu env allowlist, recover artifact check, no process substitution) ([fbeaeca](https://github.com/jellalshadows-idp/idp-engine/commit/fbeaecad6dbe7a0e3cdba37c7980a58fb040ab93))
+* **reconcile:** replace a wet-root artifact a floci job uploaded first ([0bea58d](https://github.com/jellalshadows-idp/idp-engine/commit/0bea58db0632d0d59f6fc8e58e131dda8f919b48))
+* **reconcile:** run the approval after a skipped plan-aws ([a577c34](https://github.com/jellalshadows-idp/idp-engine/commit/a577c34abd8ff46233cf1e90324b64de489cfbf9))
+* **reconcile:** run the approval after a skipped plan-aws ([404a306](https://github.com/jellalshadows-idp/idp-engine/commit/404a3064f315ca101da01c65be850cd94d1afcc0))
+* **recover:** check the artifact the issue names through the API before the download ([252335d](https://github.com/jellalshadows-idp/idp-engine/commit/252335d1dc9125518124ca1f9b801a587cccf3cd))
+* **recover:** split the artifact fields on tabs only and name the runbook when the artifact is gone ([e58d6fc](https://github.com/jellalshadows-idp/idp-engine/commit/e58d6fc367b9121a5b5d9309d814ad183f3e7fcb))
+* **workflows:** fail a run step whose jq or gh fails, and name each skipped AWS plan ([e4f013c](https://github.com/jellalshadows-idp/idp-engine/commit/e4f013c23349d33eeab552f1a92177db582b06c2))
+* **workflows:** lay plans out whatever the artifact count, recover the wet root by id, and start no job in a cancelled run ([a6de728](https://github.com/jellalshadows-idp/idp-engine/commit/a6de728e8b9554b3ef87a8d0b44bc269b238c56c))
+
+
+### Code Refactoring
+
+* **cli:** name a downloaded plan file with planFileIn ([8f2de8f](https://github.com/jellalshadows-idp/idp-engine/commit/8f2de8fe2ada9a6f24858e404b81202eae81f922))
+* **render:** resolve module sources for a stack at any depth ([626e76b](https://github.com/jellalshadows-idp/idp-engine/commit/626e76b4ddf8151543f9e6212de3ea9371465230))
+
+
+### Documentation
+
+* add the apply outcome and feature bumps to the roadmap (spec amendment a15) ([7ff0dcd](https://github.com/jellalshadows-idp/idp-engine/commit/7ff0dcd1f16e66a28986da7b8775aad026536bdd))
+* add the phase 2a execution log ([854c62a](https://github.com/jellalshadows-idp/idp-engine/commit/854c62adaebf3e0a7974b2be718643e47bc44946))
+* add the phase 2a plan ([1ccc1d7](https://github.com/jellalshadows-idp/idp-engine/commit/1ccc1d749d32354d8b4c25c8ca07581b36bab3d2))
+* add the phase 2b execution log ([4ff3ee8](https://github.com/jellalshadows-idp/idp-engine/commit/4ff3ee8d8753195aaddcb66ccec7f4299d4ebb09))
+* add the phase 2b plan ([d792548](https://github.com/jellalshadows-idp/idp-engine/commit/d792548a29a15119ff40b9c998647c2f958ce8df))
+* add the phase 2c execution log ([e521466](https://github.com/jellalshadows-idp/idp-engine/commit/e521466f81d145d3c51599cba233eab31d11b0ab))
+* add the phase 2c plan ([7d1b009](https://github.com/jellalshadows-idp/idp-engine/commit/7d1b009bb82e241a771613f5f9f85016903f3034))
+* add the phase 2d execution log ([19e65bd](https://github.com/jellalshadows-idp/idp-engine/commit/19e65bd0ff46ad103e1b02b001e4dabe57e85dee))
+* add the phase 2d plan ([843e185](https://github.com/jellalshadows-idp/idp-engine/commit/843e1855c4d1219d39f3eaf0949da851217f4e7c))
+* add the phase 2e execution log ([b0fb772](https://github.com/jellalshadows-idp/idp-engine/commit/b0fb772e579dc55993e890f8984202f5b00a4fd1))
+* add the phase 2e plan ([1d739c0](https://github.com/jellalshadows-idp/idp-engine/commit/1d739c01082dd37c355affaf86ffe016f069927d))
+* add the phase 2f plan ([0f11a4a](https://github.com/jellalshadows-idp/idp-engine/commit/0f11a4acd872c36f2131c44f5985a9aaec1f9c80))
+* **cli:** document stacks, aws-stack, plan-reduce and wet-root ([0b09039](https://github.com/jellalshadows-idp/idp-engine/commit/0b09039f591fd4c5d3133521f711deb484657c3d))
+* **cli:** document the wet-root keeps and leave-outs and a partial aws apply ([ae8a29d](https://github.com/jellalshadows-idp/idp-engine/commit/ae8a29d8f9a9a79cb3dae7b8da28368b3c04fcf6))
+* describe the rendered aws stacks and nested stack discovery ([25ebb13](https://github.com/jellalshadows-idp/idp-engine/commit/25ebb13a9c26e6669dc1a1c4eafaa4a86d828137))
+* download trusted artifacts by id and record the wet account rules (adr-0031, a14) ([ec2b685](https://github.com/jellalshadows-idp/idp-engine/commit/ec2b685ebf48ab9d1816da54076a7c7d3bb0c17a))
+* keep each plan artifact in its own directory (adr-0031) ([b324755](https://github.com/jellalshadows-idp/idp-engine/commit/b3247550c0baad2f3516c94feedfc60442249ae5))
+* **naming:** support only the standard aws partition ([acaf514](https://github.com/jellalshadows-idp/idp-engine/commit/acaf5140418aaf649e11b68da35e3e505ea697f5))
+* **pipelines:** document the aws jobs, their artifacts and runbook ([8205a0b](https://github.com/jellalshadows-idp/idp-engine/commit/8205a0bef75f96f994ec555749007e825852a792))
+* record the aws account checks and the floci test (spec amendment a12) ([859a896](https://github.com/jellalshadows-idp/idp-engine/commit/859a89667a79d0b33a93e568a913d410ccbc9a59))
+* record the aws pipelines in amendment a14 and adr-0031 ([880beb8](https://github.com/jellalshadows-idp/idp-engine/commit/880beb87a7b12972e48fa84cacf5113e8fb4ef67))
+* record the cross-stack aws plan bound and recovering before an engine upgrade ([0bf9bb2](https://github.com/jellalshadows-idp/idp-engine/commit/0bf9bb27984fb8bd31de2d09d67ef19e02476d5c))
+* record the level-3 replay scope and the floci image trust ([3f91c62](https://github.com/jellalshadows-idp/idp-engine/commit/3f91c6230704e31d78dfc0ee44350f66da040b59))
+* record the phase 2 split and the aws validation rule (spec amendment a10) ([2e7d710](https://github.com/jellalshadows-idp/idp-engine/commit/2e7d71069a332a7b28b96c376a79b9c475a416bb))
+* record where the aws stacks keep their state (spec amendment a13, adr-0030) ([c650a06](https://github.com/jellalshadows-idp/idp-engine/commit/c650a06023564815dc5e5ed704915f97d70211b9))
+* reword the trust policy test claims and the config unit (spec amendment a11) ([005e298](https://github.com/jellalshadows-idp/idp-engine/commit/005e2989867fd0506f7e813e1f7829663b867b0f))
+* **runbooks:** tell a deleted wet-root artifact from a transient gh error ([bd11605](https://github.com/jellalshadows-idp/idp-engine/commit/bd1160508327c9bc6164015f19954f0c9e404306))
+
 ## [0.1.1](https://github.com/jellalshadows-idp/idp-engine/compare/v0.1.0...v0.1.1) (2026-11-03)
 
 
