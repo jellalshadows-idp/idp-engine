@@ -82,6 +82,19 @@ func TestReaderPermissions(t *testing.T) {
 	}
 }
 
+// TestReaderSourceIsScopedToTheRunsComponent: every reader token is for the
+// repository the run creates and nothing else (ADR-0027).
+func TestReaderSourceIsScopedToTheRunsComponent(t *testing.T) {
+	n, err := NewNames("42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := readerSource("https://api.example", "Iv23lr", nil, "acme", n)
+	if s.BaseURL != "https://api.example" || s.ClientID != "Iv23lr" || s.Owner != "acme" || s.Repo != "e2e-r42-app" || !maps.Equal(s.Permissions, readerPermissions) {
+		t.Errorf("reader source = %+v, want acme/e2e-r42-app with readerPermissions", s)
+	}
+}
+
 // testKeyPEM is a fresh RSA key in PKCS#1 PEM, which ghapp.ParseKey accepts.
 func testKeyPEM(t *testing.T) string {
 	t.Helper()

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"crypto/rsa"
 	"flag"
 	"fmt"
 	"io"
@@ -87,7 +88,7 @@ func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) i
 		base = ghapi.DefaultBaseURL
 	}
 	src := &ghapp.Source{BaseURL: base, ClientID: clientID, Key: key, Owner: org, Repo: name, Permissions: botPermissions}
-	reader := &ghapp.Source{BaseURL: base, ClientID: readerID, Key: readerKey, Owner: org, Repo: names.Component, Permissions: readerPermissions}
+	reader := readerSource(base, readerID, readerKey, org, names)
 	s := &Scenario{
 		F: GitHub{
 			Bot: ghapi.NewWithTokens(base, src.Token), Approver: ghapi.New(base, approver),
@@ -101,6 +102,13 @@ func Main(args []string, stdout, stderr io.Writer, getenv func(string) string) i
 		return 1
 	}
 	return 0
+}
+
+// readerSource mints the reader's tokens for the run's Component repository
+// only, with readerPermissions. It mints lazily, at the first read, when the
+// repository exists.
+func readerSource(base, clientID string, key *rsa.PrivateKey, org string, n Names) *ghapp.Source {
+	return &ghapp.Source{BaseURL: base, ClientID: clientID, Key: key, Owner: org, Repo: n.Component, Permissions: readerPermissions}
 }
 
 func readTemplates(dir string) (map[string][]byte, error) {

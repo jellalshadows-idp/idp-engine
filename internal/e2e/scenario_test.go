@@ -707,6 +707,7 @@ func TestCreateRequiresTheAWSStackPlannedAndApplied(t *testing.T) {
 		// GitHub skips a job after a skipped one (Phase 2e lesson a): the
 		// run succeeds, and the leg keeps its unexpanded name.
 		{"apply skipped", func(f *fakeForge) { delete(f.jobs["create"], "reconcile / apply-aws "+testStack) }, "create: apply-aws " + testStack + ": ", true},
+		{"github apply skipped", func(f *fakeForge) { f.jobs["create"]["reconcile / apply-github"] = "skipped" }, "create: apply-github: skipped", true},
 	} {
 		f, s := world(t)
 		tt.mutate(f)
@@ -753,6 +754,22 @@ func TestDeleteDestroysTheAWSStack(t *testing.T) {
 			t.Errorf("err = %v", err)
 		}
 	})
+}
+
+// TestCleanupNeedsNoAWSLegWhenTheCreateNeverAppliedIt: the create merged and
+// its apply-aws leg failed, so nothing reached wet and the cleanup's delete
+// has no AWS leg to run. The cleanup still passes, and the run reports only
+// the create's failure.
+func TestCleanupNeedsNoAWSLegWhenTheCreateNeverAppliedIt(t *testing.T) {
+	f, s := world(t)
+	f.jobs["create"]["reconcile / apply-aws "+testStack] = "failure"
+	create := f.effects["create"]
+	f.effects["create"] = func(f *fakeForge) { create(f); delete(f.wet, "rendered/"+testStack+"/main.tf.json") }
+	delete(f.jobs["delete"], "reconcile / apply-aws "+testStack)
+	err := s.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "create: apply-aws "+testStack+": failure") || strings.Contains(err.Error(), "cleanup:") || !slices.Contains(f.log, "merge delete") {
+		t.Errorf("err = %v, steps %v: the cleanup must delete the claims and pass without an AWS leg", err, f.log)
+	}
 }
 
 // TestDeleteAllowsOnlyItsOwnAWSStack: the delete may destroy its Component's
