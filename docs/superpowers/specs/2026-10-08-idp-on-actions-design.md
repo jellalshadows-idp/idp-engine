@@ -641,7 +641,7 @@ Everything is public: code, `wet`, logs, artifacts and comments. The design prot
 
 | Credential | Permissions | Where it lives |
 |---|---|---|
-| `idp-reader` App key | Read only | Repo secret: PR plans, drift bootstrap check *(Amendment A7, 2026-10-12.)* |
+| `idp-reader` App key | Read only | Repo secret: PR plans, drift bootstrap check *(Amendment A7, 2026-10-12.)* A copy in the `idp-engine` environment `idp-e2e`, read only by the harness step, which mints tokens with `environments: read` for the repository its run created, to check that repository's env variables (ADR-0027) *(Amendment A16, 2026-11-20.)* |
 | `idp-writer` App key | Write, **including `Workflows`** (features write `.github/workflows/`; `Contents` alone is rejected) | **Only** in environment `idp-write` (deployment branch `main`, no reviewers): the applies and the `wet` commits, and also the reconcile and drift plans (ADR-0025) *(Amendment A7, 2026-10-12.)* |
 | State passphrase | — | Repo secret, needed to read state in plans |
 | Approval | — | Environment `idp-approval` (required reviewers, `main`, no secrets) |
@@ -760,7 +760,14 @@ candidate SHA. The harness:
 2. Waits for `idp-gate` and checks the plan comment.
 3. Merges and waits for reconcile.
 4. Asserts with `gh api` that the repo, team, ruleset, environments and files exist.
-5. Opens a PR that deletes the claims and verifies the cleanup.
+   Its Component has `aws.registry: true` in `dev`, which `idp-claims-e2e`'s platform
+   config gives an `aws` block, so the harness also checks that the PR planned only
+   creates for the Component's AWS stack, that the reconcile applied it and committed
+   its render to `wet`, and that `dev` holds `AWS_ROLE_ARN`, `ECR_REPOSITORY` and
+   `AWS_REGION` with the §5.3 values. It reads them with tokens of the `idp-reader`
+   App, scoped to that repository and `environments: read` (§7.3).
+5. Opens a PR that deletes the claims and verifies the cleanup, the AWS stack's
+   destroy and its render's removal from `wet` included. *(Amendment A16, 2026-11-20.)*
 
 `idp-claims-e2e` uses `archiveOnDestroy: false`. The harness runs nightly and on
 engine release PRs, not on every PR, to protect the rate limit and CI minutes.

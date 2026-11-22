@@ -12,18 +12,19 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
 
 - `cmd/idp-e2e` (over `internal/e2e`, not part of the released CLI) drives `idp-claims-e2e` through the real pipelines at the engine commit under test:
   1. pins the four caller workflows to that commit, through a PR;
-  2. creates a Group `e2e-r<run>-team` and a Component `e2e-r<run>-app` through a PR, checks the plan comment, merges, waits for the automatic reconcile and asserts the repository, team, memberships and environment through the API;
+  2. creates a Group `e2e-r<run>-team` and a Component `e2e-r<run>-app` through a PR, checks the plan comment, merges, waits for the automatic reconcile and asserts the repository, team, memberships and environment through the API, and, since the Component has `aws.registry: true`, that its AWS stack was planned with creates only, applied and rendered to `wet`, and that `dev` holds the three AWS variables of spec §5.3; *(Amended in Phase 2f, 2026-11-20.)*
   3. updates the description and removes every topic, approves the update's reconcile for exactly the delete of the topics resource, and asserts them; *(Amended in Phase 1d execution, 2026-10-16.)*
   4. changes only the case of a member login, and expects `No infrastructure changes.`;
   5. runs the drift check and expects no drift issue;
-  6. deletes the claims through a PR, expects the destructive warning, approves the `idp-approval` deployment of that reconcile run only, and asserts the repository and team are gone;
+  6. deletes the claims through a PR, expects the destructive warning, approves the `idp-approval` deployment of that reconcile run only, and asserts the repository and team are gone, the AWS stack destroyed and its render gone from `wet`; the delete may destroy only this run's modules in the `github` stack and its Component's own AWS stack; *(Amended in Phase 2f, 2026-11-20.)*
   7. runs the drift check again.
 - Names are unique per run and always start with `e2e-`. The harness refuses any other name, touches only its own claim files, and never deletes a GitHub resource directly: after a failure it deletes its claims through the platform and reports both errors.
 - Before a run, the harness refuses to start while any `e2e-` claim is on `main`, any `e2e-r` repository or team exists, or any reconcile, drift or recover run of the claims repo is unfinished. A reconcile of the harness's own merge that unexpectedly waits for approval is rejected (nothing is applied and the queue frees), never left waiting. *(Amended in execution, 2026-10-15.)*
 - It runs nightly at 03:41 UTC and on demand from `idp-engine` `main`, in environment `idp-e2e` (deployment branch `main`), one run at a time (concurrency group `idp-e2e`). Release PRs join in Phase 1e. *(Amended in Phase 1e, 2026-10-18.)* They reach the harness through a dispatch from `release.yaml` on `main`, and the run reports the commit status `idp-e2e` on the release PR's head (ADR-0028).
-- Credentials, both only in `idp-e2e`:
+- Credentials, all three only in `idp-e2e`:
   - the bot App token (ADR-0026), minted for `idp-claims-e2e` only with actions write, checks read, contents write, issues read, members read, pull requests write and workflows write. Installation tokens expire after an hour and a run can last longer, so the harness mints and refreshes the bot's tokens from the App key, each scoped to the claims repo and the permissions the forge calls. *(Amended in execution, 2026-10-15.)*
   - the approver token: a fine-grained token of the org owner `jellalshadows`, limited to `idp-claims-e2e` with Actions read and Deployments write. *(Amended in execution, 2026-10-16.)*
+  - the reader App token (ADR-0009), minted from a copy of the reader App's key for the run's Component repository only, with environments read, to read that repository's env variables: the bot's tokens cover only `idp-claims-e2e`. The harness mints it at the first read, after the create step, and renews it like the bot's. *(Amended in Phase 2f, 2026-11-20.)*
 - Not covered, and proven by the Phase 1c smoke: a partial apply failure, the `recover` workflow, pull requests from forks.
 
 ## Consequences
@@ -38,6 +39,7 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
 - A token that expires; the runbook covers rotation.
 - A run takes tens of minutes of CI, creates and deletes real `e2e-` resources, and shares the org's rate limit.
 - `idp-claims-e2e` belongs to the harness: people should not commit there while it runs.
+- A second copy of the reader App's key, in `idp-e2e`. A leaked copy reads what the reader App reads across the org; the harness's own tokens reach one repository with one read permission. A wrong reader credential fails a run only after the create step, and the run cleans up through the platform. *(Amended in Phase 2f, 2026-11-20.)*
 
 ## Alternatives considered
 
@@ -45,3 +47,5 @@ Phase 1c proved the pipelines once, by hand, in `idp-claims-e2e`. A repeatable c
 - **A second account's fine-grained token.** The first choice; dropped in execution because no dedicated test account exists. Same exposure; it would tell the harness's approvals apart from the owner's in the audit log.
 - **Approving by hand.** Rejected by the owner: a nightly run must finish on its own.
 - **A custom deployment protection App.** Rejected: more machinery than a scoped token for one approval.
+- **A new read-only App for the harness's reads.** Rejected in Phase 2f: one more App to create by hand through the manifest flow (ADR-0011) and to rotate, for a read the reader App already does.
+- **A fine-grained token to read the env variables.** Rejected in Phase 2f: it expires, belongs to a user, and would need every repository of the org, since each run creates a new one.

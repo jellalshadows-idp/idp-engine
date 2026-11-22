@@ -12,12 +12,12 @@ func TestGroupClaim(t *testing.T) {
 
 func TestComponentClaim(t *testing.T) {
 	got := string(ComponentClaim("e2e-r1-app", "End-to-end harness repository", "e2e-r1-team", []string{"e2e", "harness"}))
-	want := "apiVersion: idp/v1\nkind: Component\nname: e2e-r1-app\ndescription: End-to-end harness repository\nowner: group:e2e-r1-team\nenvironments: [dev]\ngithub:\n  topics: [e2e, harness]\n"
+	want := "apiVersion: idp/v1\nkind: Component\nname: e2e-r1-app\ndescription: End-to-end harness repository\nowner: group:e2e-r1-team\nenvironments: [dev]\ngithub:\n  topics: [e2e, harness]\naws:\n  registry: true\n"
 	if got != want {
 		t.Errorf("ComponentClaim =\n%s\nwant\n%s", got, want)
 	}
 	noTopics := string(ComponentClaim("e2e-r1-app", "d", "e2e-r1-team", nil))
-	if noTopics != "apiVersion: idp/v1\nkind: Component\nname: e2e-r1-app\ndescription: d\nowner: group:e2e-r1-team\nenvironments: [dev]\n" {
+	if noTopics != "apiVersion: idp/v1\nkind: Component\nname: e2e-r1-app\ndescription: d\nowner: group:e2e-r1-team\nenvironments: [dev]\naws:\n  registry: true\n" {
 		t.Errorf("no topics:\n%s", noTopics)
 	}
 }

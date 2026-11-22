@@ -43,3 +43,10 @@ func (n Names) guard() error {
 
 func (n Names) GroupPath() string     { return "claims/groups/" + n.Group + ".yaml" }
 func (n Names) ComponentPath() string { return "claims/components/" + n.Component + ".yaml" }
+
+// AWSStack is the Component's AWS stack: it has aws.registry in dev, the only
+// environment the harness's Component lives in (spec §5.4).
+func (n Names) AWSStack() string { return "aws/dev/components/" + n.Component }
+
+// AWSRender is the path of that stack's render on wet.
+func (n Names) AWSRender() string { return "rendered/" + n.AWSStack() + "/main.tf.json" }

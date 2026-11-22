@@ -25,7 +25,7 @@ gh workflow run renovate.yaml --repo jellalshadows-idp/idp-engine --ref main
 | Go | the `go` directive in `go.mod`, which CI and `setup-idp` install | patch updates only |
 | GoReleaser | the GoReleaser action's `version` in `ci.yaml` and `release.yaml` | one |
 | actionlint, zizmor | `ci.yaml` | one each |
-| floci | the `floci` service image of `ci.yaml`, tag and digest | one |
+| floci | the `floci` service image of `ci.yaml`, `pr.yaml` and `reconcile.yaml` (four jobs), tag and digest | one: the three files move together, and `TestFlociJobsHoldNoSecret` fails otherwise |
 | Renovate | `renovate.yaml` and the validator image in `ci.yaml` | one |
 
 Runner images (`runs-on`) are not updated. Every update waits 14 days after its release; engine releases do not wait. Renovate opens every pending update in the run, with no limit on pull requests per hour or open at once (`prHourlyLimit: 0`, `prConcurrentLimit: 0`), so the engine bump never waits behind third-party PRs. Pending updates are listed in the "Dependency Dashboard" issue of each repository.

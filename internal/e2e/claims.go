@@ -21,13 +21,13 @@ func GroupClaim(name, description string, members []Member) []byte {
 	return []byte(b.String())
 }
 
-// ComponentClaim renders a Component claim in environment dev; no topics means
-// no github block.
+// ComponentClaim renders a Component claim in environment dev with an ECR registry; no topics means no github block.
 func ComponentClaim(name, description, group string, topics []string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "apiVersion: idp/v1\nkind: Component\nname: %s\ndescription: %s\nowner: group:%s\nenvironments: [dev]\n", name, description, group)
 	if len(topics) > 0 {
 		fmt.Fprintf(&b, "github:\n  topics: [%s]\n", strings.Join(topics, ", "))
 	}
+	b.WriteString("aws:\n  registry: true\n")
 	return []byte(b.String())
 }

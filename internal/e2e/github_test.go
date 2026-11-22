@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -15,12 +16,12 @@ import (
 	"github.com/jellalshadows-idp/idp-engine/internal/ghapi"
 )
 
-// forgeAgainst returns a GitHub forge whose bot and approver clients talk to h.
+// forgeAgainst returns a GitHub forge whose bot, approver and reader clients talk to h.
 func forgeAgainst(t *testing.T, h http.HandlerFunc) GitHub {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return GitHub{Bot: ghapi.New(srv.URL, "bot-token"), Approver: ghapi.New(srv.URL, "approver-token"), Owner: "acme", Repo: "idp-claims-e2e"}
+	return GitHub{Bot: ghapi.New(srv.URL, "bot-token"), Approver: ghapi.New(srv.URL, "approver-token"), Reader: ghapi.New(srv.URL, "reader-token"), Owner: "acme", Repo: "idp-claims-e2e"}
 }
 
 func TestGitHubPutFileCreatesAndUpdates(t *testing.T) {
@@ -359,6 +360,31 @@ func TestGitHubRetriesTransientReadsOnly(t *testing.T) {
 	})
 	if err := g.Dispatch(context.Background(), "drift.yaml", "main"); err == nil || calls != 1 {
 		t.Fatalf("err = %v after %d calls; a write must never be retried", err, calls)
+	}
+}
+
+func TestGitHubReadsEnvVariablesWithTheReaderToken(t *testing.T) {
+	var auth string
+	total := 2
+	g := forgeAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/e2e-r42-app/environments/dev/variables" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			http.NotFound(w, r)
+			return
+		}
+		auth = r.Header.Get("Authorization")
+		fmt.Fprintf(w, `{"total_count":%d,"variables":[{"name":"AWS_REGION","value":"eu-west-1"},{"name":"ECR_REPOSITORY","value":"x"}]}`, total)
+	})
+	got, err := g.EnvVariables(context.Background(), "e2e-r42-app", "dev")
+	if err != nil || !maps.Equal(got, map[string]string{"AWS_REGION": "eu-west-1", "ECR_REPOSITORY": "x"}) {
+		t.Fatalf("EnvVariables = %v, %v", got, err)
+	}
+	if !strings.HasSuffix(auth, "reader-token") {
+		t.Errorf("Authorization = %q: env variables are read with the reader token, never the bot's", auth)
+	}
+	total = 31
+	if _, err := g.EnvVariables(context.Background(), "e2e-r42-app", "dev"); err == nil || !strings.Contains(err.Error(), "more than one page") {
+		t.Errorf("31 variables: err = %v, want a refusal to check a partial list", err)
 	}
 }
 

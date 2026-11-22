@@ -32,6 +32,8 @@ There are **two GitHub Apps** and **two environments**, with three secret scopes
 
 *(Amended by ADR-0025, 2026-10-12: the reconcile plan and the drift plan refresh with the writer token in environment idp-write; PR plans and the drift bootstrap check keep the reader.)*
 
+*(Amended by ADR-0027 in Phase 2f, 2026-11-20: a copy of the `idp-reader` key also lives in the `idp-engine` environment `idp-e2e`, where only the harness step reads it.)*
+
 ## Consequences
 
 ### Positive

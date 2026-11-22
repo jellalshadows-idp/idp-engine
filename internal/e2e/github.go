@@ -14,11 +14,14 @@ import (
 	"github.com/jellalshadows-idp/idp-engine/internal/ghops"
 )
 
-// GitHub implements Forge over the REST API with the two tokens of ADR-0027:
-// Bot for everything except approvals, Approver for idp-approval only.
+// GitHub implements Forge over the REST API with the three tokens of ADR-0027:
+// Bot for everything except approvals and env variables, Approver for
+// idp-approval only, and Reader for the env variables of the run's Component
+// repository.
 type GitHub struct {
 	Bot      *ghapi.Client
 	Approver *ghapi.Client
+	Reader   *ghapi.Client
 	Owner    string
 	Repo     string
 }
@@ -459,6 +462,33 @@ func (g GitHub) ActiveRuns(ctx context.Context) ([]Run, error) {
 				out = append(out, Run{ID: r.ID, Status: r.Status})
 			}
 		}
+	}
+	return out, nil
+}
+
+// EnvVariables reads one page of environment variables, the most GitHub
+// returns (30), and refuses a longer list rather than check part of it.
+func (g GitHub) EnvVariables(ctx context.Context, repo, env string) (map[string]string, error) {
+	if g.Reader == nil {
+		return nil, errors.New("no reader client: env variables are read with the reader App's token (ADR-0027)")
+	}
+	var resp struct {
+		TotalCount int `json:"total_count"`
+		Variables  []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"variables"`
+	}
+	p := "/repos/" + g.Owner + "/" + url.PathEscape(repo) + "/environments/" + url.PathEscape(env) + "/variables?per_page=30"
+	if err := g.read(ctx, func() error { return g.Reader.Get(ctx, p, &resp) }); err != nil {
+		return nil, fmt.Errorf("read the variables of %s's environment %s: %w", repo, env, err)
+	}
+	if resp.TotalCount > len(resp.Variables) {
+		return nil, fmt.Errorf("%s's environment %s has %d variables, more than one page", repo, env, resp.TotalCount)
+	}
+	out := map[string]string{}
+	for _, v := range resp.Variables {
+		out[v.Name] = v.Value
 	}
 	return out, nil
 }

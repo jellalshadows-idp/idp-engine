@@ -13,6 +13,9 @@ func TestNewNames(t *testing.T) {
 	if n.GroupPath() != "claims/groups/e2e-r38314547633-team.yaml" || n.ComponentPath() != "claims/components/e2e-r38314547633-app.yaml" {
 		t.Errorf("paths %s, %s", n.GroupPath(), n.ComponentPath())
 	}
+	if n.AWSStack() != "aws/dev/components/e2e-r38314547633-app" || n.AWSRender() != "rendered/aws/dev/components/e2e-r38314547633-app/main.tf.json" {
+		t.Errorf("AWS stack %s, render %s", n.AWSStack(), n.AWSRender())
+	}
 	for _, bad := range []string{"", "ABC", "a-b", "1234567890123", "x y"} {
 		if _, err := NewNames(bad); err == nil {
 			t.Errorf("NewNames(%q) must fail", bad)
