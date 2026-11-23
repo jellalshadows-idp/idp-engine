@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/jellalshadows-idp/idp-engine/internal/claims"
 	"github.com/jellalshadows-idp/idp-engine/internal/plan"

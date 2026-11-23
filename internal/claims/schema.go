@@ -8,7 +8,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 
@@ -55,7 +55,11 @@ func newValidator() (*validator, error) {
 func (v *validator) validate(k string, doc *document) []Diagnostic {
 	inst, err := jsonInstance(doc.root)
 	if err != nil {
-		return []Diagnostic{{File: doc.file, Line: doc.root.Line, Message: err.Error()}}
+		line := doc.root.Line
+		if l, _, _, ok := loadError(err); ok && l > 0 {
+			line = l // the alias of a self-referential anchor, say
+		}
+		return []Diagnostic{{File: doc.file, Line: line, Message: err.Error()}}
 	}
 	err = v.byKind[k].Validate(inst)
 	if err == nil {
@@ -102,11 +106,32 @@ func locationLabel(tokens []string) string {
 func jsonInstance(root *yaml.Node) (any, error) {
 	var v any
 	if err := root.Decode(&v); err != nil {
-		return nil, fmt.Errorf("cannot read document: %w", err)
+		return nil, fmt.Errorf("cannot read document: %w", wordAsV3(err))
 	}
-	raw, err := json.Marshal(v)
+	raw, err := json.Marshal(oneZero(v))
 	if err != nil {
 		return nil, fmt.Errorf("unsupported YAML value: %w", err)
 	}
 	return jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+}
+
+// oneZero turns every -0 in a decoded YAML value into 0, in place. The YAML
+// library reads -0 as a negative-zero float, which encodes as "-0"; JSON has
+// one zero, and claims never meant another.
+func oneZero(v any) any {
+	switch t := v.(type) {
+	case float64:
+		if t == 0 {
+			return float64(0)
+		}
+	case map[string]any:
+		for k, e := range t {
+			t[k] = oneZero(e)
+		}
+	case []any:
+		for i, e := range t {
+			t[i] = oneZero(e)
+		}
+	}
+	return v
 }

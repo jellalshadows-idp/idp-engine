@@ -12,7 +12,7 @@ The usual Go YAML library, `gopkg.in/yaml.v3` (github.com/go-yaml/yaml), is arch
 
 ## Decision
 
-- Parse claims with `go.yaml.in/yaml/v3` (v3.0.5). Use `yaml.Node` to build a JSON-pointer → line index per file, and accept exactly one YAML document per file.
+- Parse claims with `go.yaml.in/yaml/v4` (v4.0.0), through its classic `NewDecoder` and `yaml.Node` APIs. Use `yaml.Node` to build a JSON-pointer → line index per file, and accept exactly one YAML document per file. *(Amended 2026-11-23: v4.0.0 is the first stable v4, and v3 is frozen with security fixes only. The parser now reads v4's structured load errors: a syntax error names its line, the first line included, and an unclosed flow sequence or quoted scalar names the line it starts on. A self-referential anchor keeps v3's wording, `yaml: <message>`, at its alias's line, and `-0` reads as `0`. Before, the claims used `go.yaml.in/yaml/v3` v3.0.5.)*
 - Validate with `github.com/santhosh-tekuri/jsonschema/v6` (v6.0.3). It passes the official 2020-12 test suite, and its `ValidationError` tree carries `InstanceLocation` for every leaf.
 - The JSON Schemas in `schemas/*.json` are the **single source of truth** for claim structure. They are embedded in the binary and published at each tag, so editors get completion through `# yaml-language-server: $schema=…`.
 - Schemas are strict (`additionalProperties: false`). Fields of later phases (`aws`, `features`, Workspace claims) are rejected until the phase that implements them extends the schema.

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // repoRoot is the repository root, seen from this package's directory.
