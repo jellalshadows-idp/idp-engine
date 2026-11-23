@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // document is one parsed claim file: its top-level mapping and an index from
@@ -32,12 +32,12 @@ func parseFile(file string, data []byte) (*document, []Diagnostic) {
 		if errors.Is(err, io.EOF) {
 			return nil, []Diagnostic{{File: file, Message: "file is empty"}}
 		}
-		return nil, []Diagnostic{parseDiagnostic(file, err)}
+		return nil, []Diagnostic{parseDiagnostic(file, data, err)}
 	}
 	var extra yaml.Node
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err != nil {
-			return nil, []Diagnostic{parseDiagnostic(file, err)}
+			return nil, []Diagnostic{parseDiagnostic(file, data, err)}
 		}
 		line := extra.Line
 		if line == 0 {
@@ -107,12 +107,65 @@ func normalize(file string, root *yaml.Node) []Diagnostic {
 	return out
 }
 
-func parseDiagnostic(file string, err error) Diagnostic {
+func parseDiagnostic(file string, data []byte, err error) Diagnostic {
+	if line, start, msg, ok := loadError(err); ok && line > 0 {
+		// An unclosed flow sequence or quoted scalar is found at the end of
+		// the input, past its last line. The line it starts on is the one to
+		// fix; when the library places that past the end too, the last line.
+		if n := lineCount(data); n > 0 && line > n {
+			if start > 0 && start <= n {
+				line = start
+			} else {
+				line = n
+			}
+		}
+		return Diagnostic{File: file, Line: line, Message: fmt.Sprintf("invalid YAML: line %d: %s", line, msg)}
+	}
+	// Any other error, or a load error the library gives no line (a control
+	// character or invalid UTF-8, say): its own text, and a line if it names one.
 	d := Diagnostic{File: file, Message: "invalid YAML: " + strings.TrimPrefix(err.Error(), "yaml: ")}
 	if m := yamlErrorLine.FindStringSubmatch(err.Error()); m != nil {
 		d.Line, _ = strconv.Atoi(m[1])
 	}
 	return d
+}
+
+// loadError reads a go-yaml load error: the line where it was found, the line
+// where the construct it was found in starts (0 when the library names none),
+// and the message without the library's prefixes. Lines are 1-based and 0 is
+// unknown. ok is false for any other error.
+func loadError(err error) (line, start int, msg string, ok bool) {
+	var le *yaml.LoadError
+	if !errors.As(err, &le) {
+		return 0, 0, "", false
+	}
+	return le.Mark.Line, le.ContextMark.Line, le.Message, true
+}
+
+// lineCount is the number of lines in data; a last line counts without its
+// newline.
+func lineCount(data []byte) int {
+	n := bytes.Count(data, []byte("\n"))
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		n++
+	}
+	return n
+}
+
+// v3Worded words a go-yaml load error as the v3 library did, "yaml:
+// <message>", without v4's stage and position prefix. errors.As still finds
+// the load error underneath, and loadError its line.
+type v3Worded struct{ le *yaml.LoadError }
+
+func (e v3Worded) Error() string { return "yaml: " + e.le.Message }
+func (e v3Worded) Unwrap() error { return e.le }
+
+func wordAsV3(err error) error {
+	var le *yaml.LoadError
+	if errors.As(err, &le) {
+		return v3Worded{le}
+	}
+	return err
 }
 
 // lineIndex maps JSON pointers into the tree to lines. Object members point at

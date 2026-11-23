@@ -1,6 +1,7 @@
 package claims
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -41,6 +42,7 @@ func TestValidate(t *testing.T) {
 		{name: "a group filed as a component", kind: "Component", src: group, wantLine: 2, wantContains: "/kind"},
 		{name: "unquoted aws account id points at it", kind: "Platform", src: "apiVersion: idp/v1\nkind: Platform\ngithub:\n  org: acme\n  writerAppId: 1\nenvironments:\n  dev:\n    aws:\n      accountId: 000000000001\n      region: eu-west-1\n", wantLine: 9, wantContains: "/environments/dev/aws/accountId"},
 		{name: "self-referential anchor is a diagnostic, not a hang", kind: "Group", src: "a: &a [*a]\n", wantLine: 1, wantContains: "cannot read document"},
+		{name: "self-referential anchor points at its alias, worded as before", kind: "Group", src: "apiVersion: idp/v1\nkind: Group\nname: x\nmembers: &m [*m]\n", wantLine: 4, wantContains: "cannot read document: yaml: anchor 'm' value contains itself"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,6 +60,18 @@ func TestValidate(t *testing.T) {
 			}
 			t.Fatalf("diagnostics = %v, want one at line %d containing %q", ds, tt.wantLine, tt.wantContains)
 		})
+	}
+}
+
+// TestJSONInstanceReadsMinusZeroAsZero: JSON has one zero, so -0 reaches the
+// schemas as 0, the value the YAML library read it as before v4.
+func TestJSONInstanceReadsMinusZeroAsZero(t *testing.T) {
+	inst, err := jsonInstance(mustDoc(t, "a: -0\nb: [-0, -0.0]\n").root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(inst); got != "map[a:0 b:[0 0]]" {
+		t.Errorf("instance = %s, want map[a:0 b:[0 0]]", got)
 	}
 }
 
