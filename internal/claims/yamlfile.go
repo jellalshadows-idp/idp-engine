@@ -110,9 +110,14 @@ func normalize(file string, root *yaml.Node) []Diagnostic {
 func parseDiagnostic(file string, data []byte, err error) Diagnostic {
 	if line, start, msg, ok := loadError(err); ok && line > 0 {
 		// An unclosed flow sequence or quoted scalar is found at the end of
-		// the input, past its last line; the line it starts on is the one to fix.
-		if line > lineCount(data) && start > 0 {
-			line = start
+		// the input, past its last line. The line it starts on is the one to
+		// fix; when the library places that past the end too, the last line.
+		if n := lineCount(data); n > 0 && line > n {
+			if start > 0 && start <= n {
+				line = start
+			} else {
+				line = n
+			}
 		}
 		return Diagnostic{File: file, Line: line, Message: fmt.Sprintf("invalid YAML: line %d: %s", line, msg)}
 	}
