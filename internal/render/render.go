@@ -23,7 +23,7 @@ import (
 const (
 	TofuVersion           = "1.13.9"
 	GitHubProviderVersion = "6.13.0"
-	AWSProviderVersion    = "6.71.0"
+	AWSProviderVersion    = "6.72.0"
 )
 
 // stateFile is the GitHub stack's local backend path, relative to rendered/github

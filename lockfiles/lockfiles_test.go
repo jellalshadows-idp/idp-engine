@@ -23,8 +23,8 @@ func TestAWSLockPinsTheProvider(t *testing.T) {
 	if !regexp.MustCompile(`provider "registry\.opentofu\.org/hashicorp/aws"`).MatchString(s) {
 		t.Fatal("lock file does not lock hashicorp/aws")
 	}
-	if !regexp.MustCompile(`version\s*=\s*"6\.71\.0"`).MatchString(s) {
-		t.Error("lock file does not pin version 6.71.0")
+	if !regexp.MustCompile(`version\s*=\s*"6\.72\.0"`).MatchString(s) {
+		t.Error("lock file does not pin version 6.72.0")
 	}
 	if n := len(regexp.MustCompile(`"h1:`).FindAllString(s, -1)); n < 4 {
 		t.Errorf("lock file has %d h1 hashes; want one per platform (linux/windows/darwin amd64 + darwin arm64)", n)
