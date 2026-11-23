@@ -99,7 +99,7 @@ Engine releases are `vX.Y.Z` tags ([releases runbook](runbooks/releases.md)). A 
 
 ## Limitations
 
-- The AWS stacks are planned and applied against floci only (ADR-0004): nothing reaches a real AWS account, and their state ends with the job. Workspaces are not reconciled yet (Phase 3): a change that affects one fails `idp stacks`. A claims repo with an `aws` block stays on an engine release from before Phase 2d (`idp-claims` pins the `v0.1.1` tag) until `v0.2.0`.
+- The AWS stacks are planned and applied against floci only (ADR-0004): nothing reaches a real AWS account, and their state ends with the job. Workspaces are not reconciled yet (Phase 3): a change that affects one fails `idp stacks`.
 - The required check comes from a workflow file in the claims repo, so a pull request can change it. Requiring a review on `.github/` closes that gap; it is the owner's decision ([ADR-0022](adr/0022-required-check-lives-in-the-caller.md)).
 - GitHub disables scheduled workflows in public repos after 60 days without activity. Re-enable the drift check with `gh workflow enable drift.yaml`.
 - Every job lists the engine's tags through the GitHub API before it gets `idp`; when that call fails, the job fails rather than guess whether its commit is a release.
