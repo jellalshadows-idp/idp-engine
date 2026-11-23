@@ -121,6 +121,8 @@ func parseDiagnostic(file string, data []byte, err error) Diagnostic {
 		}
 		return Diagnostic{File: file, Line: line, Message: fmt.Sprintf("invalid YAML: line %d: %s", line, msg)}
 	}
+	// Any other error, or a load error the library gives no line (a control
+	// character or invalid UTF-8, say): its own text, and a line if it names one.
 	d := Diagnostic{File: file, Message: "invalid YAML: " + strings.TrimPrefix(err.Error(), "yaml: ")}
 	if m := yamlErrorLine.FindStringSubmatch(err.Error()); m != nil {
 		d.Line, _ = strconv.Atoi(m[1])
