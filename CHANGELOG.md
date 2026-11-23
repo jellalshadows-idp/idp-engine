@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.1](https://github.com/jellalshadows-idp/idp-engine/compare/v0.2.0...v0.2.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **claims:** keep a YAML error at the end of a file on its last line ([b999ba4](https://github.com/jellalshadows-idp/idp-engine/commit/b999ba428f215963a45bc4136b0611a280759a9e))
+* **claims:** parse claims with go.yaml.in/yaml/v4 and name the line of every YAML syntax error ([5592717](https://github.com/jellalshadows-idp/idp-engine/commit/5592717f5ac18da6bb95d534d41a5a2c729345f1))
+
+
+### Documentation
+
+* add the phase 2f log and close Phase 2 ([188c0a8](https://github.com/jellalshadows-idp/idp-engine/commit/188c0a895e831b5315e12adfca43c5e5ce61e768))
+* **adr:** name v3.0.6 as the YAML version before the v4 move ([25537bb](https://github.com/jellalshadows-idp/idp-engine/commit/25537bb1881d42f43487684e7ecb59e4e4cd56cb))
+* **phases:** record the merged Renovate PRs in the phase 2f log ([1694c2a](https://github.com/jellalshadows-idp/idp-engine/commit/1694c2a0a126b3cfa0fe10f5b58bef30622f3356))
+
 ## [0.2.0](https://github.com/jellalshadows-idp/idp-engine/compare/v0.1.1...v0.2.0) (2026-11-22)
 
 
