@@ -21,7 +21,7 @@ import (
 // Pinned versions the rendered stacks require (spec §7.5). AWSProviderVersion
 // equals the pin in modules/aws/*/versions.tf and the AWS lock file.
 const (
-	TofuVersion           = "1.13.2"
+	TofuVersion           = "1.13.9"
 	GitHubProviderVersion = "6.13.0"
 	AWSProviderVersion    = "6.71.0"
 )
