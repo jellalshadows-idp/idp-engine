@@ -2,7 +2,7 @@
 
 The engine of an internal developer platform (IDP) that reconciles on **GitHub Actions** instead of a Kubernetes operator. Desired state lives in claims (YAML in Git), with no Kubernetes involved.
 
-> **Status:** Phase 2e is complete: the pipelines plan and apply the AWS stacks against the floci emulator, each stack in a job of its own that holds no secret ([ADR-0031](docs/adr/0031-floci-jobs-hold-no-secret.md)). A job replays the version in `wet` before it plans the new one, an apply must equal the gated plan, and a stack's render reaches `wet` only after it applied; its state stays in the job ([ADR-0030](docs/adr/0030-aws-stack-state-stays-in-the-job.md)). Nothing reaches a real AWS account. See the [phase 2e log](docs/phases/phase-2e.md) and [docs/pipelines.md](docs/pipelines.md). Phase 2f (the live AWS run, the E2E env-variable checks and `0.2.0`) is next.
+> **Status:** Phase 2 is complete and released as `v0.2.0`: the pipelines plan and apply the AWS stacks against the floci emulator, each stack in a job of its own that holds no secret ([ADR-0031](docs/adr/0031-floci-jobs-hold-no-secret.md)), and the end-to-end harness checks a Component's AWS stack and environment variables through `idp-claims-e2e` ([docs/e2e.md](docs/e2e.md)). Nothing reaches a real AWS account. See the [phase 2f log](docs/phases/phase-2f.md). Phase 3 (Workspaces) is next.
 
 **What exists today:** `idp-claims` runs the pipelines at an engine release; `idp-claims-e2e` is checked by the end-to-end harness nightly and on every release PR.
 
@@ -33,7 +33,7 @@ Runbooks: [releases](docs/runbooks/releases.md), [dependency updates](docs/runbo
 - AWS is **emulated** with [floci](https://floci.io). No real cloud account is used.
 - Every repository is **public**: on the GitHub Free plan, rulesets and environment reviewers exist only for public repos.
 - **No secrets** flow through the platform.
-- The pipelines reconcile GitHub (teams, repositories, rulesets, environments and, since Phase 2b, the environment variables of a Component with `aws.registry`) and, since Phase 2e, the AWS stacks that create the OIDC provider, the ECR repository and the CI role, **against the floci emulator only**: their state ends with the job, and there is no AWS drift check. A claims repo with an `aws` block stays on `v0.1.1` until `v0.2.0`.
+- The pipelines reconcile GitHub (teams, repositories, rulesets, environments and, since Phase 2b, the environment variables of a Component with `aws.registry`) and, since Phase 2e, the AWS stacks that create the OIDC provider, the ECR repository and the CI role, **against the floci emulator only**: their state ends with the job, and there is no AWS drift check.
 - A reconcile that needs approval holds the claims repo's pipelines until someone decides.
 
 ## License
