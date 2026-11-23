@@ -47,12 +47,12 @@ jobs:
         # concurrency.queue is a documented GitHub key (spec §6.2) that actionlint v1.7.12 does not know yet.
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -ignore 'unexpected key "queue" for "concurrency" section' examples/claims-repo/.github/workflows/*.yaml
       - name: zizmor
-        run: pipx run zizmor==1.31.1 .github/workflows .github/actions/setup-idp/action.yaml examples/claims-repo/.github/workflows/*.yaml
+        run: pipx run zizmor==1.32.0 .github/workflows .github/actions/setup-idp/action.yaml examples/claims-repo/.github/workflows/*.yaml
       - name: renovate config
         id: renovate-config
         # The Renovate image at renovate.yaml's version: Renovate needs a newer
         # Node than the runner's, and the run and the check stay one version.
-        run: docker run --rm -v "$GITHUB_WORKSPACE/.github/renovate-global.json:/tmp/renovate-global.json:ro" ghcr.io/renovatebot/renovate:44.206.2 renovate-config-validator --strict /tmp/renovate-global.json
+        run: docker run --rm -v "$GITHUB_WORKSPACE/.github/renovate-global.json:/tmp/renovate-global.json:ro" ghcr.io/renovatebot/renovate:44.222.5 renovate-config-validator --strict /tmp/renovate-global.json
 
   modules:
     runs-on: ubuntu-24.04
@@ -68,7 +68,7 @@ jobs:
           persist-credentials: false
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
-          tofu_version: 1.13.2
+          tofu_version: 1.13.9
           tofu_wrapper: false
       - name: tofu fmt and test
         id: tofu-test
@@ -95,7 +95,7 @@ jobs:
           go-version-file: go.mod
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
-          tofu_version: 1.13.2
+          tofu_version: 1.13.9
           tofu_wrapper: false
       - name: render each fixture with local module sources and tofu validate every stack (proves the JSON syntax, lock files and modules)
         id: render-validate
@@ -160,7 +160,7 @@ jobs:
           cache: false
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
-          tofu_version: 1.13.2
+          tofu_version: 1.13.9
           tofu_wrapper: false
       - name: wait until floci is ready
         id: floci-ready
@@ -209,14 +209,14 @@ jobs:
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: v2.19.0
+          version: v2.20.0
           args: check
       - name: goreleaser snapshot
         id: snapshot
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: v2.19.0
+          version: v2.20.0
           args: release --snapshot --clean --skip=publish
       - name: the snapshot binary reports a v-tag
         id: tag-check

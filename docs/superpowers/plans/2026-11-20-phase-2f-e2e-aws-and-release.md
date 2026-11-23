@@ -101,7 +101,7 @@ The executor copies these into the ledger as rulings before Task 1. Phase 2a's o
 
   *Cost if wrong:* a refused recovery costs one runbook step; the check is one step and its test.
 - **D-8. No run script reads a process substitution (carry R4, generalized).**
-  - `done < <(jq …)` hides a failed `jq`: bash ignores the exit status of `<(...)`. The layout step now assigns `jq`'s output first (`artifacts="$(jq …)"`), which fails the step under the runner's `bash -eo pipefail`, skips empty lines, and warns for each plan it does not find (`::warning::no regular file <A>.json among the downloaded AWS plans: plan-summary will fail for its stack`).
+  - `done < <(jq …)` hides a failed `jq`: bash ignores the exit status of `<(...)`. The layout step now assigns `jq`'s output first (`artifacts="$(jq …)"`), which fails the step under the runner's `bash -eo pipefail`, skips empty lines, and warns for each plan it does not find (`::warning::no regular file $artifact.json among the downloaded AWS plans; plan-summary fails on the missing plan of that stack`, as Task 2 specifies; this quote was corrected on 2026-11-23 with the phase log).
   - The same defect sits in `recover`'s run check (`read … < <(gh api …)`); it is fixed the same way.
   - A rule over every workflow and action step, `TestRunScriptsReadNoProcessSubstitution`, refuses `<(` from now on.
 
