@@ -198,7 +198,7 @@ Execution rulings:
 | The release PR after each merge | `#28 chore(main): release 0.2.0` until Task 10 |
 | The release | See Task 10: run 45086481414, seven assets, and `setup-idp: installed idp v0.2.0` in run 45086748714 |
 | `idp-claims`'s first AWS reconcile | See Task 10: three `plan-aws` and three `apply-aws` legs green, and three renders on `wet`. Its next drift run: pending at the time of writing |
-| Renovate | The owner had the run dispatched on 2026-11-23 (45090907242), ahead of the 04:17 UTC schedule. It opened the two engine re-pins (merged, D-11), #46 `hashicorp/aws` 6.72.0 labelled `needs-lockfile` (5 checks fail until the lock file is regenerated, as expected), #45 OpenTofu 1.13.9, #47 GoReleaser 2.20.0, #48 Renovate 44.222.5, #49 zizmor 1.32.0, and #51 `go.yaml.in/yaml/v3` to v4. All but the re-pins stay open (D-13). floci 2.5.0 becomes eligible on 2026-11-29 |
+| Renovate | The owner had the run dispatched on 2026-11-23 (45090907242), ahead of the 04:17 UTC schedule. It opened the two engine re-pins (merged, D-11), #46 `hashicorp/aws` 6.72.0 labelled `needs-lockfile` (5 checks fail until the lock file is regenerated, as expected), #45 OpenTofu 1.13.9, #47 GoReleaser 2.20.0, #48 Renovate 44.222.5, #49 zizmor 1.32.0, and #51 `go.yaml.in/yaml/v3` to v4. They stayed open for the owner (D-13), who then handed them over; all six are merged: #49 (`509f973`), #47 (`dffccd7`), #48 (`0519362`), #45 (`1a0ad9c`), #46 (`c42eedc`, with the lock file regenerated per the [dependencies runbook](../runbooks/dependencies.md)) and #51 (`cff0dc6`). #51 was not a working update as opened (a v4 `require` with v3 imports); it now moves every import to v4 and keeps the claim diagnostics as before, except that every YAML syntax error names its line (ADR-0015, amended). floci 2.5.0 becomes eligible on 2026-11-29 |
 
 ## Notable findings caught by review
 
@@ -292,7 +292,7 @@ Spec §10: "E2E checks the env variables, and floci integration is green". It is
 
 - **The reader key now has two copies:** the claims repos' `IDP_READER_PRIVATE_KEY` and `idp-e2e`'s. When the reader key is rotated, rotate both, and keep `IDP_READER_CLIENT_ID` equal in both places.
 - **Release-please** may open a release PR for the `docs` and `chore` commits after `v0.2.0`. Leave it open.
-- **Renovate's PRs** #45, #46 (`needs-lockfile`), #47, #48, #49 and #51 wait for the owner. floci 2.5.0 (eligible from 2026-11-29) must move `ci.yaml`, `pr.yaml` and `reconcile.yaml` together.
+- **Renovate's PRs** #45-#49 and #51 are merged. #51's `fix(claims)` commits made release-please open #52 (`0.2.1`); the harness tests it, and the dependency bumps with it, on that PR. Leave #52 for the owner. floci 2.5.0 (eligible from 2026-11-29) must move `ci.yaml`, `pr.yaml` and `reconcile.yaml` together.
 - The earlier owner items stay as recorded in the [Phase 1e log](phase-1e.md).
 
 ## Process notes
